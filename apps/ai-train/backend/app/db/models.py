@@ -36,6 +36,10 @@ class CapabilityRegistryModel(Base):
         back_populates="capability",
         cascade="all, delete-orphan",
     )
+    training_tasks: Mapped[list[TrainingTaskModel]] = relationship(
+        back_populates="capability",
+        cascade="all, delete-orphan",
+    )
 
 
 class DatasetBindingModel(Base):
@@ -62,6 +66,7 @@ class DatasetBindingModel(Base):
 
     capability: Mapped[CapabilityRegistryModel] = relationship(back_populates="dataset_binding")
     annotation_tasks: Mapped[list[AnnotationTaskModel]] = relationship(back_populates="dataset_binding")
+    training_tasks: Mapped[list[TrainingTaskModel]] = relationship(back_populates="dataset_binding")
 
 
 class AnnotationTaskModel(Base):
@@ -87,3 +92,39 @@ class AnnotationTaskModel(Base):
 
     capability: Mapped[CapabilityRegistryModel] = relationship(back_populates="annotation_tasks")
     dataset_binding: Mapped[DatasetBindingModel] = relationship(back_populates="annotation_tasks")
+    training_tasks: Mapped[list[TrainingTaskModel]] = relationship(back_populates="annotation_task")
+
+
+class TrainingTaskModel(Base):
+    __tablename__ = "training_task"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    capability_id: Mapped[int] = mapped_column(ForeignKey("capability_registry.id", ondelete="CASCADE"), index=True)
+    dataset_binding_id: Mapped[int] = mapped_column(ForeignKey("dataset_binding.id", ondelete="CASCADE"), index=True)
+    annotation_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("annotation_task.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    task_name: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(64), default="pending")
+    framework: Mapped[str] = mapped_column(String(64), default="pytorch")
+    backend_type: Mapped[str] = mapped_column(String(64), default="cpu")
+    train_params_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    log_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+    capability: Mapped[CapabilityRegistryModel] = relationship(back_populates="training_tasks")
+    dataset_binding: Mapped[DatasetBindingModel] = relationship(back_populates="training_tasks")
+    annotation_task: Mapped[AnnotationTaskModel | None] = relationship(back_populates="training_tasks")
