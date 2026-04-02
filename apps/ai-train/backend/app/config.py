@@ -34,6 +34,7 @@ class Settings:
     models_root: Path
     logs_root: Path
     database_path: Path
+    annotation_tasks_root: Path
     company_name: str
     company_domain: str
     service_name: str
@@ -66,6 +67,7 @@ def get_settings() -> Settings:
         models_root=_resolve_child_path(host_root, "models"),
         logs_root=_resolve_child_path(host_root, "logs"),
         database_path=database_path,
+        annotation_tasks_root=_resolve_child_path(data_root, "annotation_tasks"),
         company_name="北京爱知之星科技股份有限公司（Agile Star）",
         company_domain="agilestar.cn",
         service_name="ai-train",

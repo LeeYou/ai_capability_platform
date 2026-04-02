@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -43,3 +45,28 @@ class BindDatasetRequest(BaseModel):
     capability_name: str = Field(min_length=1, max_length=128, description="能力标识")
     dataset_path: str = Field(min_length=1, description="数据集路径，支持相对 datasets 根目录的路径")
     dataset_status: str = Field(default="ready", min_length=1, max_length=64, description="数据集状态")
+
+
+class AnnotationTaskItem(BaseModel):
+    task_id: int = Field(description="标注任务 ID")
+    capability_name: str = Field(description="能力标识")
+    task_name: str = Field(description="任务名称")
+    dataset_path: str = Field(description="数据集路径")
+    status: str = Field(description="任务状态")
+    sample_total: int = Field(description="样本总数")
+    labeled_count: int = Field(description="已标注数量")
+    result_path: str | None = Field(default=None, description="结果文件路径")
+
+
+class AnnotationTaskListResponse(BaseModel):
+    items: list[AnnotationTaskItem] = Field(default_factory=list)
+
+
+class CreateAnnotationTaskRequest(BaseModel):
+    capability_name: str = Field(min_length=1, max_length=128, description="能力标识")
+    task_name: str = Field(min_length=1, max_length=255, description="任务名称")
+    sample_total: int = Field(ge=1, description="待标注样本总数")
+
+
+class SubmitAnnotationTaskRequest(BaseModel):
+    annotations: list[dict[str, Any]] = Field(default_factory=list, description="标注结果列表")
