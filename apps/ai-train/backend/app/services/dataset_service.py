@@ -37,3 +37,12 @@ def scan_dataset_bindings(datasets_root: Path) -> list[DatasetBinding]:
         )
     return bindings
 
+
+def normalize_dataset_path(datasets_root: Path, dataset_path: str) -> Path:
+    candidate = Path(dataset_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = datasets_root / candidate
+    candidate = candidate.resolve()
+    if not (candidate == datasets_root or datasets_root in candidate.parents):
+        raise ValueError("dataset_path 必须位于 datasets 根目录内。")
+    return candidate

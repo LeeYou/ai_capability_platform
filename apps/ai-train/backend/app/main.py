@@ -1,9 +1,22 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.routes import router
 from app.config import get_settings
+from app.db.database import get_session_factory
+from app.services.registry_service import initialize_database, sync_dataset_bindings_from_filesystem
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings = get_settings()
+    initialize_database()
+    with get_session_factory()() as session:
+        sync_dataset_bindings_from_filesystem(session, settings.datasets_root)
+    yield
 
 
 def create_app() -> FastAPI:
@@ -12,6 +25,7 @@ def create_app() -> FastAPI:
         title="ai-train backend",
         version="0.1.0",
         description="ai-train 训练子系统后端基础服务",
+        lifespan=lifespan,
     )
     app.include_router(router)
 
@@ -27,4 +41,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
