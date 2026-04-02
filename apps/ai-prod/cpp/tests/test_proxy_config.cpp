@@ -1,0 +1,61 @@
+#include "proxy_config.h"
+
+#include <cstdlib>
+#include <iostream>
+
+namespace {
+
+void clear_env() {
+    unsetenv("AI_PROD_CPP_BIND_HOST");
+    unsetenv("AI_PROD_CPP_BIND_PORT");
+    unsetenv("AI_PROD_PY_BACKEND_HOST");
+    unsetenv("AI_PROD_PY_BACKEND_PORT");
+    unsetenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS");
+    unsetenv("AI_PROD_CPP_READ_TIMEOUT_MS");
+    unsetenv("AI_PROD_CPP_WRITE_TIMEOUT_MS");
+}
+
+bool expect(bool condition, const char* message) {
+    if (!condition) {
+        std::cerr << message << std::endl;
+        return false;
+    }
+    return true;
+}
+
+}
+
+int main() {
+    clear_env();
+
+    {
+        const ProxyConfig config = load_proxy_config_from_env();
+        if (!expect(config.bind_host == "0.0.0.0", "default bind host mismatch")) return 1;
+        if (!expect(config.bind_port == 26005, "default bind port mismatch")) return 1;
+        if (!expect(config.backend_host == "127.0.0.1", "default backend host mismatch")) return 1;
+        if (!expect(config.backend_port == 26004, "default backend port mismatch")) return 1;
+    }
+
+    setenv("AI_PROD_CPP_BIND_HOST", "127.0.0.1", 1);
+    setenv("AI_PROD_CPP_BIND_PORT", "26105", 1);
+    setenv("AI_PROD_PY_BACKEND_HOST", "127.0.0.2", 1);
+    setenv("AI_PROD_PY_BACKEND_PORT", "26104", 1);
+    setenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS", "1234", 1);
+    setenv("AI_PROD_CPP_READ_TIMEOUT_MS", "2345", 1);
+    setenv("AI_PROD_CPP_WRITE_TIMEOUT_MS", "3456", 1);
+
+    {
+        const ProxyConfig config = load_proxy_config_from_env();
+        if (!expect(config.bind_host == "127.0.0.1", "override bind host mismatch")) return 1;
+        if (!expect(config.bind_port == 26105, "override bind port mismatch")) return 1;
+        if (!expect(config.backend_host == "127.0.0.2", "override backend host mismatch")) return 1;
+        if (!expect(config.backend_port == 26104, "override backend port mismatch")) return 1;
+        if (!expect(config.connect_timeout_ms == 1234, "override connect timeout mismatch")) return 1;
+        if (!expect(config.read_timeout_ms == 2345, "override read timeout mismatch")) return 1;
+        if (!expect(config.write_timeout_ms == 3456, "override write timeout mismatch")) return 1;
+        if (!expect(build_backend_base_url(config) == "http://127.0.0.2:26104", "backend base url mismatch")) return 1;
+    }
+
+    clear_env();
+    return 0;
+}

@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.20)
+project(ai_prod_cpp LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(AI_PROD_CPP_BUILD_TESTS "Build ai-prod cpp tests" ON)
+
+set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ai_platform/third_party")
+
+add_executable(ai_prod_cpp_proxy
+    src/main.cpp
+    src/proxy_config.cpp
+)
+
+target_include_directories(ai_prod_cpp_proxy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${AI_PLATFORM_THIRD_PARTY_DIR}
+)
+
+if(AI_PROD_CPP_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(test_proxy_config
+        tests/test_proxy_config.cpp
+        src/proxy_config.cpp
+    )
+
+    target_include_directories(test_proxy_config PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME ai_prod_cpp_test_proxy_config COMMAND test_proxy_config)
+endif()

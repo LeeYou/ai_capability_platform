@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: init-host-root shared-assets backend-test frontend-check docker-build compose-config
+.PHONY: init-host-root shared-assets backend-test frontend-check docker-build compose-config ai-prod-cpp-build ai-prod-cpp-test
 
 init-host-root:
 	bash scripts/docker/init_host_root.sh
@@ -34,3 +34,11 @@ docker-build:
 
 compose-config:
 	docker compose config >/dev/null
+
+ai-prod-cpp-build:
+	mkdir -p apps/ai-prod/cpp/build
+	cd apps/ai-prod/cpp/build && cmake .. && cmake --build . --parallel
+
+ai-prod-cpp-test:
+	mkdir -p apps/ai-prod/cpp/build
+	cd apps/ai-prod/cpp/build && cmake .. && cmake --build . --parallel && ctest --output-on-failure
