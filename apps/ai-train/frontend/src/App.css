@@ -78,6 +78,12 @@
   white-space: nowrap;
 }
 
+.badge-muted {
+  color: var(--text);
+  background: var(--social-bg);
+  border-color: var(--border);
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -114,10 +120,49 @@
   word-break: break-all;
 }
 
+.info-text,
+.error-text {
+  margin-top: 16px;
+}
+
+.error-text {
+  color: #c0392b;
+}
+
 .split {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 24px;
+}
+
+.data-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--text-h);
+  font-weight: 600;
 }
 
 @media (max-width: 960px) {
