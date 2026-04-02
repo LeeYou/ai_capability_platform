@@ -100,6 +100,14 @@ class RegistryServiceTestCase(unittest.TestCase):
                     dataset_path="../outside",
                 )
 
+            with self.assertRaises(ValueError):
+                bind_dataset_to_capability(
+                    session,
+                    datasets_root=get_settings().datasets_root,
+                    capability_name="face_detect",
+                    dataset_path="/tmp/outside",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

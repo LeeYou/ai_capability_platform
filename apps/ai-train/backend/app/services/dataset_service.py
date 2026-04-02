@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 @dataclass(frozen=True)
@@ -39,9 +40,17 @@ def scan_dataset_bindings(datasets_root: Path) -> list[DatasetBinding]:
 
 
 def normalize_dataset_path(datasets_root: Path, dataset_path: str) -> Path:
-    candidate = Path(dataset_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = datasets_root / candidate
+    normalized_input = dataset_path.strip()
+    if not normalized_input:
+        raise ValueError("dataset_path 不能为空。")
+
+    raw_path = PurePosixPath(normalized_input.replace("\\", "/"))
+    if raw_path.is_absolute():
+        raise ValueError("dataset_path 仅支持相对路径。")
+    if any(part in {"", ".", ".."} for part in raw_path.parts):
+        raise ValueError("dataset_path 包含非法路径片段。")
+
+    candidate = datasets_root.joinpath(*raw_path.parts)
     candidate = candidate.resolve()
     if not (candidate == datasets_root or datasets_root in candidate.parents):
         raise ValueError("dataset_path 必须位于 datasets 根目录内。")
