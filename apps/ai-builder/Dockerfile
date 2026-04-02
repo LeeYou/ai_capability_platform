@@ -1,3 +1,5 @@
+ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
 FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /workspace/frontend
@@ -9,7 +11,7 @@ COPY apps/ai-builder/frontend/ ./
 RUN npm run build
 
 
-ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+ARG AI_CAP_BASE_IMAGE
 FROM ${AI_CAP_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \

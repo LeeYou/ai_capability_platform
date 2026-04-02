@@ -19,7 +19,7 @@ jobs:
             extra_pip: ""
           - name: ai-test
             path: apps/ai-test/backend
-            extra_pip: "onnxruntime==1.24.4"
+            extra_pip: "onnxruntime==1.23.2"
           - name: ai-license-mgr
             path: apps/ai-license-mgr/backend
             extra_pip: "cryptography==46.0.6"
