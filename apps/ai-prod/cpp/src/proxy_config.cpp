@@ -38,9 +38,14 @@ ProxyConfig load_proxy_config_from_env() {
     config.bind_port = read_int_env("AI_PROD_CPP_BIND_PORT", config.bind_port, 1);
     config.backend_host = read_string_env("AI_PROD_PY_BACKEND_HOST", config.backend_host);
     config.backend_port = read_int_env("AI_PROD_PY_BACKEND_PORT", config.backend_port, 1);
+    config.runtime_snapshot_path = read_string_env("AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH", config.runtime_snapshot_path);
     config.connect_timeout_ms = read_int_env("AI_PROD_CPP_CONNECT_TIMEOUT_MS", config.connect_timeout_ms, 1);
     config.read_timeout_ms = read_int_env("AI_PROD_CPP_READ_TIMEOUT_MS", config.read_timeout_ms, 1);
     config.write_timeout_ms = read_int_env("AI_PROD_CPP_WRITE_TIMEOUT_MS", config.write_timeout_ms, 1);
+    config.snapshot_max_age_seconds = read_int_env(
+        "AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS",
+        config.snapshot_max_age_seconds,
+        1);
     return config;
 }
 

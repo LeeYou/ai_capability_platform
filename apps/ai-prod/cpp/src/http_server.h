@@ -3,6 +3,7 @@
 
 #include "backend_client.h"
 #include "proxy_config.h"
+#include "runtime_snapshot_manager.h"
 
 #include <cpp-httplib/httplib.h>
 
@@ -18,10 +19,15 @@ public:
 private:
     static httplib::Headers BuildForwardHeaders(const httplib::Request& request);
     void ApplyBackendResponse(const BackendResponse& backend_response, httplib::Response& response) const;
+    void ApplySnapshotOrBackendResponse(
+        const SnapshotResponse& snapshot_response,
+        const httplib::Request& request,
+        httplib::Response& response) const;
     void RegisterRoutes();
 
     ProxyConfig config;
     AiProdBackendClient backendClient;
+    RuntimeSnapshotManager snapshotManager;
     std::unique_ptr<httplib::Server> server;
 };
 

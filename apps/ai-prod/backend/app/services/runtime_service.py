@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import threading
@@ -33,7 +34,9 @@ def initialize_database() -> None:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(path)
 
 
 def _append_runtime_log(path: Path, payload: dict[str, Any]) -> None:
@@ -238,6 +241,9 @@ def bootstrap_runtime(
     hardware_features: dict[str, str],
     pool_size: int,
     gpu_available: bool,
+    service_name: str,
+    company_name: str,
+    company_domain: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         target_name = _platform_target_name()
@@ -258,11 +264,18 @@ def bootstrap_runtime(
         session.refresh(revision)
         _apply_revision(capabilities, revision.id, pool_size=pool_size, gpu_available=gpu_available)
         snapshot_payload = {
+            "snapshot_version": 1,
+            "updated_at_utc": datetime.now(UTC).isoformat(),
             "revision_id": revision.id,
             "revision_token": revision.revision_token,
             "capability_names": sorted(capabilities),
+            "capability_count": len(capabilities),
+            "capabilities": list_capabilities(),
             "source_summary": source_summary,
-            "license_status": license_status,
+            "license_status": {**license_status, "runtime_revision_id": revision.id},
+            "service_name": service_name,
+            "company_name": company_name,
+            "company_domain": company_domain,
         }
         _write_json(runtime_snapshot_path, snapshot_payload)
         _append_runtime_log(
@@ -404,6 +417,9 @@ def reload_runtime(
     gpu_available: bool,
     action: str,
     target_revision_id: int | None,
+    service_name: str,
+    company_name: str,
+    company_domain: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         if action == "reload":
@@ -457,11 +473,21 @@ def reload_runtime(
             raise ValueError("仅支持 reload/rollback。")
 
         snapshot_payload = {
+            "snapshot_version": 1,
+            "updated_at_utc": datetime.now(UTC).isoformat(),
             "revision_id": revision.id,
             "revision_token": revision.revision_token,
             "capability_names": json.loads(revision.capabilities_json),
+            "capability_count": len(_ACTIVE_CAPABILITIES),
+            "capabilities": list_capabilities(),
             "source_summary": json.loads(revision.source_summary_json),
-            "license_status": json.loads(revision.detail_json).get("license_status", {}),
+            "license_status": {
+                **json.loads(revision.detail_json).get("license_status", {}),
+                "runtime_revision_id": revision.id,
+            },
+            "service_name": service_name,
+            "company_name": company_name,
+            "company_domain": company_domain,
         }
         _write_json(runtime_snapshot_path, snapshot_payload)
         _append_runtime_log(

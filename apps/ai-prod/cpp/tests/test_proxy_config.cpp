@@ -13,6 +13,8 @@ void clear_env() {
     unsetenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_READ_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_WRITE_TIMEOUT_MS");
+    unsetenv("AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH");
+    unsetenv("AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS");
 }
 
 bool expect(bool condition, const char* message) {
@@ -43,6 +45,8 @@ int main() {
     setenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS", "1234", 1);
     setenv("AI_PROD_CPP_READ_TIMEOUT_MS", "2345", 1);
     setenv("AI_PROD_CPP_WRITE_TIMEOUT_MS", "3456", 1);
+    setenv("AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH", "/tmp/ai_prod_runtime_snapshot.json", 1);
+    setenv("AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS", "45", 1);
 
     {
         const ProxyConfig config = load_proxy_config_from_env();
@@ -53,6 +57,8 @@ int main() {
         if (!expect(config.connect_timeout_ms == 1234, "override connect timeout mismatch")) return 1;
         if (!expect(config.read_timeout_ms == 2345, "override read timeout mismatch")) return 1;
         if (!expect(config.write_timeout_ms == 3456, "override write timeout mismatch")) return 1;
+        if (!expect(config.runtime_snapshot_path == "/tmp/ai_prod_runtime_snapshot.json", "snapshot path mismatch")) return 1;
+        if (!expect(config.snapshot_max_age_seconds == 45, "snapshot max age mismatch")) return 1;
         if (!expect(build_backend_base_url(config) == "http://127.0.0.2:26104", "backend base url mismatch")) return 1;
     }
 

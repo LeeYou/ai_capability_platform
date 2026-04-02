@@ -60,6 +60,7 @@ std::string EscapeJson(const std::string& value) {
 AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
     : config(config_value),
       backendClient(config_value),
+      snapshotManager(config_value),
       server(std::make_unique<httplib::Server>()) {
     RegisterRoutes();
 }
@@ -91,6 +92,18 @@ void AiProdHttpServer::ApplyBackendResponse(
         backend_response.content_type.empty() ? kDefaultJsonContentType : backend_response.content_type.c_str());
 }
 
+void AiProdHttpServer::ApplySnapshotOrBackendResponse(
+    const SnapshotResponse& snapshot_response,
+    const httplib::Request& request,
+    httplib::Response& response) const {
+    if (snapshot_response.ok) {
+        response.status = 200;
+        response.set_content(snapshot_response.body, kDefaultJsonContentType);
+        return;
+    }
+    ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
+}
+
 void AiProdHttpServer::RegisterRoutes() {
     server->Get("/", [&](const httplib::Request&, httplib::Response& response) {
         std::ostringstream payload;
@@ -104,13 +117,13 @@ void AiProdHttpServer::RegisterRoutes() {
     });
 
     server->Get("/api/v1/health", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
+        ApplySnapshotOrBackendResponse(snapshotManager.BuildHealthResponse(), request, response);
     });
     server->Get("/api/v1/capabilities", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
+        ApplySnapshotOrBackendResponse(snapshotManager.BuildCapabilitiesResponse(), request, response);
     });
     server->Get("/api/v1/license/status", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
+        ApplySnapshotOrBackendResponse(snapshotManager.BuildLicenseStatusResponse(), request, response);
     });
     server->Get("/api/v1/admin/revisions", [&](const httplib::Request& request, httplib::Response& response) {
         ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);

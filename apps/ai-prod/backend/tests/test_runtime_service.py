@@ -131,12 +131,20 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 hardware_features=settings.hardware_features,
                 pool_size=settings.pool_size,
                 gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
 
         self.assertTrue(payload["license_status"]["valid"])
         capabilities = list_capabilities()
         self.assertEqual(len(capabilities), 2)
         self.assertTrue(settings.runtime_snapshot_path.is_file())
+        snapshot_payload = json.loads(settings.runtime_snapshot_path.read_text(encoding="utf-8"))
+        self.assertEqual(snapshot_payload["snapshot_version"], 1)
+        self.assertEqual(snapshot_payload["capability_count"], 2)
+        self.assertEqual(len(snapshot_payload["capabilities"]), 2)
+        self.assertEqual(snapshot_payload["service_name"], settings.service_name)
 
     def test_infer_uses_dual_layer_license_validation_and_gpu_fallback(self) -> None:
         settings = get_settings()
@@ -152,6 +160,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 hardware_features=settings.hardware_features,
                 pool_size=settings.pool_size,
                 gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
             payload = infer(
                 runtime_log_path=settings.runtime_log_path,
@@ -183,6 +194,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 hardware_features=settings.hardware_features,
                 pool_size=settings.pool_size,
                 gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
             revisions_before = list_runtime_revisions(session)
             _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
@@ -199,6 +213,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 gpu_available=settings.gpu_available,
                 action="reload",
                 target_revision_id=None,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
             rolled_back = reload_runtime(
                 session,
@@ -213,6 +230,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 gpu_available=settings.gpu_available,
                 action="rollback",
                 target_revision_id=revisions_before[-1]["revision_id"],
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
 
         self.assertGreater(reloaded["active_capability_count"], rolled_back["active_capability_count"])
@@ -234,6 +254,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 hardware_features=settings.hardware_features,
                 pool_size=settings.pool_size,
                 gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
             )
 
         status = get_license_status(license_root=settings.license_root, hardware_features=settings.hardware_features)

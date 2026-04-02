@@ -14,6 +14,7 @@ add_executable(ai_prod_cpp_proxy
     src/http_server.cpp
     src/main.cpp
     src/proxy_config.cpp
+    src/runtime_snapshot_manager.cpp
 )
 
 target_include_directories(ai_prod_cpp_proxy PRIVATE
@@ -40,6 +41,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/backend_client.cpp
         src/http_server.cpp
         src/proxy_config.cpp
+        src/runtime_snapshot_manager.cpp
     )
 
     target_include_directories(test_http_server PRIVATE

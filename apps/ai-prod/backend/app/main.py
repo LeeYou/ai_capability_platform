@@ -26,6 +26,9 @@ async def lifespan(_: FastAPI):
             hardware_features=settings.hardware_features,
             pool_size=settings.pool_size,
             gpu_available=settings.gpu_available,
+            service_name=settings.service_name,
+            company_name=settings.company_name,
+            company_domain=settings.company_domain,
         )
     yield
 

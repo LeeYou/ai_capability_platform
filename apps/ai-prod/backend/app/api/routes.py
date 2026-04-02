@@ -125,6 +125,9 @@ def reload_route(request: ReloadRequest, session: Session = Depends(get_db_sessi
             gpu_available=settings.gpu_available,
             action=request.action,
             target_revision_id=request.target_revision_id,
+            service_name=settings.service_name,
+            company_name=settings.company_name,
+            company_domain=settings.company_domain,
         )
     except (ValueError, LicenseValidationError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

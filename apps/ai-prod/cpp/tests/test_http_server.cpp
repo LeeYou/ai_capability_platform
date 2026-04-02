@@ -7,6 +7,8 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -36,6 +38,39 @@ bool WaitForHttpReady(const std::string& host, int port, const std::string& path
 }
 
 int main() {
+    const std::filesystem::path snapshot_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_snapshot_test.json";
+    {
+        std::ofstream snapshot_output(snapshot_path);
+        snapshot_output
+            << "{"
+            << "\"revision_id\":9,"
+            << "\"capability_count\":1,"
+            << "\"service_name\":\"ai-prod\","
+            << "\"company_name\":\"北京爱知之星科技股份有限公司（Agile Star）\","
+            << "\"company_domain\":\"agilestar.cn\","
+            << "\"capabilities\":[{"
+            << "\"capability_name\":\"face_detect\","
+            << "\"plugin_target\":\"linux_x86_64\","
+            << "\"model_version\":\"v1_0_0\","
+            << "\"backend_type\":\"onnxruntime\","
+            << "\"active_source\":\"host\","
+            << "\"device_mode\":\"gpu/cpu\","
+            << "\"pool_size\":2,"
+            << "\"revision_id\":9"
+            << "}],"
+            << "\"license_status\":{"
+            << "\"valid\":true,"
+            << "\"reason\":\"ok\","
+            << "\"checked_at_cst\":\"2026-04-02T17:00:00+08:00\","
+            << "\"customer_code\":\"cust_prod\","
+            << "\"capability_scope\":[\"face_detect\"],"
+            << "\"version_constraints\":{},"
+            << "\"hardware_fingerprint\":\"abc\","
+            << "\"runtime_revision_id\":9"
+            << "}"
+            << "}";
+    }
+
     if (!Expect(
             AiProdBackendClient::NormalizeRollbackBody("{}") == "{\"action\":\"rollback\"}",
             "rollback normalization should add action")) {
@@ -70,9 +105,11 @@ int main() {
     config.bind_port = proxy_port;
     config.backend_host = "127.0.0.1";
     config.backend_port = backend_port;
+    config.runtime_snapshot_path = snapshot_path.string();
     config.connect_timeout_ms = 1000;
     config.read_timeout_ms = 1000;
     config.write_timeout_ms = 1000;
+    config.snapshot_max_age_seconds = 60;
 
     AiProdHttpServer proxy_server(config);
     std::thread proxy_thread([&]() {
@@ -94,6 +131,29 @@ int main() {
         backend_server.stop();
         proxy_thread.join();
         backend_thread.join();
+        return 1;
+    }
+    const auto health_payload = nlohmann::json::parse(health_result->body);
+    if (!Expect(health_payload["runtime_revision_id"] == 9, "health route should use snapshot revision")) {
+        return 1;
+    }
+
+    const auto capabilities_result = proxy_client.Get("/api/v1/capabilities");
+    if (!Expect(capabilities_result && capabilities_result->status == 200, "capabilities route should respond")) {
+        return 1;
+    }
+    const auto capabilities_payload = nlohmann::json::parse(capabilities_result->body);
+    if (!Expect(capabilities_payload["items"].size() == 1, "capabilities route should use snapshot items")) {
+        return 1;
+    }
+
+    std::filesystem::remove(snapshot_path);
+    const auto fallback_health_result = proxy_client.Get("/api/v1/health");
+    if (!Expect(fallback_health_result && fallback_health_result->status == 200, "health route should fallback to backend")) {
+        return 1;
+    }
+    const auto fallback_health_payload = nlohmann::json::parse(fallback_health_result->body);
+    if (!Expect(fallback_health_payload["service"] == "backend", "health fallback should use backend payload")) {
         return 1;
     }
 

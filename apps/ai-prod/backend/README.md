@@ -31,7 +31,7 @@ cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
-## C++ HTTP 首轮骨架
+## C++ HTTP 迭代实现
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/cpp
@@ -43,9 +43,10 @@ ctest --test-dir build --output-on-failure
 默认行为：
 
 1. C++ 服务监听 `0.0.0.0:26005`
-2. 将 `/api/v1/*` 的核心请求转发到 Python 后端 `127.0.0.1:26004`
-3. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
-4. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+2. `/api/v1/health`、`/api/v1/capabilities`、`/api/v1/license/status` 优先读取 runtime snapshot 直接响应
+3. snapshot 不可用或过期时，自动降级转发到 Python 后端 `127.0.0.1:26004`
+4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
+5. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 
@@ -56,3 +57,5 @@ ctest --test-dir build --output-on-failure
 - `AI_PROD_CPP_CONNECT_TIMEOUT_MS`
 - `AI_PROD_CPP_READ_TIMEOUT_MS`
 - `AI_PROD_CPP_WRITE_TIMEOUT_MS`
+- `AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH`
+- `AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS`
