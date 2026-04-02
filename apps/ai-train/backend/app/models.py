@@ -106,3 +106,26 @@ class UpdateTrainingTaskStatusRequest(BaseModel):
 
 class AppendTrainingTaskLogRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000, description="日志内容")
+
+
+class ModelArtifactItem(BaseModel):
+    artifact_id: int = Field(description="模型产物 ID")
+    capability_name: str = Field(description="能力标识")
+    model_version: str = Field(description="模型版本")
+    source_training_task_id: int = Field(description="来源训练任务 ID")
+    artifact_path: str = Field(description="模型目录")
+    manifest_path: str = Field(description="manifest 路径")
+    backend_type: str = Field(description="执行后端")
+    checksum: str = Field(description="校验值")
+    status: str = Field(description="产物状态")
+
+
+class ModelArtifactListResponse(BaseModel):
+    items: list[ModelArtifactItem] = Field(default_factory=list)
+
+
+class RegisterModelArtifactRequest(BaseModel):
+    capability_name: str = Field(min_length=1, max_length=128, description="能力标识")
+    model_version: str = Field(min_length=1, max_length=128, description="模型版本")
+    source_training_task_id: int = Field(description="来源训练任务 ID")
+    backend_type: str | None = Field(default=None, min_length=1, max_length=64, description="执行后端")

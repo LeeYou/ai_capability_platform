@@ -17,11 +17,20 @@ from app.models import (
     DatasetItem,
     DatasetListResponse,
     HealthResponse,
+    ModelArtifactItem,
+    ModelArtifactListResponse,
     RegisterCapabilityRequest,
+    RegisterModelArtifactRequest,
     SubmitAnnotationTaskRequest,
     TrainingTaskItem,
     TrainingTaskListResponse,
     UpdateTrainingTaskStatusRequest,
+)
+from app.services.model_service import (
+    ModelArtifactNotFoundError,
+    create_model_artifact,
+    get_model_artifact,
+    list_model_artifacts,
 )
 from app.services.annotation_service import (
     AnnotationTaskNotFoundError,
@@ -415,4 +424,76 @@ def append_training_task_log_route(
         log_path=item.log_path,
         started_at=item.started_at,
         completed_at=item.completed_at,
+    )
+
+
+@router.get("/models", response_model=ModelArtifactListResponse, tags=["model"])
+def get_models(session: Session = Depends(get_db_session)) -> ModelArtifactListResponse:
+    items = list_model_artifacts(session)
+    return ModelArtifactListResponse(
+        items=[
+            ModelArtifactItem(
+                artifact_id=item.artifact_id,
+                capability_name=item.capability_name,
+                model_version=item.model_version,
+                source_training_task_id=item.source_training_task_id,
+                artifact_path=item.artifact_path,
+                manifest_path=item.manifest_path,
+                backend_type=item.backend_type,
+                checksum=item.checksum,
+                status=item.status,
+            )
+            for item in items
+        ]
+    )
+
+
+@router.get("/models/{artifact_id}", response_model=ModelArtifactItem, tags=["model"])
+def get_model_detail(artifact_id: int, session: Session = Depends(get_db_session)) -> ModelArtifactItem:
+    try:
+        item = get_model_artifact(session, artifact_id)
+    except ModelArtifactNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return ModelArtifactItem(
+        artifact_id=item.artifact_id,
+        capability_name=item.capability_name,
+        model_version=item.model_version,
+        source_training_task_id=item.source_training_task_id,
+        artifact_path=item.artifact_path,
+        manifest_path=item.manifest_path,
+        backend_type=item.backend_type,
+        checksum=item.checksum,
+        status=item.status,
+    )
+
+
+@router.post("/models", response_model=ModelArtifactItem, status_code=status.HTTP_201_CREATED, tags=["model"])
+def create_model_route(
+    request: RegisterModelArtifactRequest,
+    session: Session = Depends(get_db_session),
+) -> ModelArtifactItem:
+    settings = get_settings()
+    try:
+        item = create_model_artifact(
+            session=session,
+            models_root=settings.models_root,
+            capability_name=request.capability_name,
+            model_version=request.model_version,
+            source_training_task_id=request.source_training_task_id,
+            backend_type=request.backend_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return ModelArtifactItem(
+        artifact_id=item.artifact_id,
+        capability_name=item.capability_name,
+        model_version=item.model_version,
+        source_training_task_id=item.source_training_task_id,
+        artifact_path=item.artifact_path,
+        manifest_path=item.manifest_path,
+        backend_type=item.backend_type,
+        checksum=item.checksum,
+        status=item.status,
     )

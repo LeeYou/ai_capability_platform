@@ -40,6 +40,10 @@ class CapabilityRegistryModel(Base):
         back_populates="capability",
         cascade="all, delete-orphan",
     )
+    model_artifacts: Mapped[list[ModelArtifactModel]] = relationship(
+        back_populates="capability",
+        cascade="all, delete-orphan",
+    )
 
 
 class DatasetBindingModel(Base):
@@ -128,3 +132,36 @@ class TrainingTaskModel(Base):
     capability: Mapped[CapabilityRegistryModel] = relationship(back_populates="training_tasks")
     dataset_binding: Mapped[DatasetBindingModel] = relationship(back_populates="training_tasks")
     annotation_task: Mapped[AnnotationTaskModel | None] = relationship(back_populates="training_tasks")
+    model_artifacts: Mapped[list[ModelArtifactModel]] = relationship(back_populates="source_training_task")
+
+
+class ModelArtifactModel(Base):
+    __tablename__ = "model_artifact"
+    __table_args__ = (
+        UniqueConstraint("capability_id", "model_version", name="uq_model_artifact_capability_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    capability_id: Mapped[int] = mapped_column(ForeignKey("capability_registry.id", ondelete="CASCADE"), index=True)
+    source_training_task_id: Mapped[int] = mapped_column(
+        ForeignKey("training_task.id", ondelete="CASCADE"),
+        index=True,
+    )
+    model_version: Mapped[str] = mapped_column(String(128))
+    artifact_path: Mapped[str] = mapped_column(Text)
+    manifest_path: Mapped[str] = mapped_column(Text)
+    backend_type: Mapped[str] = mapped_column(String(64), default="cpu")
+    checksum: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(64), default="ready")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+    capability: Mapped[CapabilityRegistryModel] = relationship(back_populates="model_artifacts")
+    source_training_task: Mapped[TrainingTaskModel] = relationship(back_populates="model_artifacts")
