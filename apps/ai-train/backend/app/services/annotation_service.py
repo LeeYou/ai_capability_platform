@@ -8,7 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AnnotationTaskModel, CapabilityRegistryModel
-from app.services.registry_service import _normalize_capability_name
+from app.services.registry_service import normalize_capability_name
+
+MAX_ANNOTATION_RESULT_BYTES = 1_048_576
+
+
+class AnnotationTaskNotFoundError(ValueError):
+    """标注任务不存在。"""
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,27 @@ class AnnotationTaskSummary:
 def _annotation_result_path(annotation_tasks_root: Path, task_id: int) -> Path:
     annotation_tasks_root.mkdir(parents=True, exist_ok=True)
     return annotation_tasks_root / f"annotation_task_{task_id}.json"
+
+
+def _validate_annotations_payload(
+    task: AnnotationTaskModel,
+    annotations: list[dict[str, object]],
+) -> int:
+    for index, item in enumerate(annotations):
+        if not isinstance(item, dict) or not item:
+            raise ValueError(f"annotations[{index}] 必须为非空对象。")
+        if any(not isinstance(key, str) or not key.strip() for key in item):
+            raise ValueError(f"annotations[{index}] 包含非法字段名。")
+
+    labeled_count = len(annotations)
+    if labeled_count > task.sample_total:
+        raise ValueError("标注结果数量不能超过样本总数。")
+
+    payload_size = len(json.dumps(annotations, ensure_ascii=False).encode("utf-8"))
+    if payload_size > MAX_ANNOTATION_RESULT_BYTES:
+        raise ValueError("标注结果内容过大，超过单任务存储限制。")
+
+    return labeled_count
 
 
 def _to_summary(task: AnnotationTaskModel) -> AnnotationTaskSummary:
@@ -47,7 +74,7 @@ def create_annotation_task(
     task_name: str,
     sample_total: int,
 ) -> AnnotationTaskSummary:
-    normalized_name = _normalize_capability_name(capability_name)
+    normalized_name = normalize_capability_name(capability_name)
     normalized_task_name = task_name.strip()
     if not normalized_task_name:
         raise ValueError("task_name 不能为空。")
@@ -84,7 +111,7 @@ def list_annotation_tasks(session: Session) -> list[AnnotationTaskSummary]:
 def get_annotation_task(session: Session, task_id: int) -> AnnotationTaskSummary:
     task = session.get(AnnotationTaskModel, task_id)
     if task is None:
-        raise ValueError("标注任务不存在。")
+        raise AnnotationTaskNotFoundError("标注任务不存在。")
     return _to_summary(task)
 
 
@@ -96,11 +123,8 @@ def submit_annotation_task_result(
 ) -> AnnotationTaskSummary:
     task = session.get(AnnotationTaskModel, task_id)
     if task is None:
-        raise ValueError("标注任务不存在。")
-
-    labeled_count = len(annotations)
-    if labeled_count > task.sample_total:
-        raise ValueError("标注结果数量不能超过样本总数。")
+        raise AnnotationTaskNotFoundError("标注任务不存在。")
+    labeled_count = _validate_annotations_payload(task, annotations)
 
     result_path = _annotation_result_path(annotation_tasks_root, task.id)
     payload = {

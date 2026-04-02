@@ -117,6 +117,33 @@ class AnnotationServiceTestCase(unittest.TestCase):
         self.assertEqual(detail.task_id, created.task_id)
         self.assertEqual(detail.status, "pending")
 
+    def test_submit_annotation_task_rejects_empty_item(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "face_detect").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="face_detect", display_name="Face Detect")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="face_detect",
+                dataset_path="face_detect",
+            )
+            created = create_annotation_task(
+                session=session,
+                capability_name="face_detect",
+                task_name="异常校验",
+                sample_total=1,
+            )
+
+            with self.assertRaises(ValueError):
+                submit_annotation_task_result(
+                    session=session,
+                    annotation_tasks_root=get_settings().annotation_tasks_root,
+                    task_id=created.task_id,
+                    annotations=[{}],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

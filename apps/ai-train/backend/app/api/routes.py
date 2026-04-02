@@ -19,6 +19,7 @@ from app.models import (
     SubmitAnnotationTaskRequest,
 )
 from app.services.annotation_service import (
+    AnnotationTaskNotFoundError,
     create_annotation_task,
     get_annotation_task,
     list_annotation_tasks,
@@ -170,7 +171,7 @@ def get_annotation_task_detail(
 ) -> AnnotationTaskItem:
     try:
         item = get_annotation_task(session, task_id)
-    except ValueError as exc:
+    except AnnotationTaskNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return AnnotationTaskItem(
@@ -235,9 +236,10 @@ def submit_annotation_task(
             task_id=task_id,
             annotations=request.annotations,
         )
+    except AnnotationTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
-        status_code = status.HTTP_404_NOT_FOUND if "不存在" in str(exc) else status.HTTP_400_BAD_REQUEST
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return AnnotationTaskItem(
         task_id=item.task_id,

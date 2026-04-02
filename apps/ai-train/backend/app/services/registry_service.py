@@ -36,7 +36,7 @@ def initialize_database() -> None:
     Base.metadata.create_all(bind=get_engine())
 
 
-def _normalize_capability_name(capability_name: str) -> str:
+def normalize_capability_name(capability_name: str) -> str:
     normalized_name = capability_name.strip()
     if not normalized_name:
         raise ValueError("capability_name 不能为空。")
@@ -56,7 +56,7 @@ def register_capability(
     display_name: str | None = None,
     source: str = "manual",
 ) -> CapabilitySummary:
-    normalized_name = _normalize_capability_name(capability_name)
+    normalized_name = normalize_capability_name(capability_name)
     normalized_display_name = display_name.strip() if display_name else _default_display_name(normalized_name)
 
     capability = session.scalar(
@@ -101,7 +101,7 @@ def bind_dataset_to_capability(
     dataset_status: str = "ready",
     source: str = "manual",
 ) -> DatasetSummary:
-    normalized_name = _normalize_capability_name(capability_name)
+    normalized_name = normalize_capability_name(capability_name)
     normalized_path = normalize_dataset_path(datasets_root, dataset_path)
     if not normalized_path.exists() or not normalized_path.is_dir():
         raise ValueError("dataset_path 对应目录不存在。")
