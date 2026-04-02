@@ -31,6 +31,7 @@ class TrainingTaskSummary:
     annotation_task_id: int | None
     retry_count: int
     log_path: str | None
+    workspace_path: str | None
     started_at: str | None
     completed_at: str | None
 
@@ -47,6 +48,7 @@ def _to_summary(task: TrainingTaskModel) -> TrainingTaskSummary:
         annotation_task_id=task.annotation_task_id,
         retry_count=task.retry_count,
         log_path=task.log_path,
+        workspace_path=task.workspace_path,
         started_at=task.started_at.isoformat() if task.started_at else None,
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
     )
@@ -55,6 +57,15 @@ def _to_summary(task: TrainingTaskModel) -> TrainingTaskSummary:
 def _log_path(training_logs_root: Path, task_id: int) -> Path:
     training_logs_root.mkdir(parents=True, exist_ok=True)
     return training_logs_root / f"training_task_{task_id}.log"
+
+
+def _workspace_dir(training_jobs_root: Path, task_id: int) -> Path:
+    training_jobs_root.mkdir(parents=True, exist_ok=True)
+    path = (training_jobs_root / str(task_id)).resolve()
+    if not (path == training_jobs_root or training_jobs_root in path.parents):
+        raise ValueError("训练工作区目录非法。")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _validate_status_transition(current_status: str, target_status: str) -> None:
@@ -194,6 +205,52 @@ def append_training_task_log(
         file_obj.write(f"{datetime.now(UTC).isoformat()} [{task.status}] {normalized_message}\n")
 
     task.log_path = str(log_path.resolve())
+    session.commit()
+    session.refresh(task)
+    return _to_summary(task)
+
+
+def prepare_training_workspace(
+    session: Session,
+    training_jobs_root: Path,
+    task_id: int,
+) -> TrainingTaskSummary:
+    task = session.get(TrainingTaskModel, task_id)
+    if task is None:
+        raise TrainingTaskNotFoundError("训练任务不存在。")
+
+    workspace_dir = _workspace_dir(training_jobs_root, task.id)
+    config_path = workspace_dir / "train_config.json"
+    script_path = workspace_dir / "run_training.sh"
+    train_params = json.loads(task.train_params_json) if task.train_params_json else {}
+    config_payload = {
+        "task_id": task.id,
+        "capability_name": task.capability.capability_name,
+        "task_name": task.task_name,
+        "dataset_path": task.dataset_binding.dataset_path,
+        "annotation_task_id": task.annotation_task_id,
+        "framework": task.framework,
+        "backend_type": task.backend_type,
+        "train_params": train_params,
+        "log_path": task.log_path,
+    }
+    config_path.write_text(json.dumps(config_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'echo "[ai-train] 准备执行训练任务"',
+                f'echo "[ai-train] 配置文件: {config_path.resolve()}"',
+                'echo "[ai-train] 此阶段提供执行脚手架，后续由训练执行器接管实际训练流程"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+
+    task.workspace_path = str(workspace_dir.resolve())
     session.commit()
     session.refresh(task)
     return _to_summary(task)

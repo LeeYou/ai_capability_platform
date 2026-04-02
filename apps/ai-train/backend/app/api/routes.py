@@ -52,6 +52,7 @@ from app.services.training_service import (
     create_training_task,
     get_training_task,
     list_training_tasks,
+    prepare_training_workspace,
     update_training_task_status,
 )
 
@@ -291,6 +292,7 @@ def get_training_tasks(session: Session = Depends(get_db_session)) -> TrainingTa
                 annotation_task_id=item.annotation_task_id,
                 retry_count=item.retry_count,
                 log_path=item.log_path,
+                workspace_path=item.workspace_path,
                 started_at=item.started_at,
                 completed_at=item.completed_at,
             )
@@ -317,6 +319,7 @@ def get_training_task_detail(task_id: int, session: Session = Depends(get_db_ses
         annotation_task_id=item.annotation_task_id,
         retry_count=item.retry_count,
         log_path=item.log_path,
+        workspace_path=item.workspace_path,
         started_at=item.started_at,
         completed_at=item.completed_at,
     )
@@ -358,6 +361,7 @@ def create_training_task_route(
         annotation_task_id=item.annotation_task_id,
         retry_count=item.retry_count,
         log_path=item.log_path,
+        workspace_path=item.workspace_path,
         started_at=item.started_at,
         completed_at=item.completed_at,
     )
@@ -387,6 +391,7 @@ def update_training_task_status_route(
         annotation_task_id=item.annotation_task_id,
         retry_count=item.retry_count,
         log_path=item.log_path,
+        workspace_path=item.workspace_path,
         started_at=item.started_at,
         completed_at=item.completed_at,
     )
@@ -422,6 +427,41 @@ def append_training_task_log_route(
         annotation_task_id=item.annotation_task_id,
         retry_count=item.retry_count,
         log_path=item.log_path,
+        workspace_path=item.workspace_path,
+        started_at=item.started_at,
+        completed_at=item.completed_at,
+    )
+
+
+@router.post("/training-tasks/{task_id}/prepare", response_model=TrainingTaskItem, tags=["training"])
+def prepare_training_task_route(
+    task_id: int,
+    session: Session = Depends(get_db_session),
+) -> TrainingTaskItem:
+    settings = get_settings()
+    try:
+        item = prepare_training_workspace(
+            session=session,
+            training_jobs_root=settings.training_jobs_root,
+            task_id=task_id,
+        )
+    except TrainingTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return TrainingTaskItem(
+        task_id=item.task_id,
+        capability_name=item.capability_name,
+        task_name=item.task_name,
+        dataset_path=item.dataset_path,
+        status=item.status,
+        framework=item.framework,
+        backend_type=item.backend_type,
+        annotation_task_id=item.annotation_task_id,
+        retry_count=item.retry_count,
+        log_path=item.log_path,
+        workspace_path=item.workspace_path,
         started_at=item.started_at,
         completed_at=item.completed_at,
     )

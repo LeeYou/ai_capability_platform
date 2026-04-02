@@ -10,7 +10,15 @@ ai-train 后端首期工程骨架，提供训练子系统的基础 API、配置�
 4. 标注任务创建、查询与结果提交接口
 5. 训练任务创建、查询、状态流转与日志接口
 6. 模型产物登记、列表与详情接口
-7. SQLite 元数据持久化
+7. 训练工作区准备与执行脚手架生成
+8. SQLite 元数据持久化
+
+## 训练工作区
+
+训练任务可通过 `POST /api/v1/training-tasks/{task_id}/prepare` 生成工作区，默认落盘到 `${AI_CAP_HOST_ROOT}/data/training_jobs/<task_id>/`，包含：
+
+1. `train_config.json`
+2. `run_training.sh`
 
 ## 本地运行
 

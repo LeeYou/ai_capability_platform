@@ -14,6 +14,7 @@ from app.services.training_service import (
     create_training_task,
     get_training_task,
     list_training_tasks,
+    prepare_training_workspace,
     update_training_task_status,
 )
 
@@ -152,6 +153,39 @@ class TrainingServiceTestCase(unittest.TestCase):
 
         self.assertEqual(retried.retry_count, 1)
         self.assertEqual(retried.status, "running")
+
+    def test_prepare_training_workspace_creates_config_and_script(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "layout_review").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="layout_review", display_name="Layout Review")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="layout_review",
+                dataset_path="layout_review",
+            )
+            created = create_training_task(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                capability_name="layout_review",
+                task_name="版面训练",
+                framework="pytorch",
+                backend_type="cpu",
+                annotation_task_id=None,
+                train_params={"epochs": 5, "batch_size": 4},
+            )
+            prepared = prepare_training_workspace(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+            )
+
+        self.assertTrue(prepared.workspace_path)
+        workspace = Path(prepared.workspace_path)
+        self.assertTrue((workspace / "train_config.json").is_file())
+        self.assertTrue((workspace / "run_training.sh").is_file())
 
 
 if __name__ == "__main__":

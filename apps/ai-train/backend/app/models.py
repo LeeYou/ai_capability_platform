@@ -83,6 +83,7 @@ class TrainingTaskItem(BaseModel):
     annotation_task_id: int | None = Field(default=None, description="来源标注任务 ID")
     retry_count: int = Field(description="重试次数")
     log_path: str | None = Field(default=None, description="日志文件路径")
+    workspace_path: str | None = Field(default=None, description="训练工作区路径")
     started_at: str | None = Field(default=None, description="开始时间")
     completed_at: str | None = Field(default=None, description="完成时间")
 

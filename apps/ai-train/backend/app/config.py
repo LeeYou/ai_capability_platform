@@ -36,6 +36,7 @@ class Settings:
     database_path: Path
     annotation_tasks_root: Path
     training_logs_root: Path
+    training_jobs_root: Path
     company_name: str
     company_domain: str
     service_name: str
@@ -70,6 +71,7 @@ def get_settings() -> Settings:
         database_path=database_path,
         annotation_tasks_root=_resolve_child_path(data_root, "annotation_tasks"),
         training_logs_root=_resolve_child_path(_resolve_child_path(host_root, "logs"), "training_tasks"),
+        training_jobs_root=_resolve_child_path(data_root, "training_jobs"),
         company_name="北京爱知之星科技股份有限公司（Agile Star）",
         company_domain="agilestar.cn",
         service_name="ai-train",
