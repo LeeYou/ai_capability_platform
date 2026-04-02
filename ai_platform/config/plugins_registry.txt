@@ -1,0 +1,10 @@
+# format: capability_id=plugin_library_path|model_dir|device|max_batch_size
+# format_v2: capability_id=plugin_library_path|model_dir|device|max_batch_size|instance_count
+# example:
+# face_recognize=build/bin/Release/libcap_face_recognize.dll|models/face_recognize|cpu|1|2
+face_detect = build/bin/Release/libcap_face_detect.dll | models/face_detect | cpu | 1 | 2
+liveness_action = build/bin/Release/libcap_liveness_action.dll | models/liveness_action | cpu | 1 | 1
+idcard_detect = build/bin/Release/libcap_idcard_detect.dll | models/idcard_detect | cpu | 1 | 1
+doc_classify = build/bin/Release/libcap_doc_classify.dll | models/doc_classify | cpu | 1 | 1
+
+seal_detect = build/bin/Release/libcap_seal_detect.dll | models/seal_detect | cpu | 1 | 1

@@ -1,0 +1,35 @@
+﻿{
+    "code":  0,
+    "message":  "success",
+    "data":  {
+                 "valid":  true,
+                 "effective_now":  true,
+                 "in_grace_period":  false,
+                 "expired":  false,
+                 "failure_reason":  "",
+                 "failure_detail":  "",
+                 "version":  "1.0",
+                 "license_type":  "development",
+                 "customer_id":  "CUST-DEMO-001",
+                 "customer_name":  "demo_customer",
+                 "issued_at":  "2026-03-01T00:00:00Z",
+                 "effective_from":  "2026-03-01T00:00:00Z",
+                 "expires_at":  "2099-12-31T23:59:59Z",
+                 "grace_period_hours":  24,
+                 "allow_reload":  true,
+                 "allow_admin_api":  true,
+                 "allow_test_page":  true,
+                 "licensed_capabilities":  [
+                                               "face_detect",
+                                               "liveness_action",
+                                               "not_exist_cap"
+                                           ],
+                 "denied_capabilities":  [
+
+                                         ]
+             },
+    "request_id":  "mgmt_1775121624760",
+    "endpoint":  "/api/v1/license/status",
+    "timestamp":  1775121624760,
+    "api_version":  "v1"
+}

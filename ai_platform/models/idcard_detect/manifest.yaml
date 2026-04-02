@@ -1,0 +1,3 @@
+capability_id: idcard_detect
+version: 1.0.0
+model_file: model.onnx

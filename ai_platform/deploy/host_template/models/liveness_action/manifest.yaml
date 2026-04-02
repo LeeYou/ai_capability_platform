@@ -1,0 +1,3 @@
+capability_id: liveness_action
+version: 1.0.0
+model_file: model.onnx

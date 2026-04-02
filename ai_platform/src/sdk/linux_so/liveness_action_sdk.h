@@ -1,0 +1,30 @@
+#ifndef AI_PLATFORM_LIVENESS_ACTION_SDK_H
+#define AI_PLATFORM_LIVENESS_ACTION_SDK_H
+
+#include "capability_sdk.h"
+
+#include <string>
+
+namespace ai_platform {
+
+using LivenessActionSdkResult = CapabilitySdkResult;
+
+class LivenessActionSdk {
+public:
+    LivenessActionSdk();
+    ~LivenessActionSdk();
+
+    bool initialize(const std::string& library_path, const std::string& model_dir, const std::string& license_path = std::string());
+    LivenessActionSdkResult infer_video_base64(const std::string& media_base64, const std::string& media_format, const std::string& action) const;
+    std::string last_error() const;
+    std::string last_license_failure_reason() const;
+    std::string last_license_failure_detail() const;
+    std::string capability_id() const;
+
+private:
+    CapabilitySdk sdk_;
+};
+
+}
+
+#endif

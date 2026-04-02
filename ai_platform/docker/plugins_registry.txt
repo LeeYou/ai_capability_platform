@@ -1,0 +1,6 @@
+# docker delivery format: capability_id=plugin_library_path|model_dir|device|max_batch_size|instance_count
+face_detect = plugins/libcap_face_detect.so | models/face_detect | cpu | 1 | 2
+liveness_action = plugins/libcap_liveness_action.so | models/liveness_action | cpu | 1 | 1
+idcard_detect = plugins/libcap_idcard_detect.so | models/idcard_detect | cpu | 1 | 1
+doc_classify = plugins/libcap_doc_classify.so | models/doc_classify | cpu | 1 | 1
+seal_detect = plugins/libcap_seal_detect.so | models/seal_detect | cpu | 1 | 1
