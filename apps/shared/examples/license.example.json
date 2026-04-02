@@ -1,0 +1,22 @@
+{
+  "algorithm": "ed25519",
+  "payload": {
+    "customer_id": 1,
+    "customer_code": "cust_001",
+    "customer_name": "演示客户",
+    "capability_scope": [
+      "face_detect"
+    ],
+    "hardware_fingerprint": "hw-demo-001",
+    "start_at_cst": "2026-04-01T00:00:00+08:00",
+    "expire_at_cst": "2027-04-01T00:00:00+08:00",
+    "version_constraints": {
+      "min_version": "1.0.0",
+      "max_version": "2.0.0"
+    },
+    "issued_at_cst": "2026-04-02T10:00:00+08:00",
+    "issuer_key_name": "builder-key",
+    "policy_id": 1
+  },
+  "signature": "base64-demo-signature"
+}

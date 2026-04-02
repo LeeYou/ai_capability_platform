@@ -1,0 +1,38 @@
+{
+  "package_id": 301,
+  "package_name": "face_detect_sdk_release",
+  "capability_name": "face_detect",
+  "model_version": "v1_0_0",
+  "target_name": "linux_x86_64",
+  "artifact_format": "so",
+  "jni_enabled": true,
+  "source_builder_manifest": {
+    "capability_name": "face_detect",
+    "model_version": "v1_0_0",
+    "target_name": "linux_x86_64",
+    "artifact_format": "so",
+    "build_mode": "native",
+    "toolchain_name": "cmake-native",
+    "jni_enabled": true,
+    "customer_code": "cust_001",
+    "issue_record_id": 1,
+    "dependency_summary": {
+      "runtime": "onnxruntime（运行时共享依赖，首期未内置）",
+      "abi": "标准 C ABI v1",
+      "license_required": true,
+      "build_params_controlled": true
+    }
+  },
+  "delivery_content": [
+    "lib",
+    "include",
+    "model",
+    "license",
+    "docs",
+    "examples",
+    "jni"
+  ],
+  "abi_compatibility": "ai-builder / ai-prod v1",
+  "thread_safe": true,
+  "gpu_fallback": true
+}

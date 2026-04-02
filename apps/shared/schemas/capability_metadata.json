@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "能力元数据结构",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "display_name",
+    "dataset_path",
+    "dataset_status",
+    "source"
+  ],
+  "properties": {
+    "capability_name": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "dataset_path": {
+      "type": "string"
+    },
+    "dataset_status": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "构建产物 manifest",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "model_version",
+    "target_name",
+    "artifact_format",
+    "build_mode",
+    "toolchain_name",
+    "jni_enabled",
+    "customer_code",
+    "issue_record_id",
+    "dependency_summary"
+  ],
+  "properties": {
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "target_name": {
+      "type": "string"
+    },
+    "artifact_format": {
+      "type": "string"
+    },
+    "build_mode": {
+      "type": "string"
+    },
+    "toolchain_name": {
+      "type": "string"
+    },
+    "jni_enabled": {
+      "type": "boolean"
+    },
+    "customer_code": {
+      "type": "string"
+    },
+    "issue_record_id": {
+      "type": "integer"
+    },
+    "dependency_summary": {
+      "type": "object",
+      "required": [
+        "runtime",
+        "abi",
+        "license_required",
+        "build_params_controlled"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "string"
+        },
+        "abi": {
+          "type": "string"
+        },
+        "license_required": {
+          "type": "boolean"
+        },
+        "build_params_controlled": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

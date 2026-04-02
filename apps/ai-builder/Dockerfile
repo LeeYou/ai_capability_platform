@@ -9,7 +9,8 @@ COPY apps/ai-builder/frontend/ ./
 RUN npm run build
 
 
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM ${AI_CAP_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -17,10 +18,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AI_CAP_HOST_ROOT=/data/ai_capability_platform
 
 WORKDIR /workspace
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv ca-certificates cmake build-essential g++ \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY apps/ai-builder/backend/ /workspace/backend/
 RUN python3 -m pip install --no-cache-dir \

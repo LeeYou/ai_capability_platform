@@ -1,0 +1,10 @@
+{
+  "capability_name": "face_detect",
+  "model_version": "v1_0_0",
+  "source_train_task_id": 101,
+  "task_name": "face_detect_train_v1",
+  "backend_type": "onnxruntime",
+  "artifact_path": "/data/ai_capability_platform/models/face_detect/v1_0_0",
+  "status": "ready",
+  "checksum": "checksum-demo-model"
+}

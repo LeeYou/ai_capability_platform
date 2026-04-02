@@ -1,0 +1,41 @@
+name: platform-frontend-checks
+
+on:
+  push:
+    branches:
+      - main
+      - copilot/**
+  pull_request:
+
+jobs:
+  frontend-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ai-train
+            path: apps/ai-train/frontend
+          - name: ai-test
+            path: apps/ai-test/frontend
+          - name: ai-license-mgr
+            path: apps/ai-license-mgr/frontend
+          - name: ai-builder
+            path: apps/ai-builder/frontend
+          - name: ai-prod
+            path: apps/ai-prod/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.path }}/package-lock.json
+      - name: 执行 ${{ matrix.name }} 前端校验
+        run: |
+          cd "${MODULE_PATH}"
+          npm ci
+          npm run build
+          npm run lint
+        env:
+          MODULE_PATH: ${{ matrix.path }}

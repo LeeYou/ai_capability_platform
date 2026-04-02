@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "message": "ok",
+  "request_id": "req-demo-0001",
+  "data": {
+    "service": "ai-prod",
+    "status": "ok"
+  }
+}

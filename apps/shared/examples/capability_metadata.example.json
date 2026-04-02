@@ -1,0 +1,7 @@
+{
+  "capability_name": "face_detect",
+  "display_name": "Face Detect",
+  "dataset_path": "face_detect",
+  "dataset_status": "ready",
+  "source": "manual"
+}
