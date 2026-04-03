@@ -146,6 +146,20 @@ int main() {
     if (!Expect(capabilities_payload["items"].size() == 1, "capabilities route should use snapshot items")) {
         return 1;
     }
+    const auto catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(catalog_result && catalog_result->status == 200, "catalog route should respond")) {
+        return 1;
+    }
+    const auto catalog_payload = nlohmann::json::parse(catalog_result->body);
+    if (!Expect(catalog_payload["snapshot_ready"] == true, "catalog route should mark snapshot ready")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"].size() == 1, "catalog route should expose one capability")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
+        return 1;
+    }
 
     std::filesystem::remove(snapshot_path);
     const auto fallback_health_result = proxy_client.Get("/api/v1/health");
@@ -154,6 +168,14 @@ int main() {
     }
     const auto fallback_health_payload = nlohmann::json::parse(fallback_health_result->body);
     if (!Expect(fallback_health_payload["service"] == "backend", "health fallback should use backend payload")) {
+        return 1;
+    }
+    const auto stale_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(stale_catalog_result && stale_catalog_result->status == 200, "catalog route should still respond without snapshot")) {
+        return 1;
+    }
+    const auto stale_catalog_payload = nlohmann::json::parse(stale_catalog_result->body);
+    if (!Expect(stale_catalog_payload["snapshot_ready"] == false, "catalog route should mark snapshot unavailable")) {
         return 1;
     }
 

@@ -9,6 +9,7 @@ struct ProxyConfig {
     std::string backend_host = "127.0.0.1";
     int backend_port = 26004;
     std::string runtime_snapshot_path = "/data/ai_capability_platform/data/ai_prod_runtime_snapshot.json";
+    int pool_size = 2;
     int connect_timeout_ms = 3000;
     int read_timeout_ms = 30000;
     int write_timeout_ms = 30000;

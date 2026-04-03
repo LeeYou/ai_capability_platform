@@ -1,13 +1,17 @@
 #ifndef AI_CAPABILITY_PLATFORM_APPS_AI_PROD_CPP_HTTP_SERVER_H
 #define AI_CAPABILITY_PLATFORM_APPS_AI_PROD_CPP_HTTP_SERVER_H
 
+#include "capability_catalog.h"
 #include "backend_client.h"
+#include "instance_pool.h"
 #include "proxy_config.h"
 #include "runtime_snapshot_manager.h"
 
 #include <cpp-httplib/httplib.h>
 
+#include <map>
 #include <memory>
+#include <mutex>
 
 class AiProdHttpServer {
 public:
@@ -23,11 +27,16 @@ private:
         const SnapshotResponse& snapshot_response,
         const httplib::Request& request,
         httplib::Response& response) const;
+    bool RefreshCatalogAndPools();
+    nlohmann::json BuildCatalogPayload(bool snapshot_ready) const;
     void RegisterRoutes();
 
     ProxyConfig config;
+    CapabilityCatalog capabilityCatalog;
     AiProdBackendClient backendClient;
+    std::map<std::string, std::unique_ptr<InstancePool>> instancePools;
     RuntimeSnapshotManager snapshotManager;
+    mutable std::mutex runtimeStateMutex;
     std::unique_ptr<httplib::Server> server;
 };
 

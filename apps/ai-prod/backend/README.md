@@ -46,7 +46,8 @@ ctest --test-dir build --output-on-failure
 2. `/api/v1/health`、`/api/v1/capabilities`、`/api/v1/license/status` 优先读取 runtime snapshot 直接响应
 3. snapshot 不可用或过期时，自动降级转发到 Python 后端 `127.0.0.1:26004`
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
-5. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
+6. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 
@@ -58,4 +59,5 @@ ctest --test-dir build --output-on-failure
 - `AI_PROD_CPP_READ_TIMEOUT_MS`
 - `AI_PROD_CPP_WRITE_TIMEOUT_MS`
 - `AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH`
+- `AI_PROD_CPP_POOL_SIZE`
 - `AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS`

@@ -10,8 +10,10 @@ option(AI_PROD_CPP_BUILD_TESTS "Build ai-prod cpp tests" ON)
 set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ai_platform/third_party")
 
 add_executable(ai_prod_cpp_proxy
+    src/capability_catalog.cpp
     src/backend_client.cpp
     src/http_server.cpp
+    src/instance_pool.cpp
     src/main.cpp
     src/proxy_config.cpp
     src/runtime_snapshot_manager.cpp
@@ -37,9 +39,11 @@ if(AI_PROD_CPP_BUILD_TESTS)
     add_test(NAME ai_prod_cpp_test_proxy_config COMMAND test_proxy_config)
 
     add_executable(test_http_server
+        src/capability_catalog.cpp
         tests/test_http_server.cpp
         src/backend_client.cpp
         src/http_server.cpp
+        src/instance_pool.cpp
         src/proxy_config.cpp
         src/runtime_snapshot_manager.cpp
     )
@@ -50,4 +54,17 @@ if(AI_PROD_CPP_BUILD_TESTS)
     )
 
     add_test(NAME ai_prod_cpp_test_http_server COMMAND test_http_server)
+
+    add_executable(test_runtime_components
+        tests/test_runtime_components.cpp
+        src/capability_catalog.cpp
+        src/instance_pool.cpp
+    )
+
+    target_include_directories(test_runtime_components PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    add_test(NAME ai_prod_cpp_test_runtime_components COMMAND test_runtime_components)
 endif()
