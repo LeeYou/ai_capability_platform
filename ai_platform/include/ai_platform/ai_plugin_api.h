@@ -82,6 +82,8 @@ typedef int (*fn_ai_plugin_infer)(AiPluginHandle, const AiPluginInput*, AiPlugin
 typedef void (*fn_ai_plugin_free_result)(AiPluginOutput*);
 typedef int (*fn_ai_plugin_reload)(AiPluginHandle, const char*);
 typedef int (*fn_ai_plugin_get_info)(AiPluginHandle, AiPluginInfo*);
+typedef int (*fn_ai_plugin_warmup)(AiPluginHandle);
+typedef int (*fn_ai_plugin_health_check)(AiPluginHandle);
 
 #ifdef __cplusplus
 }

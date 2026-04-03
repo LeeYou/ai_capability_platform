@@ -76,6 +76,22 @@ nlohmann::json SerializePluginInfo(const AiPluginInfo& info) {
     };
 }
 
+std::string MergeLifecycleStatus(const std::string& current, const std::string& candidate) {
+    const auto priority = [](const std::string& status) {
+        if (status == "failed") {
+            return 3;
+        }
+        if (status == "passed") {
+            return 2;
+        }
+        if (status == "not_supported") {
+            return 1;
+        }
+        return 0;
+    };
+    return priority(candidate) > priority(current) ? candidate : current;
+}
+
 std::string CurrentUtcIsoString() {
     const auto now = std::time(nullptr);
     std::tm utc_time{};
@@ -136,6 +152,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     std::string last_request_id;
     std::string last_error_message;
     std::string last_executed_at_utc;
+    std::string warmup_status = "unknown";
+    std::string health_check_status = "unknown";
+    std::string last_warmup_at_utc;
+    std::string last_health_check_at_utc;
+    std::string lifecycle_error_message;
 
     for (const auto& item : bindings) {
         const auto& binding = item.second;
@@ -161,6 +182,17 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
                 {"last_executed_at_utc", binding.last_executed_at_utc.empty()
                                              ? nlohmann::json(nullptr)
                                              : nlohmann::json(binding.last_executed_at_utc)},
+                {"warmup_status", binding.warmup_status},
+                {"last_warmup_at_utc", binding.last_warmup_at_utc.empty()
+                                           ? nlohmann::json(nullptr)
+                                           : nlohmann::json(binding.last_warmup_at_utc)},
+                {"health_check_status", binding.health_check_status},
+                {"last_health_check_at_utc", binding.last_health_check_at_utc.empty()
+                                                 ? nlohmann::json(nullptr)
+                                                 : nlohmann::json(binding.last_health_check_at_utc)},
+                {"lifecycle_error_message", binding.lifecycle_error_message.empty()
+                                                ? nlohmann::json(nullptr)
+                                                : nlohmann::json(binding.lifecycle_error_message)},
                 {"plugin_info", binding.plugin_info_loaded ? SerializePluginInfo(binding.plugin_info) : nlohmann::json(nullptr)},
             });
 
@@ -178,6 +210,17 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
             last_error_message = binding.last_error_message;
             last_executed_at_utc = binding.last_executed_at_utc;
         }
+        warmup_status = MergeLifecycleStatus(warmup_status, binding.warmup_status);
+        health_check_status = MergeLifecycleStatus(health_check_status, binding.health_check_status);
+        if (binding.last_warmup_at_utc >= last_warmup_at_utc) {
+            last_warmup_at_utc = binding.last_warmup_at_utc;
+        }
+        if (binding.last_health_check_at_utc >= last_health_check_at_utc) {
+            last_health_check_at_utc = binding.last_health_check_at_utc;
+        }
+        if (!binding.lifecycle_error_message.empty()) {
+            lifecycle_error_message = binding.lifecycle_error_message;
+        }
     }
 
     if (bindings_payload.empty()) {
@@ -194,6 +237,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         {"last_request_id", last_request_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_request_id)},
         {"last_error_message", last_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_error_message)},
         {"last_executed_at_utc", last_executed_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_executed_at_utc)},
+        {"warmup_status", warmup_status == "unknown" ? "not_supported" : warmup_status},
+        {"last_warmup_at_utc", last_warmup_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_warmup_at_utc)},
+        {"health_check_status", health_check_status == "unknown" ? "not_supported" : health_check_status},
+        {"last_health_check_at_utc", last_health_check_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_health_check_at_utc)},
+        {"lifecycle_error_message", lifecycle_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(lifecycle_error_message)},
         {"bindings", bindings_payload},
     };
 }
@@ -314,6 +362,8 @@ bool PluginExecutor::EnsureBindingLoaded(
     next_binding.infer = reinterpret_cast<fn_ai_plugin_infer>(LoadSymbol(next_binding.library_handle, "ai_plugin_infer"));
     next_binding.free_result = reinterpret_cast<fn_ai_plugin_free_result>(LoadSymbol(next_binding.library_handle, "ai_plugin_free_result"));
     next_binding.get_info = reinterpret_cast<fn_ai_plugin_get_info>(LoadSymbol(next_binding.library_handle, "ai_plugin_get_info"));
+    next_binding.warmup = reinterpret_cast<fn_ai_plugin_warmup>(LoadSymbol(next_binding.library_handle, "ai_plugin_warmup"));
+    next_binding.health_check = reinterpret_cast<fn_ai_plugin_health_check>(LoadSymbol(next_binding.library_handle, "ai_plugin_health_check"));
     if (init == nullptr || next_binding.destroy == nullptr || next_binding.infer == nullptr ||
         next_binding.free_result == nullptr || next_binding.get_info == nullptr) {
         if (error_message != nullptr) {
@@ -343,6 +393,32 @@ bool PluginExecutor::EnsureBindingLoaded(
         if (next_binding.get_info(plugin_handle, &plugin_info) == 0) {
             next_binding.plugin_info = plugin_info;
             next_binding.plugin_info_loaded = true;
+        }
+        if (next_binding.warmup != nullptr) {
+            next_binding.last_warmup_at_utc = CurrentUtcIsoString();
+            if (next_binding.warmup(plugin_handle) != 0) {
+                next_binding.warmup_status = "failed";
+                next_binding.lifecycle_error_message = "能力插件预热失败。";
+                if (error_message != nullptr) {
+                    *error_message = next_binding.lifecycle_error_message;
+                }
+                UnloadBinding(&next_binding);
+                return false;
+            }
+            next_binding.warmup_status = "passed";
+        }
+        if (next_binding.health_check != nullptr) {
+            next_binding.last_health_check_at_utc = CurrentUtcIsoString();
+            if (next_binding.health_check(plugin_handle) != 0) {
+                next_binding.health_check_status = "failed";
+                next_binding.lifecycle_error_message = "能力插件健康检查失败。";
+                if (error_message != nullptr) {
+                    *error_message = next_binding.lifecycle_error_message;
+                }
+                UnloadBinding(&next_binding);
+                return false;
+            }
+            next_binding.health_check_status = "passed";
         }
         next_binding.plugin_handles.push_back(plugin_handle);
     }
@@ -374,4 +450,6 @@ void PluginExecutor::UnloadBinding(PluginBinding* binding) {
     binding->infer = nullptr;
     binding->free_result = nullptr;
     binding->get_info = nullptr;
+    binding->warmup = nullptr;
+    binding->health_check = nullptr;
 }

@@ -542,6 +542,18 @@ int main(int argc, char** argv) {
         if (!Expect(item["execution_metrics"]["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "catalog metrics should expose plugin info")) {
             return 1;
         }
+        if (!Expect(item["execution_metrics"]["warmup_status"] == "passed", "catalog metrics should expose successful warmup status")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["health_check_status"] == "passed", "catalog metrics should expose successful health status")) {
+            return 1;
+        }
+        if (!Expect(!item["execution_metrics"]["last_warmup_at_utc"].is_null(), "catalog metrics should expose warmup timestamp")) {
+            return 1;
+        }
+        if (!Expect(!item["execution_metrics"]["last_health_check_at_utc"].is_null(), "catalog metrics should expose health timestamp")) {
+            return 1;
+        }
     }
     if (!Expect(found_ocr_metrics, "catalog should include ocr metrics entry")) {
         return 1;

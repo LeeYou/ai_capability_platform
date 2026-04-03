@@ -60,8 +60,9 @@ ctest --test-dir build --output-on-failure
 15. `reload/rollback` 已增加切换互斥保护，并发管理操作会直接拒绝，避免运行时状态竞争
 16. 当前已新增请求级 in-flight 跟踪与 RAII 请求租约，`/api/v1/admin/catalog` 可输出 active request 明细，drain 阶段会等待活动请求清空后再执行切换
 17. 当前已补齐能力级 `execution_metrics` 与 `plugin_info` 观测字段，`/api/v1/admin/catalog` 可输出请求量、成功/失败次数、推理耗时及当前插件元数据
-18. 作为后续继续替换完整插件生命周期的过渡实现
-19. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
+18. 当前已补齐可选 `warmup` / `health_check` 生命周期钩子，相关状态、时间戳与失败信息会并入 capability 级 `execution_metrics`
+19. 作为后续继续替换完整插件生命周期的过渡实现
+20. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

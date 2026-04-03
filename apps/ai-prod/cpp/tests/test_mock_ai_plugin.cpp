@@ -9,6 +9,8 @@ namespace {
 struct MockPluginContext {
     std::string model_dir;
     AiDeviceType device = AI_DEVICE_CPU;
+    int warmup_count = 0;
+    int health_check_count = 0;
 };
 
 const char* ToMediaTypeName(AiMediaType media_type) {
@@ -101,6 +103,24 @@ AI_PLUGIN_EXPORT int ai_plugin_get_info(AiPluginHandle handle, AiPluginInfo* inf
     info->current_device = static_cast<MockPluginContext*>(handle)->device;
     info->extra_info_json = "{}";
     return 0;
+}
+
+AI_PLUGIN_EXPORT int ai_plugin_warmup(AiPluginHandle handle) {
+    if (handle == nullptr) {
+        return -2;
+    }
+    auto* context = static_cast<MockPluginContext*>(handle);
+    context->warmup_count += 1;
+    return context->model_dir.find("warmup_fail") == std::string::npos ? 0 : -5;
+}
+
+AI_PLUGIN_EXPORT int ai_plugin_health_check(AiPluginHandle handle) {
+    if (handle == nullptr) {
+        return -2;
+    }
+    auto* context = static_cast<MockPluginContext*>(handle);
+    context->health_check_count += 1;
+    return context->model_dir.find("health_fail") == std::string::npos ? 0 : -6;
 }
 
 }

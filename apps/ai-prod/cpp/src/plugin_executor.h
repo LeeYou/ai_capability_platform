@@ -49,6 +49,8 @@ private:
         fn_ai_plugin_infer infer = nullptr;
         fn_ai_plugin_free_result free_result = nullptr;
         fn_ai_plugin_get_info get_info = nullptr;
+        fn_ai_plugin_warmup warmup = nullptr;
+        fn_ai_plugin_health_check health_check = nullptr;
         std::vector<AiPluginHandle> plugin_handles;
         int total_execute_count = 0;
         int successful_execute_count = 0;
@@ -59,6 +61,11 @@ private:
         std::string last_request_id;
         std::string last_error_message;
         std::string last_executed_at_utc;
+        std::string warmup_status = "not_supported";
+        std::string last_warmup_at_utc;
+        std::string health_check_status = "not_supported";
+        std::string last_health_check_at_utc;
+        std::string lifecycle_error_message;
         AiPluginInfo plugin_info{};
         bool plugin_info_loaded = false;
     };

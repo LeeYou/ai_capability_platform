@@ -106,6 +106,18 @@ int main(int argc, char** argv) {
     if (!Expect((*cpu_metrics)["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "plugin metrics should expose plugin info")) {
         return 1;
     }
+    if (!Expect((*cpu_metrics)["warmup_status"] == "passed", "plugin metrics should expose successful warmup status")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["health_check_status"] == "passed", "plugin metrics should expose successful health status")) {
+        return 1;
+    }
+    if (!Expect(!(*cpu_metrics)["last_warmup_at_utc"].is_null(), "plugin metrics should expose warmup timestamp")) {
+        return 1;
+    }
+    if (!Expect(!(*cpu_metrics)["last_health_check_at_utc"].is_null(), "plugin metrics should expose health timestamp")) {
+        return 1;
+    }
 
     entry.model_root = (temp_root / "models" / "face_detect" / "v2_0_0").string();
     WriteText(std::filesystem::path(entry.model_root) / "manifest.json", R"({"capability_name":"face_detect","model_version":"v2_0_0"})");
@@ -141,6 +153,49 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect((*gpu_metrics)["bindings"][0]["plugin_info"]["current_device"] == "gpu", "plugin info should expose current device")) {
+        return 1;
+    }
+
+    CapabilityCatalogEntry failing_entry = entry;
+    failing_entry.capability_name = "warmup_fail";
+    failing_entry.model_root = (temp_root / "models" / "warmup_fail" / "v1_0_0").string();
+    WriteText(std::filesystem::path(failing_entry.model_root) / "manifest.json", R"({"capability_name":"warmup_fail","model_version":"v1_0_0"})");
+    if (!Expect(
+            !executor.Execute(
+                failing_entry,
+                0,
+                "json",
+                "{\"image\":\"demo\"}",
+                nlohmann::json::object(),
+                "cpu",
+                "req-warmup-fail",
+                &result,
+                &error_message),
+            "warmup failure should reject plugin load")) {
+        return 1;
+    }
+    if (!Expect(error_message == "能力插件预热失败。", "warmup failure should return lifecycle error")) {
+        return 1;
+    }
+
+    failing_entry.capability_name = "health_fail";
+    failing_entry.model_root = (temp_root / "models" / "health_fail" / "v1_0_0").string();
+    WriteText(std::filesystem::path(failing_entry.model_root) / "manifest.json", R"({"capability_name":"health_fail","model_version":"v1_0_0"})");
+    if (!Expect(
+            !executor.Execute(
+                failing_entry,
+                0,
+                "json",
+                "{\"image\":\"demo\"}",
+                nlohmann::json::object(),
+                "cpu",
+                "req-health-fail",
+                &result,
+                &error_message),
+            "health check failure should reject plugin load")) {
+        return 1;
+    }
+    if (!Expect(error_message == "能力插件健康检查失败。", "health failure should return lifecycle error")) {
         return 1;
     }
 
