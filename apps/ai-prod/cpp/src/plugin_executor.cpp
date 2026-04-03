@@ -1,8 +1,12 @@
 #include "plugin_executor.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <string>
 
 #ifdef _WIN32
@@ -57,6 +61,34 @@ nlohmann::json ParsePluginResult(const AiPluginOutput& output) {
     }
 }
 
+nlohmann::json SerializePluginInfo(const AiPluginInfo& info) {
+    return {
+        {"capability_id", info.capability_id != nullptr ? info.capability_id : ""},
+        {"capability_name", info.capability_name != nullptr ? info.capability_name : ""},
+        {"version", info.version != nullptr ? info.version : ""},
+        {"model_version", info.model_version != nullptr ? info.model_version : ""},
+        {"description", info.description != nullptr ? info.description : ""},
+        {"api_version_major", info.api_version_major},
+        {"api_version_minor", info.api_version_minor},
+        {"api_version_patch", info.api_version_patch},
+        {"current_device", info.current_device == AI_DEVICE_CUDA ? "gpu" : "cpu"},
+        {"extra_info_json", info.extra_info_json != nullptr ? info.extra_info_json : "{}"},
+    };
+}
+
+std::string CurrentUtcIsoString() {
+    const auto now = std::time(nullptr);
+    std::tm utc_time{};
+#ifdef _WIN32
+    gmtime_s(&utc_time, &now);
+#else
+    gmtime_r(&now, &utc_time);
+#endif
+    std::ostringstream output;
+    output << std::put_time(&utc_time, "%Y-%m-%dT%H:%M:%SZ");
+    return output.str();
+}
+
 }
 
 PluginExecutor::PluginExecutor() = default;
@@ -89,6 +121,81 @@ void PluginExecutor::SyncEntries(const std::vector<CapabilityCatalogEntry>& entr
         UnloadBinding(&it->second);
         it = bindings.erase(it);
     }
+}
+
+std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::string& capability_name) const {
+    std::lock_guard<std::mutex> guard(mutex);
+    nlohmann::json bindings_payload = nlohmann::json::array();
+    int total_requests = 0;
+    int successful_requests = 0;
+    int failed_requests = 0;
+    double total_infer_time_ms = 0.0;
+    double min_infer_time_ms = std::numeric_limits<double>::max();
+    double max_infer_time_ms = 0.0;
+    bool has_latency_sample = false;
+    std::string last_request_id;
+    std::string last_error_message;
+    std::string last_executed_at_utc;
+
+    for (const auto& item : bindings) {
+        const auto& binding = item.second;
+        if (binding.capability_name != capability_name) {
+            continue;
+        }
+        bindings_payload.push_back(
+            {
+                {"device", binding.device},
+                {"pool_size", binding.pool_size},
+                {"total_requests", binding.total_execute_count},
+                {"successful_requests", binding.successful_execute_count},
+                {"failed_requests", binding.failed_execute_count},
+                {"avg_infer_time_ms", binding.successful_execute_count > 0
+                                          ? binding.total_infer_time_ms / static_cast<double>(binding.successful_execute_count)
+                                          : 0.0},
+                {"min_infer_time_ms", binding.successful_execute_count > 0 ? binding.min_infer_time_ms : 0.0},
+                {"max_infer_time_ms", binding.successful_execute_count > 0 ? binding.max_infer_time_ms : 0.0},
+                {"last_request_id", binding.last_request_id},
+                {"last_error_message", binding.last_error_message.empty()
+                                           ? nlohmann::json(nullptr)
+                                           : nlohmann::json(binding.last_error_message)},
+                {"last_executed_at_utc", binding.last_executed_at_utc.empty()
+                                             ? nlohmann::json(nullptr)
+                                             : nlohmann::json(binding.last_executed_at_utc)},
+                {"plugin_info", binding.plugin_info_loaded ? SerializePluginInfo(binding.plugin_info) : nlohmann::json(nullptr)},
+            });
+
+        total_requests += binding.total_execute_count;
+        successful_requests += binding.successful_execute_count;
+        failed_requests += binding.failed_execute_count;
+        total_infer_time_ms += binding.total_infer_time_ms;
+        if (binding.successful_execute_count > 0) {
+            min_infer_time_ms = std::min(min_infer_time_ms, binding.min_infer_time_ms);
+            max_infer_time_ms = std::max(max_infer_time_ms, binding.max_infer_time_ms);
+            has_latency_sample = true;
+        }
+        if (binding.last_executed_at_utc >= last_executed_at_utc) {
+            last_request_id = binding.last_request_id;
+            last_error_message = binding.last_error_message;
+            last_executed_at_utc = binding.last_executed_at_utc;
+        }
+    }
+
+    if (bindings_payload.empty()) {
+        return std::nullopt;
+    }
+
+    return nlohmann::json{
+        {"total_requests", total_requests},
+        {"successful_requests", successful_requests},
+        {"failed_requests", failed_requests},
+        {"avg_infer_time_ms", successful_requests > 0 ? total_infer_time_ms / static_cast<double>(successful_requests) : 0.0},
+        {"min_infer_time_ms", has_latency_sample ? min_infer_time_ms : 0.0},
+        {"max_infer_time_ms", has_latency_sample ? max_infer_time_ms : 0.0},
+        {"last_request_id", last_request_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_request_id)},
+        {"last_error_message", last_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_error_message)},
+        {"last_executed_at_utc", last_executed_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_executed_at_utc)},
+        {"bindings", bindings_payload},
+    };
 }
 
 bool PluginExecutor::Execute(
@@ -128,6 +235,7 @@ bool PluginExecutor::Execute(
     binding->total_execute_count += 1;
     binding->last_request_id = request_id;
     binding->last_error_message.clear();
+    binding->last_executed_at_utc = CurrentUtcIsoString();
     const int rc = binding->infer(binding->plugin_handles[slot_index], &input, &output);
     if (rc != 0) {
         binding->failed_execute_count += 1;
@@ -146,6 +254,15 @@ bool PluginExecutor::Execute(
 
     result->plugin_result = ParsePluginResult(output);
     result->infer_time_ms = output.infer_time_ms;
+    binding->successful_execute_count += 1;
+    binding->total_infer_time_ms += output.infer_time_ms;
+    if (binding->successful_execute_count == 1) {
+        binding->min_infer_time_ms = output.infer_time_ms;
+        binding->max_infer_time_ms = output.infer_time_ms;
+    } else {
+        binding->min_infer_time_ms = std::min(binding->min_infer_time_ms, output.infer_time_ms);
+        binding->max_infer_time_ms = std::max(binding->max_infer_time_ms, output.infer_time_ms);
+    }
     if (binding->free_result != nullptr) {
         binding->free_result(&output);
     }
@@ -221,6 +338,11 @@ bool PluginExecutor::EnsureBindingLoaded(
             }
             UnloadBinding(&next_binding);
             return false;
+        }
+        AiPluginInfo plugin_info{};
+        if (next_binding.get_info(plugin_handle, &plugin_info) == 0) {
+            next_binding.plugin_info = plugin_info;
+            next_binding.plugin_info_loaded = true;
         }
         next_binding.plugin_handles.push_back(plugin_handle);
     }

@@ -270,6 +270,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["active_request_count"] == 0, "catalog should start with zero active requests")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["execution_metrics"].is_null(), "catalog should not expose execution metrics before first infer")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
         return 1;
     }
@@ -514,6 +517,33 @@ int main(int argc, char** argv) {
     }
     const auto ocr_infer_payload = nlohmann::json::parse(ocr_infer_result->body);
     if (!Expect(ocr_infer_payload["result"]["plugin_result"]["mock"] == true, "ocr infer should use plugin result")) {
+        return 1;
+    }
+    const auto metrics_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(metrics_catalog_result && metrics_catalog_result->status == 200, "catalog should respond after metrics-producing infer")) {
+        return 1;
+    }
+    const auto metrics_catalog_payload = nlohmann::json::parse(metrics_catalog_result->body);
+    bool found_ocr_metrics = false;
+    for (const auto& item : metrics_catalog_payload["items"]) {
+        if (item["capability_name"] != "ocr") {
+            continue;
+        }
+        found_ocr_metrics = true;
+        if (!Expect(!item["execution_metrics"].is_null(), "catalog should expose execution metrics after infer")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["total_requests"] == 1, "catalog metrics should count executed request")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["successful_requests"] == 1, "catalog metrics should count successful request")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "catalog metrics should expose plugin info")) {
+            return 1;
+        }
+    }
+    if (!Expect(found_ocr_metrics, "catalog should include ocr metrics entry")) {
         return 1;
     }
 

@@ -442,6 +442,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
+        const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
@@ -460,6 +461,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"pool_size", total_size},
                 {"busy_count", busy_count},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
+                {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
                 {"revision_id", entry.revision_id},
             });
     }

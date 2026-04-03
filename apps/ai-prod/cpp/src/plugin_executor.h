@@ -8,6 +8,7 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +24,7 @@ public:
     ~PluginExecutor();
 
     void SyncEntries(const std::vector<CapabilityCatalogEntry>& entries);
+    std::optional<nlohmann::json> GetCapabilityMetrics(const std::string& capability_name) const;
     bool Execute(
         const CapabilityCatalogEntry& entry,
         std::size_t slot_index,
@@ -49,9 +51,16 @@ private:
         fn_ai_plugin_get_info get_info = nullptr;
         std::vector<AiPluginHandle> plugin_handles;
         int total_execute_count = 0;
+        int successful_execute_count = 0;
         int failed_execute_count = 0;
+        double total_infer_time_ms = 0.0;
+        double min_infer_time_ms = 0.0;
+        double max_infer_time_ms = 0.0;
         std::string last_request_id;
         std::string last_error_message;
+        std::string last_executed_at_utc;
+        AiPluginInfo plugin_info{};
+        bool plugin_info_loaded = false;
     };
 
     bool EnsureBindingLoaded(
@@ -62,7 +71,7 @@ private:
     static std::string BuildCacheKey(const std::string& capability_name, const std::string& device);
     static void UnloadBinding(PluginBinding* binding);
 
-    std::mutex mutex;
+    mutable std::mutex mutex;
     std::unordered_map<std::string, PluginBinding> bindings;
 };
 

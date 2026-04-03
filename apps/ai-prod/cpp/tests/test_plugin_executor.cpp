@@ -76,6 +76,36 @@ int main(int argc, char** argv) {
     if (!Expect(result.plugin_result.value("device", "") == "cpu", "plugin should receive cpu device")) {
         return 1;
     }
+    if (!Expect(
+            executor.Execute(
+                entry,
+                1,
+                "image",
+                "binary-cpu",
+                nlohmann::json::object(),
+                "cpu",
+                "req-cpu-2",
+                &result,
+                &error_message),
+            error_message.c_str())) {
+        return 1;
+    }
+    const auto cpu_metrics = executor.GetCapabilityMetrics("face_detect");
+    if (!Expect(cpu_metrics.has_value(), "plugin executor should expose metrics for loaded capability")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["total_requests"] == 2, "cpu metrics should aggregate executed requests")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["successful_requests"] == 2, "cpu metrics should count successful requests")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["failed_requests"] == 0, "cpu metrics should count zero failed requests")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "plugin metrics should expose plugin info")) {
+        return 1;
+    }
 
     entry.model_root = (temp_root / "models" / "face_detect" / "v2_0_0").string();
     WriteText(std::filesystem::path(entry.model_root) / "manifest.json", R"({"capability_name":"face_detect","model_version":"v2_0_0"})");
@@ -98,6 +128,19 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(result.plugin_result.value("model_dir", "") == entry.model_root, "sync should refresh model root")) {
+        return 1;
+    }
+    const auto gpu_metrics = executor.GetCapabilityMetrics("face_detect");
+    if (!Expect(gpu_metrics.has_value(), "plugin executor should expose metrics after sync reload")) {
+        return 1;
+    }
+    if (!Expect((*gpu_metrics)["bindings"].size() == 1, "sync should drop old binding metrics for replaced capability")) {
+        return 1;
+    }
+    if (!Expect((*gpu_metrics)["bindings"][0]["device"] == "gpu", "binding metrics should expose device")) {
+        return 1;
+    }
+    if (!Expect((*gpu_metrics)["bindings"][0]["plugin_info"]["current_device"] == "gpu", "plugin info should expose current device")) {
         return 1;
     }
 
