@@ -17,6 +17,13 @@
   max-width: 780px;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .eyebrow {
   margin-bottom: 12px;
   color: #16a34a;
@@ -77,6 +84,12 @@
   color: var(--text);
   background: rgba(244, 243, 236, 0.72);
   border-color: var(--border);
+}
+
+.badge-warning {
+  color: #9a3412;
+  background: rgba(251, 146, 60, 0.14);
+  border-color: rgba(194, 65, 12, 0.28);
 }
 
 .info-text,

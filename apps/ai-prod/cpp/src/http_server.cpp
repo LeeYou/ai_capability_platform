@@ -449,12 +449,6 @@ void AiProdHttpServer::RegisterRoutes() {
         response.status = 200;
         response.set_content(BuildCatalogPayload(snapshot_ready).dump(), kDefaultJsonContentType);
     });
-    server->Get("/api/v1/admin/revisions", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
-    });
-    server->Get("/api/v1/admin/operations", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
-    });
     server->Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
         HandleAdminTransitionRequest(request, response, false);
     });

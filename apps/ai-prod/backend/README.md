@@ -1,6 +1,6 @@
 # ai-prod backend
 
-ai-prod 后端首期工程，提供统一生产 REST 服务、宿主机资源扫描、license 双层校验、运行时实例池、reload/rollback 与内置测试页接口。
+ai-prod 后端首期工程，提供统一生产 REST 服务、宿主机资源扫描、license 双层校验、运行时实例池、reload/rollback 与内部测试验收外壳所需接口。
 
 当前仓库已开始引入 `apps/ai-prod/cpp/` 下的 C++ HTTP 服务迭代实现，用于逐步把生产主链路从 Python 基础版收敛到 C++ HTTP + C++ Runtime。
 
@@ -12,6 +12,7 @@ ai-prod 后端首期工程，提供统一生产 REST 服务、宿主机资源扫
 4. runtime revision、实例池、GPU 优先/CPU 自动回退
 5. 统一推理接口与启动时/推理时双层 license 校验
 6. reload/rollback、结构化日志与审计日志
+7. 面向内部测试验收外壳的 `/internal/*` 查询接口
 
 ## 本地运行
 
@@ -52,7 +53,8 @@ ctest --test-dir build --output-on-failure
 8. `license/status` 已改为由 C++ 直接读取标准 license 文件，`infer` 与 `reload/rollback` 已接入 license quick check
 9. 已新增 `/api/v1/admin/license-reload`，支持 C++ 侧 license 手动重载与自动监测刷新
 10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
-11. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
+12. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 

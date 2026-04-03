@@ -19,7 +19,7 @@
 | P9 | 引入 C++ HTTP 服务主链路 | 进行中 |
 | P10 | 引入 C++ Runtime / 插件管理 / 实例池 / drain 机制 | 已完成 |
 | P11 | 收敛 License / 热更新 / 回滚与 ai_platform 参考实现 | 已完成 |
-| P12 | 保留并重构 Python/React 测试验收外壳 | 未开始 |
+| P12 | 保留并重构 Python/React 测试验收外壳 | 已完成 |
 | P13 | 面向客户交付的压测、验收与运行规范固化 | 未开始 |
 
 ## 3. 进度维护要求
@@ -47,13 +47,13 @@
 7. 当前继续推进 P10 第二轮实施，已让 infer 路由接入 capability catalog 与轻量实例池借还流程，并补齐未知能力/池繁忙保护。
 8. 当前已完成 P10 第三轮实施，在 C++ 侧为 reload/rollback 接入实例池 drain 编排、切换等待与切换后 catalog/pool 刷新。
 9. 当前已完成 P11：在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验；同时在 Python runtime 的 bootstrap / infer / reload / rollback 路径补齐按能力/版本维度的二次 license 校验与审计日志。
+10. 当前已完成 P12：将 Python/React 测试验收外壳的内部查询接口拆分到 `/internal/*`，前端显式标记为内部验收外壳，并让 Vite 开发代理直连 Python 后端；同时移除 C++ 生产主链路对 revision / operation 等内部查询接口的转发暴露。
 
 ### 4.3 未完成
 
 1. C++ HTTP 主服务尚未完全替换当前仓库的 ai-prod 主链路，当前虽已完成 P10 范围内的 catalog / pool / drain / reload 编排，但实际推理执行仍主要由 Python runtime 承担，P9 仍需继续收口。
-2. Python 测试页尚未转型为仅服务内部人工验收的交互外壳。
-3. 面向客户交付的性能、稳定性、更新回滚规范尚未完全固化。
+2. 面向客户交付的性能、稳定性、更新回滚规范尚未完全固化。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P11：在保持现有 Python runtime 可用的前提下，C++ 侧已补齐标准 license 文件直读、状态查询、能力 quick check、手动/自动 license reload，以及 infer 与管理切换接口上的 license 前置校验；同时 Python runtime 的 bootstrap / infer / reload / rollback 路径也已补齐按能力范围与版本约束的二次 license 校验，并为状态查询、推理拒绝、reload/rollback 拒绝补齐审计日志。当前已完成本地编译、单测、后端回归与端到端 smoke 验证，后续将转入 P9 主链路收口与 P12 测试验收外壳改造。
+ai-prod 当前已完成 P12：在已完成 P11 的基础上，进一步将 Python/React 测试页重构为仅面向内部研发、QA 与交付联调的测试验收外壳，内部 revision / operation / audit 查询统一收敛到 `/internal/*`，前端页面显式标注 internal only，并通过 Vite 开发代理直连 Python 后端；与此同时，C++ 生产主链路不再暴露这些内部查询接口。当前已完成本地编译、单测、前端构建/lint 与端到端回归验证，后续将继续收口 P9 主链路并推进 P13 交付规范固化。

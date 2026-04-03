@@ -93,6 +93,9 @@ const roadmapItems = [
   '与 ai-builder / SDK / 现场配置模板做交付联调',
 ]
 
+const runtimeApiPrefix = '/api/v1'
+const internalApiPrefix = '/internal'
+
 async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -125,11 +128,11 @@ function App() {
       setLoading(true)
       setError(null)
       const [health, capabilities, licenseStatus, revisions, operations] = await Promise.all([
-        fetchJson<HealthResponse>('/api/v1/health'),
-        fetchJson<ListResponse<CapabilityItem>>('/api/v1/capabilities'),
-        fetchJson<LicenseStatus>('/api/v1/license/status'),
-        fetchJson<ListResponse<RuntimeRevisionItem>>('/api/v1/admin/revisions'),
-        fetchJson<ListResponse<RuntimeOperationItem>>('/api/v1/admin/operations'),
+        fetchJson<HealthResponse>(`${runtimeApiPrefix}/health`),
+        fetchJson<ListResponse<CapabilityItem>>(`${runtimeApiPrefix}/capabilities`),
+        fetchJson<LicenseStatus>(`${runtimeApiPrefix}/license/status`),
+        fetchJson<ListResponse<RuntimeRevisionItem>>(`${internalApiPrefix}/admin/revisions`),
+        fetchJson<ListResponse<RuntimeOperationItem>>(`${internalApiPrefix}/admin/operations`),
       ])
       setDashboard({
         health,
@@ -186,7 +189,7 @@ function App() {
     }
     try {
       setActionMessage('正在执行推理...')
-      const result = await fetchJson<InferResponse>(`/api/v1/infer/${selectedCapability}`, {
+      const result = await fetchJson<InferResponse>(`${runtimeApiPrefix}/infer/${selectedCapability}`, {
         method: 'POST',
         body: JSON.stringify({
           input_type: inputType,
@@ -206,7 +209,7 @@ function App() {
   async function handleRuntimeAction(action: 'reload' | 'rollback', targetRevisionId?: number): Promise<void> {
     try {
       setActionMessage(`正在执行 ${action}...`)
-      await fetchJson('/api/v1/admin/reload', {
+      await fetchJson(`${runtimeApiPrefix}/admin/reload`, {
         method: 'POST',
         body: JSON.stringify({
           action,
@@ -225,10 +228,13 @@ function App() {
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
-          <h1>ai-prod 生产推理服务台</h1>
+          <div className="title-row">
+            <h1>ai-prod 内部测试验收外壳</h1>
+            <span className="badge badge-warning">INTERNAL ONLY</span>
+          </div>
           <p>
-            面向统一生产镜像的 REST 推理服务管理台，当前已具备资源扫描、license 双层校验、runtime revision、
-            实例池、reload/rollback 与内置测试页能力。
+            当前页面仅供内部研发、联调与人工验收使用；生产主链路由 C++ HTTP 服务承载，本外壳负责聚合 runtime
+            状态查询、版本切换入口与在线验收测试能力。
           </p>
         </div>
         <div className="hero-panel">
@@ -237,12 +243,12 @@ function App() {
             <strong>26004</strong>
           </div>
           <div>
-            <span className="label">技术栈</span>
-            <strong>FastAPI + React + C++ Runtime Bridge</strong>
+            <span className="label">外壳定位</span>
+            <strong>Python / React 内部验收外壳</strong>
           </div>
           <div>
-            <span className="label">宿主机目录</span>
-            <strong>/data/ai_capability_platform</strong>
+            <span className="label">生产主链路</span>
+            <strong>C++ HTTP 服务（26005）</strong>
           </div>
         </div>
       </header>
@@ -251,7 +257,7 @@ function App() {
         <section className="panel">
           <div className="section-header">
             <h2>运行概览</h2>
-            <span className="badge">ai-prod 首轮实现中</span>
+            <span className="badge">P12 内部验收外壳</span>
           </div>
           {loading && <p className="info-text">正在加载 ai-prod 当前数据...</p>}
           {error && <p className="error-text">数据加载失败：{error}</p>}
@@ -318,7 +324,7 @@ function App() {
         <section className="panel">
           <div className="section-header">
             <h2>reload / rollback</h2>
-            <span className="badge badge-muted">版本切换与回滚</span>
+            <span className="badge badge-muted">内部验收切换入口</span>
           </div>
           <div className="table-grid">
             <article className="sub-panel">
@@ -387,6 +393,7 @@ function App() {
         <section className="panel split">
           <article className="sub-panel">
             <h2>内置测试页</h2>
+            <p className="info-text">该页面仅用于内部验收，不作为客户生产调用入口。</p>
             <div className="form-grid">
               <label>
                 <span>能力</span>

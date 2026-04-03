@@ -33,10 +33,12 @@ from app.services.runtime_service import (
 )
 
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter()
+api_router = APIRouter(prefix="/api/v1")
+internal_router = APIRouter(prefix="/internal")
 
 
-@router.get("/health", response_model=HealthResponse, tags=["system"])
+@api_router.get("/health", response_model=HealthResponse, tags=["system"])
 def get_health(session: Session = Depends(get_db_session)) -> HealthResponse:
     settings = get_settings()
     revisions = list_runtime_revisions(session)
@@ -60,12 +62,12 @@ def get_health(session: Session = Depends(get_db_session)) -> HealthResponse:
     )
 
 
-@router.get("/capabilities", response_model=CapabilityListResponse, tags=["runtime"])
+@api_router.get("/capabilities", response_model=CapabilityListResponse, tags=["runtime"])
 def get_capabilities() -> CapabilityListResponse:
     return CapabilityListResponse(items=[CapabilityItem(**item) for item in list_capabilities()])
 
 
-@router.get("/license/status", response_model=LicenseStatusResponse, tags=["runtime"])
+@api_router.get("/license/status", response_model=LicenseStatusResponse, tags=["runtime"])
 def get_license_status_route() -> LicenseStatusResponse:
     settings = get_settings()
     try:
@@ -79,7 +81,7 @@ def get_license_status_route() -> LicenseStatusResponse:
     return LicenseStatusResponse(**payload)
 
 
-@router.post("/infer/{capability_name}", response_model=InferResponse, tags=["runtime"])
+@api_router.post("/infer/{capability_name}", response_model=InferResponse, tags=["runtime"])
 def infer_route(capability_name: str, request: InferRequest) -> InferResponse:
     settings = get_settings()
     try:
@@ -99,17 +101,17 @@ def infer_route(capability_name: str, request: InferRequest) -> InferResponse:
     return InferResponse(**payload)
 
 
-@router.get("/admin/revisions", response_model=RuntimeRevisionListResponse, tags=["admin"])
+@internal_router.get("/admin/revisions", response_model=RuntimeRevisionListResponse, tags=["internal"])
 def get_revisions(session: Session = Depends(get_db_session)) -> RuntimeRevisionListResponse:
     return RuntimeRevisionListResponse(items=[RuntimeRevisionItem(**item) for item in list_runtime_revisions(session)])
 
 
-@router.get("/admin/operations", response_model=RuntimeOperationListResponse, tags=["admin"])
+@internal_router.get("/admin/operations", response_model=RuntimeOperationListResponse, tags=["internal"])
 def get_operations(session: Session = Depends(get_db_session)) -> RuntimeOperationListResponse:
     return RuntimeOperationListResponse(items=[RuntimeOperationItem(**item) for item in list_runtime_operations(session)])
 
 
-@router.post("/admin/reload", response_model=ReloadResponse, tags=["admin"])
+@api_router.post("/admin/reload", response_model=ReloadResponse, tags=["admin"])
 def reload_route(request: ReloadRequest, session: Session = Depends(get_db_session)) -> ReloadResponse:
     settings = get_settings()
     try:
@@ -135,7 +137,11 @@ def reload_route(request: ReloadRequest, session: Session = Depends(get_db_sessi
     return ReloadResponse(**payload)
 
 
-@router.get("/audit-logs", response_model=AuditLogListResponse, tags=["audit"])
+@internal_router.get("/audit-logs", response_model=AuditLogListResponse, tags=["internal"])
 def get_audit_logs(limit: int = Query(default=100, ge=1, le=500)) -> AuditLogListResponse:
     settings = get_settings()
     return AuditLogListResponse(items=[AuditLogItem(**item) for item in list_audit_logs(settings.audit_log_path, limit)])
+
+
+router.include_router(api_router)
+router.include_router(internal_router)

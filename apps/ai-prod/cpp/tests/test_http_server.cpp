@@ -245,6 +245,15 @@ int main() {
         return 1;
     }
 
+    const auto internal_revisions_result = proxy_client.Get("/api/v1/admin/revisions");
+    if (!Expect(internal_revisions_result && internal_revisions_result->status == 404, "public proxy should not expose internal revision route")) {
+        return 1;
+    }
+    const auto internal_operations_result = proxy_client.Get("/api/v1/admin/operations");
+    if (!Expect(internal_operations_result && internal_operations_result->status == 404, "public proxy should not expose internal operation route")) {
+        return 1;
+    }
+
     hold_infer = true;
     std::optional<int> infer_status;
     std::string infer_body;
