@@ -461,9 +461,7 @@ void AiProdHttpServer::RecordEndpointMetric(
         const int evicted_latency = metrics.recent_latency_ms.front();
         metrics.recent_latency_ms.pop_front();
         const auto sorted_it = metrics.recent_latency_sorted.find(evicted_latency);
-        if (sorted_it != metrics.recent_latency_sorted.end()) {
-            metrics.recent_latency_sorted.erase(sorted_it);
-        }
+        metrics.recent_latency_sorted.erase(sorted_it);
     }
 }
 

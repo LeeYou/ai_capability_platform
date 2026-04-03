@@ -32,6 +32,16 @@ int ReadPositiveIntOrDefault(const nlohmann::json& payload, const char* key, int
     return std::max(1, payload[key].get<int>());
 }
 
+int ExtractBatchSizeFromManifest(const nlohmann::json& manifest) {
+    if (manifest.contains("max_batch_size") && manifest["max_batch_size"].is_number_integer()) {
+        return std::max(1, manifest["max_batch_size"].get<int>());
+    }
+    if (manifest.contains("batch_size") && manifest["batch_size"].is_number_integer()) {
+        return std::max(1, manifest["batch_size"].get<int>());
+    }
+    return 1;
+}
+
 std::vector<std::filesystem::path> SortedDirs(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
         return {};
@@ -104,11 +114,7 @@ std::map<std::string, ModelEntry> ScanModels(const std::filesystem::path& root) 
                 selected_version_dir.lexically_normal().string(),
                 manifest.value("model_version", selected_version_dir.filename().string()),
                 manifest.value("backend_type", std::string("onnxruntime")),
-                manifest.contains("max_batch_size") && manifest["max_batch_size"].is_number_integer()
-                    ? std::max(1, manifest["max_batch_size"].get<int>())
-                    : (manifest.contains("batch_size") && manifest["batch_size"].is_number_integer()
-                           ? std::max(1, manifest["batch_size"].get<int>())
-                           : 1),
+                ExtractBatchSizeFromManifest(manifest),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,

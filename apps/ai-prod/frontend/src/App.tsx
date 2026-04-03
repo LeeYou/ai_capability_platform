@@ -193,32 +193,32 @@ function App() {
     () => [
       {
         title: '能力数量',
-        count: dashboard.health?.capability_count ?? 0,
+        value: dashboard.health?.capability_count ?? 0,
         description: '当前 runtime 装载并可对外提供推理服务的能力数。',
       },
       {
         title: '当前 revision',
-        count: dashboard.health?.runtime_revision_id ?? 0,
+        value: dashboard.health?.runtime_revision_id ?? 0,
         description: '读写隔离下的活动 runtime 版本编号。',
       },
       {
         title: 'license 状态',
-        count: dashboard.licenseStatus?.valid ? '通过' : '失败',
+        value: dashboard.licenseStatus?.valid ? '通过' : '失败',
         description: dashboard.licenseStatus?.reason ?? '尚未检查',
       },
       {
         title: '操作记录',
-        count: dashboard.operations.length,
+        value: dashboard.operations.length,
         description: '跟踪 reload / rollback 与运行时关键操作。',
       },
       {
         title: '累计请求',
-        count: dashboard.runtimeMetrics?.request_summary.capability_total_requests ?? 0,
+        value: dashboard.runtimeMetrics?.request_summary.capability_total_requests ?? 0,
         description: '按 capability 聚合的累计请求数。',
       },
       {
         title: '池利用率',
-        count: `${Math.round((dashboard.runtimeMetrics?.pool_summary.utilization_ratio ?? 0) * 100)}%`,
+        value: `${Math.round((dashboard.runtimeMetrics?.pool_summary.utilization_ratio ?? 0) * 100)}%`,
         description: '当前实例池 busy / total 槽位利用率。',
       },
     ],
@@ -309,7 +309,7 @@ function App() {
             {overviewCards.map((card) => (
               <article key={card.title} className="card">
                 <h3>{card.title}</h3>
-                <strong>{card.count}</strong>
+                <strong>{card.value}</strong>
                 <p>{card.description}</p>
               </article>
             ))}
