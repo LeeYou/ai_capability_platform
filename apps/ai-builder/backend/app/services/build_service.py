@@ -435,8 +435,14 @@ def _relative_to_package(path: Path, package_root: Path) -> str:
 
 
 def _delivery_file_entry(path: Path, package_root: Path) -> dict[str, object]:
+    resolved_path = path.resolve()
+    package_resolved = package_root.resolve()
+    try:
+        path_value = str(resolved_path.relative_to(package_resolved))
+    except ValueError:
+        path_value = str(resolved_path)
     return {
-        "path": _relative_to_package(path, package_root),
+        "path": path_value,
         "checksum": _sha256_file(path),
         "size_bytes": path.stat().st_size,
     }
