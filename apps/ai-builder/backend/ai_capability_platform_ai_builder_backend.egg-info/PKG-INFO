@@ -1,6 +1,16 @@
+Metadata-Version: 2.4
+Name: ai-capability-platform-ai-builder-backend
+Version: 0.1.0
+Summary: ai-builder 后端服务
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi==0.116.1
+Requires-Dist: sqlalchemy==2.0.41
+Requires-Dist: uvicorn==0.35.0
+
 # ai-builder backend
 
-ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建任务、产物打包、标准 `delivery_package/` 目录生成与下载能力。
+ai-builder 后端首期工程，提供能力与授权快照同步、平台矩阵、构建任务、构建日志、产物打包与下载能力。
 
 ## 当前能力
 
@@ -12,8 +22,7 @@ ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建
 6. Linux x86_64 原生 CMake 构建
 7. Linux arm64 / Windows x86 / Windows x86_64 / JNI 交付模板生成
 8. libs 标准目录组织、manifest/checksum 生成与下载导出
-9. 标准 `delivery_package/` 目录输出、归档与下载
-10. 审计日志查询
+9. 审计日志查询
 
 ## 本地运行
 

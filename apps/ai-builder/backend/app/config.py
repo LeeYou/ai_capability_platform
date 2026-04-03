@@ -49,6 +49,7 @@ class Settings:
     database_path: Path
     build_tasks_root: Path
     build_logs_root: Path
+    delivery_packages_root: Path
     build_catalog_snapshot_path: Path
     audit_log_path: Path
     ai_train_api_base_url: str
@@ -90,6 +91,7 @@ def get_settings() -> Settings:
         database_path=database_path,
         build_tasks_root=_resolve_child_path(data_root, "build_tasks"),
         build_logs_root=_resolve_child_path(logs_root, "builder_tasks"),
+        delivery_packages_root=_resolve_child_path(_resolve_child_path(host_root, "exports"), "delivery_packages"),
         build_catalog_snapshot_path=_resolve_child_path(data_root, "ai_builder_catalog.json"),
         audit_log_path=_resolve_child_path(logs_root, "ai_builder_audit.log"),
         ai_train_api_base_url=_resolve_url(

@@ -125,6 +125,7 @@ class BuildServiceTestCase(unittest.TestCase):
                 ai_license_mgr_api_base_url=get_settings().ai_license_mgr_api_base_url,
                 build_tasks_root=get_settings().build_tasks_root,
                 build_logs_root=get_settings().build_logs_root,
+                delivery_packages_root=get_settings().delivery_packages_root,
                 libs_root=get_settings().libs_root,
                 exports_root=get_settings().exports_root,
                 audit_log_path=get_settings().audit_log_path,
@@ -147,6 +148,12 @@ class BuildServiceTestCase(unittest.TestCase):
         self.assertTrue(Path(linux_target["binary_path"]).is_file())
         self.assertTrue(Path(windows_target["binary_path"]).is_file())
         self.assertTrue(Path(linux_target["download_archive_path"]).is_file())
+        self.assertTrue(Path(task_detail["delivery_package_dir"]).is_dir())
+        self.assertTrue(Path(task_detail["delivery_package_archive_path"]).is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "sdk_linux_x86_64" / "lib" / "libface_detect.so").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "sdk_windows_x86_64" / "manifest" / "manifest.json").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "licenses" / "issue_1" / "license.bin").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "docker" / "README.md").is_file())
         self.assertTrue((self.host_root / "libs" / "linux_x86_64" / "face_detect" / "include" / "face_detect.h").is_file())
         self.assertTrue((self.host_root / "libs" / "linux_x86_64" / "face_detect" / "license" / "license.bin").is_file())
         self.assertIsNotNone(task_detail["manifest"])
@@ -205,6 +212,7 @@ class BuildServiceTestCase(unittest.TestCase):
                     ai_license_mgr_api_base_url=get_settings().ai_license_mgr_api_base_url,
                     build_tasks_root=get_settings().build_tasks_root,
                     build_logs_root=get_settings().build_logs_root,
+                    delivery_packages_root=get_settings().delivery_packages_root,
                     libs_root=get_settings().libs_root,
                     exports_root=get_settings().exports_root,
                     audit_log_path=get_settings().audit_log_path,
@@ -225,6 +233,7 @@ class BuildServiceTestCase(unittest.TestCase):
                 ai_license_mgr_api_base_url=get_settings().ai_license_mgr_api_base_url,
                 build_tasks_root=get_settings().build_tasks_root,
                 build_logs_root=get_settings().build_logs_root,
+                delivery_packages_root=get_settings().delivery_packages_root,
                 libs_root=get_settings().libs_root,
                 exports_root=get_settings().exports_root,
                 audit_log_path=get_settings().audit_log_path,

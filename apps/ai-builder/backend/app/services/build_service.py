@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -53,6 +53,13 @@ SUPPORTED_TARGETS: dict[str, dict[str, object]] = {
         "supports_jni": True,
         "build_mode": "template",
     },
+}
+
+DELIVERY_PACKAGE_SDK_DIRS = {
+    "linux_x86_64": "sdk_linux_x86_64",
+    "linux_arm64": "sdk_linux_aarch64",
+    "windows_x86": "sdk_windows_x86",
+    "windows_x86_64": "sdk_windows_x86_64",
 }
 
 
@@ -129,6 +136,8 @@ def _task_item(task: BuildTaskModel) -> dict[str, object]:
         "build_root_path": task.build_root_path,
         "log_path": task.log_path,
         "manifest_path": task.manifest_path,
+        "delivery_package_dir": task.delivery_package_dir,
+        "delivery_package_archive_path": task.delivery_package_archive_path,
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }
@@ -327,6 +336,156 @@ def _archive_directory(source_dir: Path, destination_without_suffix: Path) -> Pa
     return Path(archive_path).resolve()
 
 
+def _copy_directory_contents(source_dir: Path, destination_dir: Path) -> None:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    if not source_dir.exists():
+        return
+    for child in source_dir.iterdir():
+        target_path = destination_dir / child.name
+        if child.is_dir():
+            shutil.copytree(child, target_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(child, target_path)
+
+
+def _write_delivery_placeholder(directory: Path, title: str, lines: list[str]) -> None:
+    content = "\n".join([f"# {title}", "", *lines, ""])
+    _write_text(directory / "README.md", content)
+
+
+def _create_delivery_package(
+    *,
+    build_task: BuildTaskModel,
+    exports_root: Path,
+    delivery_packages_root: Path,
+    safe_capability_name: str,
+    safe_model_version: str,
+    issue_record_id: int,
+    license_issue: dict[str, Any],
+    target_rows: list[BuildTargetModel],
+) -> tuple[Path, Path]:
+    package_root = (delivery_packages_root / f"task_{build_task.id}" / "delivery_package").resolve()
+    if not (package_root == delivery_packages_root or delivery_packages_root in package_root.parents):
+        raise ValueError("delivery_package 目录非法。")
+    if package_root.parent.exists():
+        shutil.rmtree(package_root.parent)
+    package_root.mkdir(parents=True, exist_ok=True)
+
+    sdk_items: list[dict[str, str]] = []
+    for target in target_rows:
+        sdk_dir_name = DELIVERY_PACKAGE_SDK_DIRS.get(target.target_name)
+        if not sdk_dir_name:
+            continue
+        sdk_dir = package_root / sdk_dir_name
+        _copy_directory_contents(Path(target.output_dir), sdk_dir)
+        sdk_items.append(
+            {
+                "target_name": target.target_name,
+                "sdk_dir": sdk_dir_name,
+                "binary_path": str((sdk_dir / "lib" / Path(target.binary_path).name).resolve()),
+                "manifest_path": str((sdk_dir / "manifest" / "manifest.json").resolve()),
+            }
+        )
+
+    licenses_root = package_root / "licenses" / f"issue_{issue_record_id}"
+    licenses_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(str(license_issue["license_path"])), licenses_root / "license.bin")
+    shutil.copy2(Path(str(license_issue["public_key_export_path"])), licenses_root / "pubkey.pem")
+    _write_text(
+        licenses_root / "manifest.json",
+        json.dumps(
+            {
+                "issue_record_id": issue_record_id,
+                "customer_code": license_issue["customer_code"],
+                "capability_scope": license_issue.get("capability_scope", []),
+                "version_constraints": license_issue.get("version_constraints", {}),
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+
+    _write_delivery_placeholder(
+        package_root / "docker",
+        "docker",
+        [
+            "当前阶段已完成标准 delivery_package 目录输出。",
+            "生产镜像 tarball 将在 B10 阶段补齐到该目录。",
+        ],
+    )
+    _write_delivery_placeholder(
+        package_root / "mount_template",
+        "mount_template",
+        [
+            "当前阶段预留统一挂载模板目录。",
+            "实际宿主机模板与默认配置将在 B10 阶段补齐。",
+        ],
+    )
+    _write_delivery_placeholder(
+        package_root / "docs",
+        "docs",
+        [
+            f"能力：{safe_capability_name}",
+            f"模型版本：{safe_model_version}",
+            "当前阶段已输出标准交付目录骨架，文档材料将在 B10 阶段补齐。",
+        ],
+    )
+    _write_delivery_placeholder(
+        package_root / "tools",
+        "tools",
+        [
+            "当前阶段预留 tools 目录。",
+            "授权工具、验收工具与运维工具将在 B10/B11 阶段继续补齐。",
+        ],
+    )
+    _write_text(
+        package_root / "README.md",
+        "\n".join(
+            [
+                "# delivery_package",
+                "",
+                f"- task_id: {build_task.id}",
+                f"- capability_name: {safe_capability_name}",
+                f"- model_version: {safe_model_version}",
+                "- 当前阶段完成统一标准目录输出，SDK 与 licenses 已按交付目录组织。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        package_root / "package_manifest.json",
+        json.dumps(
+            {
+                "task_id": build_task.id,
+                "capability_name": safe_capability_name,
+                "model_version": safe_model_version,
+                "issue_record_id": issue_record_id,
+                "sdk_items": sdk_items,
+                "directories": [
+                    "docker",
+                    "licenses",
+                    "mount_template",
+                    "docs",
+                    "tools",
+                    *[item["sdk_dir"] for item in sdk_items],
+                ],
+                "stage_status": {
+                    "B9": "completed",
+                    "B10": "pending",
+                    "B11": "pending",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+
+    archive_path = _archive_directory(package_root, exports_root / "delivery_packages" / f"task_{build_task.id}_delivery_package")
+    return package_root, archive_path
+
+
 def _register_artifact(
     session: Session,
     *,
@@ -360,6 +519,7 @@ def create_build_task(
     ai_license_mgr_api_base_url: str,
     build_tasks_root: Path,
     build_logs_root: Path,
+    delivery_packages_root: Path,
     libs_root: Path,
     exports_root: Path,
     audit_log_path: Path,
@@ -432,7 +592,7 @@ def create_build_task(
         status="running",
         build_root_path="",
         log_path="",
-        started_at=datetime.now(UTC).replace(tzinfo=None),
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     session.add(build_task)
     session.commit()
@@ -640,9 +800,21 @@ def create_build_task(
         dependency_summary_json=json.dumps(dependency_summary, ensure_ascii=False, sort_keys=True),
     )
     session.add(manifest_row)
+    delivery_package_dir, delivery_package_archive_path = _create_delivery_package(
+        build_task=build_task,
+        exports_root=exports_root,
+        delivery_packages_root=delivery_packages_root,
+        safe_capability_name=safe_capability_name,
+        safe_model_version=safe_model_version,
+        issue_record_id=issue_record_id,
+        license_issue=license_issue,
+        target_rows=target_rows,
+    )
     build_task.manifest_path = str(task_manifest_path)
+    build_task.delivery_package_dir = str(delivery_package_dir)
+    build_task.delivery_package_archive_path = str(delivery_package_archive_path)
     build_task.status = "completed"
-    build_task.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    build_task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     session.refresh(build_task)
 
@@ -656,6 +828,8 @@ def create_build_task(
             "model_version": safe_model_version,
             "requested_targets": sorted(set(normalized_targets)),
             "jni_enabled": jni_enabled,
+            "delivery_package_dir": str(delivery_package_dir),
+            "delivery_package_archive_path": str(delivery_package_archive_path),
         },
     )
     return get_build_task(session, build_task.id)

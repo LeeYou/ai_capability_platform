@@ -100,6 +100,8 @@ class BuildTaskItem(BaseModel):
     build_root_path: str
     log_path: str
     manifest_path: str | None = None
+    delivery_package_dir: str | None = None
+    delivery_package_archive_path: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
 

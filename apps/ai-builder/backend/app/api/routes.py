@@ -109,6 +109,7 @@ def create_build_task_route(
             ai_license_mgr_api_base_url=settings.ai_license_mgr_api_base_url,
             build_tasks_root=settings.build_tasks_root,
             build_logs_root=settings.build_logs_root,
+            delivery_packages_root=settings.delivery_packages_root,
             libs_root=settings.libs_root,
             exports_root=settings.exports_root,
             audit_log_path=settings.audit_log_path,
@@ -144,6 +145,18 @@ def download_build_target(target_id: int, session: Session = Depends(get_db_sess
     except BuildTargetNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     archive_path = target["download_archive_path"]
+    return FileResponse(path=archive_path, filename=Path(archive_path).name, media_type="application/zip")
+
+
+@router.get("/build-tasks/{task_id}/delivery-package/download", tags=["builder"])
+def download_delivery_package(task_id: int, session: Session = Depends(get_db_session)) -> FileResponse:
+    try:
+        task = get_build_task(session, task_id)
+    except BuildTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    archive_path = task.get("delivery_package_archive_path")
+    if not archive_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="当前构建任务尚未生成 delivery_package。")
     return FileResponse(path=archive_path, filename=Path(archive_path).name, media_type="application/zip")
 
 

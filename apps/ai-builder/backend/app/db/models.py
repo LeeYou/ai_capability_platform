@@ -22,6 +22,8 @@ class BuildTaskModel(Base):
     build_root_path: Mapped[str] = mapped_column(Text)
     log_path: Mapped[str] = mapped_column(Text)
     manifest_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivery_package_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivery_package_archive_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
