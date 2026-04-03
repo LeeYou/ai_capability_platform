@@ -54,6 +54,14 @@ std::string SharedLibraryName() {
 #endif
 }
 
+std::string SamplePngBase64() {
+    return "iVBORw0KGgo=";
+}
+
+std::string SamplePdfBase64() {
+    return "JVBERi0xLjQK";
+}
+
 void WriteSnapshot(
     const std::filesystem::path& snapshot_path,
     int revision_id,
@@ -510,13 +518,37 @@ int main(int argc, char** argv) {
     }
     const auto ocr_infer_result = proxy_client.Post(
         "/api/v1/infer/ocr",
-        "{\"input_type\":\"image\",\"payload\":\"demo-ocr\"}",
+        ("{\"input_type\":\"image\",\"payload\":\"" + SamplePngBase64() + "\"}").c_str(),
         "application/json");
     if (!Expect(ocr_infer_result && ocr_infer_result->status == 200, "reload should enable plugin execution for image capability")) {
         return 1;
     }
     const auto ocr_infer_payload = nlohmann::json::parse(ocr_infer_result->body);
     if (!Expect(ocr_infer_payload["result"]["plugin_result"]["mock"] == true, "ocr infer should use plugin result")) {
+        return 1;
+    }
+    if (!Expect(ocr_infer_payload["result"]["input_metadata"]["detected_format"] == "png", "image infer should expose decoded input metadata")) {
+        return 1;
+    }
+    if (!Expect(ocr_infer_payload["result"]["payload_size"] == 8, "image infer should report decoded payload size")) {
+        return 1;
+    }
+    const auto invalid_image_infer_result = proxy_client.Post(
+        "/api/v1/infer/ocr",
+        "{\"input_type\":\"image\",\"payload\":\"demo-ocr\"}",
+        "application/json");
+    if (!Expect(invalid_image_infer_result && invalid_image_infer_result->status == 400, "invalid image payload should be rejected by codec")) {
+        return 1;
+    }
+    const auto pdf_infer_result = proxy_client.Post(
+        "/api/v1/infer/ocr",
+        ("{\"input_type\":\"pdf\",\"payload\":\"" + SamplePdfBase64() + "\"}").c_str(),
+        "application/json");
+    if (!Expect(pdf_infer_result && pdf_infer_result->status == 200, "pdf infer should be accepted after codec decode")) {
+        return 1;
+    }
+    const auto pdf_infer_payload = nlohmann::json::parse(pdf_infer_result->body);
+    if (!Expect(pdf_infer_payload["result"]["input_metadata"]["detected_format"] == "pdf", "pdf infer should expose decoded format metadata")) {
         return 1;
     }
     const auto metrics_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
@@ -533,10 +565,10 @@ int main(int argc, char** argv) {
         if (!Expect(!item["execution_metrics"].is_null(), "catalog should expose execution metrics after infer")) {
             return 1;
         }
-        if (!Expect(item["execution_metrics"]["total_requests"] == 1, "catalog metrics should count executed request")) {
+        if (!Expect(item["execution_metrics"]["total_requests"] == 2, "catalog metrics should count executed requests")) {
             return 1;
         }
-        if (!Expect(item["execution_metrics"]["successful_requests"] == 1, "catalog metrics should count successful request")) {
+        if (!Expect(item["execution_metrics"]["successful_requests"] == 2, "catalog metrics should count successful requests")) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "catalog metrics should expose plugin info")) {

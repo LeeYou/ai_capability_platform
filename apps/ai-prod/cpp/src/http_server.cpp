@@ -1,4 +1,5 @@
 #include "http_server.h"
+#include "payload_codec.h"
 #include "request_lease.h"
 
 #include <algorithm>
@@ -34,6 +35,7 @@ struct AdminTransitionRequestPayload {
 struct InferRequestPayload {
     std::string input_type = "json";
     std::string payload;
+    DecodedPayload decoded_payload;
     std::string prefer_device = "auto";
     nlohmann::json options = nlohmann::json::object();
     int simulate_delay_ms = 0;
@@ -194,7 +196,7 @@ bool ParseInferRequest(const std::string& body, InferRequestPayload* request, st
         if (request->options.contains("simulate_delay_ms") && request->options["simulate_delay_ms"].is_number_integer()) {
             request->simulate_delay_ms = std::clamp(request->options["simulate_delay_ms"].get<int>(), 0, kMaxSimulateDelayMs);
         }
-        return true;
+        return PayloadCodec::Decode(request->input_type, request->payload, &request->decoded_payload, error_message);
     } catch (const std::exception&) {
         *error_message = "请求体不是合法 JSON。";
         return false;
@@ -639,7 +641,7 @@ void AiProdHttpServer::HandleInferRequest(
         *catalog_entry,
         static_cast<std::size_t>(lease->slot_index),
         infer_request.input_type,
-        infer_request.payload,
+        infer_request.decoded_payload.normalized_payload,
         infer_request.options,
         device,
         request_id,
@@ -654,7 +656,7 @@ void AiProdHttpServer::HandleInferRequest(
 
     const std::string digest = Sha256Hex(
         capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
-        infer_request.payload + "|" + plugin_result.plugin_result.dump());
+        infer_request.decoded_payload.normalized_payload + "|" + plugin_result.plugin_result.dump());
 
     const nlohmann::json payload = {
         {"request_id", request_id},
@@ -670,7 +672,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"digest", digest},
             {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
             {"input_type", infer_request.input_type},
-            {"payload_size", infer_request.payload.size()},
+            {"payload_size", infer_request.decoded_payload.normalized_payload.size()},
+            {"input_metadata", infer_request.decoded_payload.metadata},
             {"instance_id", request_lease.Item().instance_id},
             {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
             {"infer_time_ms", plugin_result.infer_time_ms},
@@ -696,6 +699,8 @@ void AiProdHttpServer::HandleInferRequest(
                 {"request_id", request_id},
                 {"device", device},
                 {"instance_id", request_lease.Item().instance_id},
+                {"input_type", infer_request.input_type},
+                {"input_metadata", infer_request.decoded_payload.metadata},
             });
 
     response.status = 200;

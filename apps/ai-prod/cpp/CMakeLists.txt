@@ -20,6 +20,7 @@ add_executable(ai_prod_cpp_proxy
     src/instance_pool.cpp
     src/license_manager.cpp
     src/main.cpp
+    src/payload_codec.cpp
     src/plugin_executor.cpp
     src/proxy_config.cpp
     src/request_lease.cpp
@@ -60,6 +61,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/http_server.cpp
         src/instance_pool.cpp
         src/license_manager.cpp
+        src/payload_codec.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
         src/request_lease.cpp
@@ -87,6 +89,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/http_server.cpp
         src/instance_pool.cpp
         src/license_manager.cpp
+        src/payload_codec.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
         src/request_lease.cpp
@@ -166,6 +169,21 @@ if(AI_PROD_CPP_BUILD_TESTS)
     add_dependencies(test_plugin_executor test_mock_ai_plugin)
 
     add_test(NAME ai_prod_cpp_test_plugin_executor COMMAND test_plugin_executor)
+
+    add_executable(test_payload_codec
+        tests/test_payload_codec.cpp
+        src/payload_codec.cpp
+    )
+
+    target_include_directories(test_payload_codec PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_INCLUDE_DIR}
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    target_link_libraries(test_payload_codec PRIVATE OpenSSL::Crypto)
+
+    add_test(NAME ai_prod_cpp_test_payload_codec COMMAND test_payload_codec)
 
     add_executable(test_request_tracker
         tests/test_request_tracker.cpp
