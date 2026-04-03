@@ -1,0 +1,23 @@
+server:
+  host: "0.0.0.0"
+  port: 26000
+  workers: 4
+  admin_token: "demo-admin-token"
+  request_timeout_ms: 30000
+  max_body_size_mb: 50
+  max_video_size_mb: 200
+  license_auto_reload_interval_seconds: 60
+
+runtime:
+  device: "auto"
+  default_pool_size: 2
+
+paths:
+  host_plugin_dir: "/opt/ai_platform/plugins"
+  host_model_dir: "/opt/ai_platform/models"
+  host_license_dir: "/opt/ai_platform/license"
+  host_config_dir: "/opt/ai_platform/config"
+  host_log_dir: "/opt/ai_platform/logs"
+  builtin_plugin_dir: "/app/plugins"
+  builtin_model_dir: "/app/models"
+  builtin_config_dir: "/app/config"

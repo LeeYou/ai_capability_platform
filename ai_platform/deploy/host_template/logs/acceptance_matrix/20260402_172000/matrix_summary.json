@@ -1,0 +1,52 @@
+﻿{
+    "failed_scenarios":  0,
+    "results":  [
+                    {
+                        "scenario_name":  "normal",
+                        "status":  "passed",
+                        "mode":  "normal",
+                        "repeat_count":  1,
+                        "artifacts_root":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\normal",
+                        "failure_summary_path":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\normal\\acceptance_failure_summary.json",
+                        "failure_category":  "",
+                        "failure_step":  "",
+                        "failure_suggestion":  "",
+                        "expected_failure_category":  "",
+                        "error_message":  ""
+                    },
+                    {
+                        "scenario_name":  "normal_repeat_3",
+                        "status":  "passed",
+                        "mode":  "normal",
+                        "repeat_count":  3,
+                        "artifacts_root":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\normal_repeat_3",
+                        "failure_summary_path":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\normal_repeat_3\\acceptance_failure_summary.json",
+                        "failure_category":  "",
+                        "failure_step":  "",
+                        "failure_suggestion":  "",
+                        "expected_failure_category":  "",
+                        "error_message":  ""
+                    },
+                    {
+                        "scenario_name":  "license_invalid_missing_license",
+                        "status":  "expected_failure",
+                        "mode":  "license_invalid",
+                        "repeat_count":  1,
+                        "artifacts_root":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\license_invalid_missing_license",
+                        "failure_summary_path":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000\\license_invalid_missing_license\\license_invalid_missing_license_20260402_172025\\acceptance_failure_summary.json",
+                        "failure_category":  "license_invalid",
+                        "failure_step":  "run_smoke",
+                        "failure_suggestion":  "Check license/license.dat for the current scenario, or use AllowMissingLicensePath for invalid-license scenarios.",
+                        "expected_failure_category":  "license_invalid",
+                        "error_message":  "run_delivery_acceptance failed with exit code: 1"
+                    }
+                ],
+    "matrix_run_root":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\deploy\\host_template\\logs\\acceptance_matrix\\20260402_172000",
+    "passed_scenarios":  2,
+    "total_scenarios":  3,
+    "matrix_config_path":  "F:\\work\\agilestar\\code\\Demo\\Demo008\\ai_platform\\config\\delivery_acceptance_matrix.json",
+    "failed_scenario_names":  [
+
+                              ],
+    "expected_failed_scenarios":  null
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "平台统一错误码目录",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ranges",
+    "items"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "ranges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "prefix",
+          "start",
+          "end",
+          "owner"
+        ],
+        "properties": {
+          "prefix": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "owner": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "module",
+          "code",
+          "name",
+          "message",
+          "http_status"
+        ],
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "code": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

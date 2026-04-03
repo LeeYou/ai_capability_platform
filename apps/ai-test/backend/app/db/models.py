@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.database import Base
+
+
+class TestTaskModel(Base):
+    __tablename__ = "test_task"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_type: Mapped[str] = mapped_column(String(32))
+    capability_name: Mapped[str] = mapped_column(String(128), index=True)
+    model_version: Mapped[str] = mapped_column(String(128))
+    model_artifact_path: Mapped[str] = mapped_column(Text)
+    requested_backend: Mapped[str] = mapped_column(String(32), default="auto")
+    execution_backend: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    total_cases: Mapped[int] = mapped_column(Integer, default=0)
+    passed_cases: Mapped[int] = mapped_column(Integer, default=0)
+    failed_cases: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+    cases: Mapped[list[TestCaseModel]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    results: Mapped[list[TestResultModel]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    report: Mapped[TestReportModel | None] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class TestCaseModel(Base):
+    __tablename__ = "test_case"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("test_task.id", ondelete="CASCADE"), index=True)
+    case_name: Mapped[str] = mapped_column(String(255))
+    input_path: Mapped[str] = mapped_column(Text)
+    input_type: Mapped[str] = mapped_column(String(64))
+    expected_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+
+    task: Mapped[TestTaskModel] = relationship(back_populates="cases")
+    results: Mapped[list[TestResultModel]] = relationship(back_populates="case", cascade="all, delete-orphan")
+
+
+class TestResultModel(Base):
+    __tablename__ = "test_result"
+    __table_args__ = (
+        UniqueConstraint("case_id", name="uq_test_result_case_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("test_task.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("test_case.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32))
+    execution_backend: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(128))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    expected_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actual_output: Mapped[str] = mapped_column(Text)
+    raw_output_json: Mapped[str] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+
+    task: Mapped[TestTaskModel] = relationship(back_populates="results")
+    case: Mapped[TestCaseModel] = relationship(back_populates="results")
+
+
+class TestReportModel(Base):
+    __tablename__ = "test_report"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_test_report_task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("test_task.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ready")
+    summary_json: Mapped[str] = mapped_column(Text)
+    json_report_path: Mapped[str] = mapped_column(Text)
+    html_report_path: Mapped[str] = mapped_column(Text)
+    pdf_report_path: Mapped[str] = mapped_column(Text)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+    task: Mapped[TestTaskModel] = relationship(back_populates="report")

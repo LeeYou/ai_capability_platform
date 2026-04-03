@@ -1,0 +1,35 @@
+{
+  "schema_version": "v1",
+  "ranges": [
+    {
+      "prefix": "COMMON",
+      "start": 0,
+      "end": 999,
+      "owner": "platform"
+    },
+    {
+      "prefix": "SDK",
+      "start": 5000,
+      "end": 5999,
+      "owner": "ai-sdk"
+    }
+  ],
+  "items": [
+    {
+      "module": "common",
+      "code": 0,
+      "name": "SUCCESS",
+      "message": "处理成功",
+      "http_status": 200,
+      "notes": "统一成功返回"
+    },
+    {
+      "module": "ai-sdk",
+      "code": 5001,
+      "name": "SDK_PACKAGE_NOT_FOUND",
+      "message": "SDK 包不存在",
+      "http_status": 404,
+      "notes": "单机交付 SDK 包查询失败"
+    }
+  ]
+}

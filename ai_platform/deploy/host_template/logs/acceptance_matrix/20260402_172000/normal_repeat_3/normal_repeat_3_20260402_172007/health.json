@@ -1,0 +1,12 @@
+﻿{
+    "code":  0,
+    "message":  "healthy",
+    "data":  {
+                 "status":  "healthy",
+                 "port":  26000
+             },
+    "request_id":  "mgmt_1775121624749",
+    "endpoint":  "/api/v1/health",
+    "timestamp":  1775121624749,
+    "api_version":  "v1"
+}

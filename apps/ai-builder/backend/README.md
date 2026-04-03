@@ -1,0 +1,36 @@
+# ai-builder backend
+
+ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建任务、产物打包、标准 `delivery_package/` 目录生成，以及 docker / mount_template / tools / docs / 验收清单 / 版本清单 / 交付摘要等交付物料归档与下载能力。
+
+## 当前能力
+
+1. 健康检查接口
+2. ai-train 能力/模型目录同步与快照回退
+3. ai-license-mgr 授权记录/策略同步与快照回退
+4. 平台矩阵查询
+5. 构建任务创建、查询、日志与产物记录
+6. Linux x86_64 原生 CMake 构建
+7. Linux arm64 / Windows x86 / Windows x86_64 / JNI 交付模板生成
+8. libs 标准目录组织、manifest/checksum 生成与下载导出
+9. 标准 `delivery_package/` 目录输出、归档与下载
+10. ai-prod 生产镜像构建上下文 tarball、mount_template、tools、docs 打包
+11. 验收清单、版本清单、交付摘要生成
+12. 审计日志查询
+
+## 本地运行
+
+```bash
+cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-builder/backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 26003
+```
+
+默认宿主机根目录为 `/data/ai_capability_platform`，可通过环境变量 `AI_CAP_HOST_ROOT` 覆盖。
+
+SQLite 数据库默认位于 `${AI_CAP_HOST_ROOT}/data/ai_builder.db`。
+
+## 校验命令
+
+```bash
+cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-builder/backend
+PYTHONPATH=. python -m unittest discover -s tests -v
+```

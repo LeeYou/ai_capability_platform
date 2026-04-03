@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "license 标准文件",
+  "type": "object",
+  "required": [
+    "algorithm",
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "algorithm": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "customer_id",
+        "customer_code",
+        "customer_name",
+        "capability_scope",
+        "hardware_fingerprint",
+        "start_at_cst",
+        "expire_at_cst",
+        "version_constraints",
+        "issued_at_cst",
+        "issuer_key_name",
+        "policy_id"
+      ],
+      "properties": {
+        "customer_id": {
+          "type": "integer"
+        },
+        "customer_code": {
+          "type": "string"
+        },
+        "customer_name": {
+          "type": "string"
+        },
+        "capability_scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hardware_fingerprint": {
+          "type": "string"
+        },
+        "start_at_cst": {
+          "type": "string"
+        },
+        "expire_at_cst": {
+          "type": "string"
+        },
+        "version_constraints": {
+          "type": "object"
+        },
+        "issued_at_cst": {
+          "type": "string"
+        },
+        "issuer_key_name": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "integer"
+        }
+      }
+    },
+    "signature": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  ai-platform:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ai-platform-cpu
+    restart: unless-stopped
+    ports:
+      - "26000:26000"
+    volumes:
+      - /opt/ai_platform/plugins:/opt/ai_platform/plugins
+      - /opt/ai_platform/models:/opt/ai_platform/models
+      - /opt/ai_platform/license:/opt/ai_platform/license
+      - /opt/ai_platform/config:/opt/ai_platform/config
+      - /opt/ai_platform/logs:/opt/ai_platform/logs
+    environment:
+      - AI_DEVICE_MODE=cpu
+      - TZ=Asia/Shanghai
+      - AI_PLATFORM_CONFIG_PATH=/opt/ai_platform/config/platform.yaml
+      - AI_PLATFORM_PLUGINS_REGISTRY_PATH=/opt/ai_platform/config/plugins_registry.txt
+      - AI_PLATFORM_LICENSE_AUDIT_LOG_PATH=/opt/ai_platform/logs/audit.log
+      - AI_PLATFORM_RUNTIME_AUDIT_LOG_PATH=/opt/ai_platform/logs/runtime_audit.log
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:26000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

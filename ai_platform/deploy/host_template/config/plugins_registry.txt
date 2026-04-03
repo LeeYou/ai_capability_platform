@@ -1,0 +1,15 @@
+# delivery format: capability_id=plugin_library_path|model_dir|device|max_batch_size|instance_count
+# paths are recommended to be relative to the unpacked delivery root
+# example root:
+# /opt/ai_platform/
+# ├── ai_platform_server
+# ├── plugins/
+# ├── models/
+# ├── license/
+# ├── config/
+# └── logs/
+face_detect = plugins/libcap_face_detect.dll | models/face_detect | cpu | 1 | 2
+liveness_action = plugins/libcap_liveness_action.dll | models/liveness_action | cpu | 1 | 1
+idcard_detect = plugins/libcap_idcard_detect.dll | models/idcard_detect | cpu | 1 | 1
+doc_classify = plugins/libcap_doc_classify.dll | models/doc_classify | cpu | 1 | 1
+seal_detect = plugins/libcap_seal_detect.dll | models/seal_detect | cpu | 1 | 1

@@ -1,0 +1,86 @@
+x-backend-common: &backend-common
+  environment:
+    AI_CAP_HOST_ROOT: /data/ai_capability_platform
+  volumes:
+    - ${AI_CAP_HOST_ROOT:-/data/ai_capability_platform}:/data/ai_capability_platform
+  restart: unless-stopped
+
+services:
+  ai-train:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-train/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    ports:
+      - "26000:26000"
+
+  ai-test:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-test/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    environment:
+      AI_CAP_HOST_ROOT: /data/ai_capability_platform
+      AI_TRAIN_API_BASE_URL: http://ai-train:26000
+    depends_on:
+      - ai-train
+    ports:
+      - "26001:26001"
+
+  ai-license-mgr:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-license-mgr/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    ports:
+      - "26002:26002"
+
+  ai-builder:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-builder/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    environment:
+      AI_CAP_HOST_ROOT: /data/ai_capability_platform
+      AI_TRAIN_API_BASE_URL: http://ai-train:26000
+      AI_LICENSE_MGR_API_BASE_URL: http://ai-license-mgr:26002
+    depends_on:
+      - ai-train
+      - ai-license-mgr
+    ports:
+      - "26003:26003"
+
+  ai-prod:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-prod/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    environment:
+      AI_CAP_HOST_ROOT: /data/ai_capability_platform
+      AI_PROD_PY_BACKEND_BIND_HOST: 127.0.0.1
+      AI_PROD_PY_BACKEND_HOST: 127.0.0.1
+      AI_PROD_PY_BACKEND_PORT: 26014
+      AI_PROD_CPP_BIND_HOST: 0.0.0.0
+      AI_PROD_CPP_BIND_PORT: 26004
+    ports:
+      - "26004:26004"
+
+  ai-sdk:
+    <<: *backend-common
+    build:
+      context: .
+      dockerfile: apps/ai-sdk/Dockerfile
+      args:
+        AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    ports:
+      - "26005:26005"

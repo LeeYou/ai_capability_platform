@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "单机交付 SDK manifest",
+  "type": "object",
+  "required": [
+    "package_id",
+    "package_name",
+    "capability_name",
+    "model_version",
+    "target_name",
+    "artifact_format",
+    "jni_enabled",
+    "source_builder_manifest",
+    "delivery_content",
+    "abi_compatibility",
+    "thread_safe",
+    "gpu_fallback"
+  ],
+  "properties": {
+    "package_id": {
+      "type": "integer"
+    },
+    "package_name": {
+      "type": "string"
+    },
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "target_name": {
+      "type": "string"
+    },
+    "artifact_format": {
+      "type": "string"
+    },
+    "jni_enabled": {
+      "type": "boolean"
+    },
+    "source_builder_manifest": {
+      "type": "object"
+    },
+    "delivery_content": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "abi_compatibility": {
+      "type": "string"
+    },
+    "thread_safe": {
+      "type": "boolean"
+    },
+    "gpu_fallback": {
+      "type": "boolean"
+    }
+  }
+}

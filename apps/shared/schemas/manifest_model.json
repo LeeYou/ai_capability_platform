@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "模型包 manifest",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "model_version",
+    "source_train_task_id",
+    "task_name",
+    "backend_type",
+    "artifact_path",
+    "status",
+    "checksum"
+  ],
+  "properties": {
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "source_train_task_id": {
+      "type": "integer"
+    },
+    "task_name": {
+      "type": "string"
+    },
+    "backend_type": {
+      "type": "string"
+    },
+    "artifact_path": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "checksum": {
+      "type": "string"
+    }
+  }
+}

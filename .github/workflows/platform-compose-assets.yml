@@ -1,0 +1,23 @@
+name: platform-compose-assets
+
+on:
+  push:
+    branches:
+      - main
+      - copilot/**
+  pull_request:
+
+jobs:
+  compose-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 初始化宿主机目录模板
+        run: |
+          bash scripts/docker/init_host_root.sh
+      - name: 校验 compose 配置
+        run: |
+          docker compose config >/dev/null
+      - name: 校验健康检查脚本语法
+        run: |
+          bash -n scripts/docker/health_check.sh

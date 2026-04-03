@@ -1,0 +1,36 @@
+{
+  "scenarios": [
+    {
+      "name": "normal",
+      "mode": "normal",
+      "repeat_count": 1,
+      "prepare_delivery_root": true,
+      "clean_delivery_root": true,
+      "capture_diagnostics": true,
+      "require_models": true,
+      "allow_missing_license_path": false
+    },
+    {
+      "name": "normal_repeat_3",
+      "mode": "normal",
+      "repeat_count": 3,
+      "prepare_delivery_root": false,
+      "clean_delivery_root": false,
+      "capture_diagnostics": true,
+      "require_models": true,
+      "allow_missing_license_path": false
+    },
+    {
+      "name": "license_invalid_missing_license",
+      "mode": "license_invalid",
+      "repeat_count": 1,
+      "prepare_delivery_root": false,
+      "clean_delivery_root": false,
+      "capture_diagnostics": false,
+      "require_models": false,
+      "allow_missing_license_path": true,
+      "expected_failure_category": "license_invalid",
+      "license_path": "license\\missing_license.dat"
+    }
+  ]
+}

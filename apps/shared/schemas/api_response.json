@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "统一 API 响应结构",
+  "type": "object",
+  "required": [
+    "code",
+    "message",
+    "request_id",
+    "data"
+  ],
+  "properties": {
+    "code": {
+      "type": "integer"
+    },
+    "message": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    }
+  }
+}

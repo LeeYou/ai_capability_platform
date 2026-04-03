@@ -1,0 +1,157 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 40px 32px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(45, 111, 255, 0.08), rgba(240, 249, 255, 0.8));
+}
+
+.hero-text {
+  max-width: 760px;
+}
+
+.eyebrow {
+  margin-bottom: 12px;
+  color: #2d6fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hero-panel {
+  min-width: 280px;
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow);
+}
+
+.label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.content {
+  display: grid;
+  gap: 24px;
+  padding: 32px;
+}
+
+.panel,
+.sub-panel {
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  color: #2d6fff;
+  background: rgba(45, 111, 255, 0.1);
+  border: 1px solid rgba(45, 111, 255, 0.32);
+  font-size: 14px;
+}
+
+.badge-muted {
+  color: var(--text);
+  background: rgba(244, 243, 236, 0.72);
+  border-color: var(--border);
+}
+
+.info-text,
+.error-text {
+  margin-top: 16px;
+}
+
+.error-text {
+  color: #b93d2f;
+}
+
+.card-grid,
+.table-grid,
+.split {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.table-grid,
+.split {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.card {
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.card strong {
+  display: block;
+  margin: 12px 0 8px;
+  font-size: 32px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 10px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+ul {
+  margin: 16px 0 0;
+  padding-left: 20px;
+}
+
+li {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 960px) {
+  .hero {
+    flex-direction: column;
+  }
+
+  .content {
+    padding: 20px;
+  }
+}

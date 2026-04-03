@@ -1,0 +1,19 @@
+#ifndef AI_PLATFORM_AI_ERROR_CODES_H
+#define AI_PLATFORM_AI_ERROR_CODES_H
+
+namespace ai_platform {
+
+enum ErrorCode {
+    AI_OK = 0,
+    AI_ERR_UNKNOWN = -1,
+    AI_ERR_INVALID_PARAM = -2,
+    AI_ERR_INVALID_HANDLE = -3,
+    AI_ERR_INIT_FAILED = -4,
+    AI_ERR_NOT_INITIALIZED = -5,
+    AI_ERR_CAPABILITY_NOT_FOUND = -200,
+    AI_ERR_LICENSE_INVALID = -401
+};
+
+}
+
+#endif
