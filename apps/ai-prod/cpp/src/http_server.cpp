@@ -363,6 +363,7 @@ bool AiProdHttpServer::RefreshCatalogAndPools(bool force_rebuild) {
     }
     instancePools = std::move(next_pools);
     activeCatalogRevisionId = revision_id;
+    pluginExecutor.SyncEntries(capabilityCatalog.ListEntries());
     return true;
 }
 
@@ -398,6 +399,8 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"backend_type", entry.backend_type},
                 {"active_source", entry.active_source},
                 {"device_mode", entry.device_mode},
+                {"model_root", entry.model_root},
+                {"binary_path", entry.binary_path},
                 {"pool_size", total_size},
                 {"busy_count", busy_count},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
@@ -543,16 +546,31 @@ void AiProdHttpServer::HandleInferRequest(
 
     const std::string device = ResolveDevice(infer_request, *catalog_entry);
     const std::string request_id = GenerateRequestId();
-    const std::string digest = Sha256Hex(
-        capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
-        infer_request.payload + "|" + infer_request.options.dump());
-
     if (infer_request.simulate_delay_ms > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
     }
 
+    PluginExecutionResult plugin_result;
+    std::string plugin_error;
+    const bool plugin_ok = pluginExecutor.Execute(
+        *catalog_entry,
+        static_cast<std::size_t>(lease->slot_index),
+        infer_request.input_type,
+        infer_request.payload,
+        infer_request.options,
+        device,
+        &plugin_result,
+        &plugin_error);
     const bool released = pool->Release(lease->slot_index);
     (void)released;
+    if (!plugin_ok) {
+        ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
+        return;
+    }
+
+    const std::string digest = Sha256Hex(
+        capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
+        infer_request.payload + "|" + plugin_result.plugin_result.dump());
 
     const nlohmann::json payload = {
         {"request_id", request_id},
@@ -571,6 +589,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"payload_size", infer_request.payload.size()},
             {"instance_id", lease->instance_id},
             {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
+            {"infer_time_ms", plugin_result.infer_time_ms},
+            {"plugin_result", plugin_result.plugin_result},
         }},
     };
 
@@ -701,6 +721,8 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
                 {"model_version", capability_entry.second.model_version},
                 {"backend_type", capability_entry.second.backend_type},
                 {"active_source", capability_entry.second.active_source},
+                {"model_root", capability_entry.second.model_root},
+                {"binary_path", capability_entry.second.binary_path},
                 {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
                 {"pool_size", config.pool_size},
                 {"revision_id", revision->id},

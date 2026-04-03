@@ -40,10 +40,26 @@ bool WaitForHttpReady(const std::string& host, int port, const std::string& path
     return false;
 }
 
+std::filesystem::path CurrentBinaryDir(const char* argv0) {
+    return std::filesystem::weakly_canonical(std::filesystem::path(argv0)).parent_path();
+}
+
+std::string SharedLibraryName() {
+#ifdef _WIN32
+    return "test_mock_ai_plugin.dll";
+#elif __APPLE__
+    return "libtest_mock_ai_plugin.dylib";
+#else
+    return "libtest_mock_ai_plugin.so";
+#endif
+}
+
 void WriteSnapshot(
     const std::filesystem::path& snapshot_path,
     int revision_id,
-    int pool_size) {
+    int pool_size,
+    const std::filesystem::path& model_root,
+    const std::filesystem::path& binary_path) {
     std::ofstream snapshot_output(snapshot_path);
     snapshot_output
         << "{"
@@ -55,10 +71,12 @@ void WriteSnapshot(
         << "\"capabilities\":[{"
         << "\"capability_name\":\"face_detect\","
         << "\"plugin_target\":\"linux_x86_64\","
-        << "\"model_version\":\"v1_0_0\","
+        << "\"model_version\":\"v2_0_0\","
         << "\"backend_type\":\"onnxruntime\","
         << "\"active_source\":\"host\","
         << "\"device_mode\":\"gpu/cpu\","
+        << "\"model_root\":\"" << model_root.string() << "\","
+        << "\"binary_path\":\"" << binary_path.string() << "\","
         << "\"pool_size\":" << pool_size << ","
         << "\"revision_id\":" << revision_id
         << "}],"
@@ -96,9 +114,8 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& content
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     const std::filesystem::path snapshot_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_snapshot_test.json";
-    WriteSnapshot(snapshot_path, 9, 1);
     const std::filesystem::path license_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_license_test";
     const std::filesystem::path runtime_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_test.log";
     const std::filesystem::path audit_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_audit_test.log";
@@ -111,24 +128,38 @@ int main() {
     std::filesystem::remove(database_path);
     std::filesystem::remove(runtime_log_path);
     std::filesystem::remove(audit_log_path);
+    const auto built_plugin_path = CurrentBinaryDir(argv[0]) / SharedLibraryName();
+    if (!Expect(std::filesystem::exists(built_plugin_path), "test plugin library should exist")) {
+        return 1;
+    }
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
         R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime"})");
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
         R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release"})");
-    WriteTextFile(
+    std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
+    std::filesystem::copy_file(
+        built_plugin_path,
         host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so",
-        "binary");
+        std::filesystem::copy_options::overwrite_existing);
     WriteTextFile(
         image_root / "models" / "ocr" / "v1_0_0" / "manifest.json",
         R"({"capability_name":"ocr","model_version":"v1_0_0","backend_type":"onnxruntime"})");
     WriteTextFile(
         image_root / "libs" / "linux_x86_64" / "ocr" / "manifest" / "manifest.json",
         R"({"capability_name":"ocr","target_name":"linux_x86_64","build_mode":"template"})");
-    WriteTextFile(
+    std::filesystem::create_directories(image_root / "libs" / "linux_x86_64" / "ocr" / "lib");
+    std::filesystem::copy_file(
+        built_plugin_path,
         image_root / "libs" / "linux_x86_64" / "ocr" / "lib" / "libocr.so",
-        "binary");
+        std::filesystem::copy_options::overwrite_existing);
+    WriteSnapshot(
+        snapshot_path,
+        9,
+        1,
+        host_root / "models" / "face_detect" / "v2_0_0",
+        host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so");
     const std::map<std::string, std::string> hardware_features = {
         {"cpu", "intel-i7"},
         {"mac", "00:11:22:33:44:55"},
@@ -397,6 +428,12 @@ int main() {
     if (!Expect(infer_payload["result"]["fallback_applied"] == false, "infer should report no fallback for gpu path")) {
         return 1;
     }
+    if (!Expect(infer_payload["result"]["plugin_result"]["mock"] == true, "infer should include plugin execution result")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["plugin_result"]["device"] == "cuda", "infer should execute plugin on gpu binding")) {
+        return 1;
+    }
     if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {
         return 1;
     }
@@ -419,6 +456,17 @@ int main() {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"].size() == 2, "reload should publish merged capabilities")) {
+        return 1;
+    }
+    const auto ocr_infer_result = proxy_client.Post(
+        "/api/v1/infer/ocr",
+        "{\"input_type\":\"image\",\"payload\":\"demo-ocr\"}",
+        "application/json");
+    if (!Expect(ocr_infer_result && ocr_infer_result->status == 200, "reload should enable plugin execution for image capability")) {
+        return 1;
+    }
+    const auto ocr_infer_payload = nlohmann::json::parse(ocr_infer_result->body);
+    if (!Expect(ocr_infer_payload["result"]["plugin_result"]["mock"] == true, "ocr infer should use plugin result")) {
         return 1;
     }
 

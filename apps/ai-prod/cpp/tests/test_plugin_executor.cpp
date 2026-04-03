@@ -1,0 +1,104 @@
+#include "plugin_executor.h"
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+
+namespace {
+
+bool Expect(bool condition, const char* message) {
+    if (!condition) {
+        std::cerr << message << std::endl;
+        return false;
+    }
+    return true;
+}
+
+std::filesystem::path CurrentBinaryDir(const char* argv0) {
+    return std::filesystem::weakly_canonical(std::filesystem::path(argv0)).parent_path();
+}
+
+std::string SharedLibraryName() {
+#ifdef _WIN32
+    return "test_mock_ai_plugin.dll";
+#elif __APPLE__
+    return "libtest_mock_ai_plugin.dylib";
+#else
+    return "libtest_mock_ai_plugin.so";
+#endif
+}
+
+void WriteText(const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path);
+    output << content;
+}
+
+}
+
+int main(int argc, char** argv) {
+    const auto temp_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_plugin_executor_test";
+    std::filesystem::remove_all(temp_root);
+    const auto model_root = temp_root / "models" / "face_detect" / "v1_0_0";
+    WriteText(model_root / "manifest.json", R"({"capability_name":"face_detect","model_version":"v1_0_0"})");
+
+    const auto plugin_binary = CurrentBinaryDir(argv[0]) / SharedLibraryName();
+    if (!Expect(std::filesystem::exists(plugin_binary), "test plugin library should exist")) {
+        return 1;
+    }
+
+    PluginExecutor executor;
+    CapabilityCatalogEntry entry;
+    entry.capability_name = "face_detect";
+    entry.model_root = model_root.string();
+    entry.binary_path = plugin_binary.string();
+    entry.pool_size = 2;
+
+    PluginExecutionResult result;
+    std::string error_message;
+    if (!Expect(
+            executor.Execute(
+                entry,
+                0,
+                "json",
+                "{\"image\":\"demo\"}",
+                nlohmann::json::object(),
+                "cpu",
+                &result,
+                &error_message),
+            error_message.c_str())) {
+        return 1;
+    }
+    if (!Expect(result.plugin_result.value("mock", false), "plugin result should come from mock plugin")) {
+        return 1;
+    }
+    if (!Expect(result.plugin_result.value("device", "") == "cpu", "plugin should receive cpu device")) {
+        return 1;
+    }
+
+    entry.model_root = (temp_root / "models" / "face_detect" / "v2_0_0").string();
+    WriteText(std::filesystem::path(entry.model_root) / "manifest.json", R"({"capability_name":"face_detect","model_version":"v2_0_0"})");
+    executor.SyncEntries({entry});
+    if (!Expect(
+            executor.Execute(
+                entry,
+                1,
+                "image",
+                "binary",
+                nlohmann::json::object(),
+                "gpu",
+                &result,
+                &error_message),
+            error_message.c_str())) {
+        return 1;
+    }
+    if (!Expect(result.plugin_result.value("device", "") == "cuda", "plugin should receive gpu device")) {
+        return 1;
+    }
+    if (!Expect(result.plugin_result.value("model_dir", "") == entry.model_root, "sync should refresh model root")) {
+        return 1;
+    }
+
+    std::filesystem::remove_all(temp_root);
+    return 0;
+}

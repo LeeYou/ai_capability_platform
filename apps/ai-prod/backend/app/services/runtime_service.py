@@ -218,6 +218,8 @@ def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict
         "model_version": payload["model_version"],
         "backend_type": payload["backend_type"],
         "active_source": payload["active_source"],
+        "model_root": payload.get("model_root", ""),
+        "binary_path": payload.get("binary_path", ""),
         "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
         "pool_size": len(_INSTANCE_POOLS.get(capability_name, [])),
         "revision_id": _ACTIVE_REVISION_ID,

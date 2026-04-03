@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -17,6 +18,8 @@ struct CapabilityCatalogEntry {
     std::string backend_type;
     std::string active_source;
     std::string device_mode;
+    std::string model_root;
+    std::string binary_path;
     int pool_size = 0;
     int revision_id = 0;
 };

@@ -5,6 +5,7 @@
 #include "backend_client.h"
 #include "instance_pool.h"
 #include "license_manager.h"
+#include "plugin_executor.h"
 #include "proxy_config.h"
 #include "revision_store.h"
 #include "runtime_resource_scanner.h"
@@ -58,6 +59,7 @@ private:
     AiProdBackendClient backendClient;
     std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
     LicenseManager licenseManager;
+    PluginExecutor pluginExecutor;
     RuntimeSnapshotManager snapshotManager;
     mutable std::mutex runtimeStateMutex;
     int activeCatalogRevisionId = 0;

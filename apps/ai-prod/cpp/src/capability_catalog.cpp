@@ -103,6 +103,8 @@ bool CapabilityCatalog::ParseSnapshotUnlocked(const nlohmann::json& snapshot_jso
                 item.value("backend_type", ""),
                 item.value("active_source", ""),
                 item.value("device_mode", "cpu"),
+                item.value("model_root", ""),
+                item.value("binary_path", ""),
                 item.value("pool_size", 0),
                 item.value("revision_id", snapshot_json.value("revision_id", 0)),
             });
