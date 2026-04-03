@@ -12,6 +12,8 @@ struct ProxyConfig {
     std::string host_root = "/data/ai_capability_platform";
     std::string license_root = "/data/ai_capability_platform/license";
     std::string runtime_snapshot_path = "/data/ai_capability_platform/data/ai_prod_runtime_snapshot.json";
+    std::string runtime_log_path = "/data/ai_capability_platform/logs/ai_prod_runtime.log";
+    std::string audit_log_path = "/data/ai_capability_platform/logs/ai_prod_audit.log";
     int pool_size = 2;
     int connect_timeout_ms = 3000;
     int read_timeout_ms = 30000;

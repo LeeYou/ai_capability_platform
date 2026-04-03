@@ -93,7 +93,11 @@ int main() {
     const std::filesystem::path snapshot_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_snapshot_test.json";
     WriteSnapshot(snapshot_path, 9, 1);
     const std::filesystem::path license_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_license_test";
+    const std::filesystem::path runtime_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_test.log";
+    const std::filesystem::path audit_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_audit_test.log";
     std::filesystem::remove_all(license_root);
+    std::filesystem::remove(runtime_log_path);
+    std::filesystem::remove(audit_log_path);
     const std::map<std::string, std::string> hardware_features = {
         {"cpu", "intel-i7"},
         {"mac", "00:11:22:33:44:55"},
@@ -117,11 +121,6 @@ int main() {
     const int backend_port = 29104;
     const int proxy_port = 29105;
     std::string forwarded_reload_body;
-    std::string forwarded_infer_instance_id;
-    std::string forwarded_infer_device;
-    std::string forwarded_infer_revision;
-    std::atomic<bool> hold_infer(false);
-    std::atomic<bool> infer_started(false);
     std::atomic<bool> reload_called(false);
     std::atomic<int> reload_call_count(0);
 
@@ -140,23 +139,6 @@ int main() {
             WriteSnapshot(snapshot_path, 10, 2);
         }
         response.set_content(request.body, "application/json");
-    });
-    backend_server.Post(R"(/api/v1/infer/([^/]+))", [&](const httplib::Request& request, httplib::Response& response) {
-        forwarded_infer_instance_id = request.get_header_value("X-AI-Prod-Instance-Id");
-        forwarded_infer_device = request.get_header_value("X-AI-Prod-Preferred-Device");
-        forwarded_infer_revision = request.get_header_value("X-AI-Prod-Runtime-Revision-Id");
-        infer_started = true;
-        while (hold_infer.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        nlohmann::json payload = {
-            {"status", "ok"},
-            {"capability_name", request.matches[1].str()},
-            {"instance_id", forwarded_infer_instance_id},
-            {"preferred_device", forwarded_infer_device},
-            {"runtime_revision_id", forwarded_infer_revision},
-        };
-        response.set_content(payload.dump(), "application/json");
     });
 
     std::thread backend_thread([&]() {
@@ -178,6 +160,8 @@ int main() {
     config.hardware_features = hardware_features;
     config.license_auto_reload_interval_seconds = 1;
     config.runtime_snapshot_path = snapshot_path.string();
+    config.runtime_log_path = runtime_log_path.string();
+    config.audit_log_path = audit_log_path.string();
     config.connect_timeout_ms = 1000;
     config.read_timeout_ms = 1000;
     config.write_timeout_ms = 1000;
@@ -254,14 +238,13 @@ int main() {
         return 1;
     }
 
-    hold_infer = true;
     std::optional<int> infer_status;
     std::string infer_body;
     std::thread infer_thread([&]() {
         httplib::Client infer_client("127.0.0.1", proxy_port);
         const auto infer_result = infer_client.Post(
             "/api/v1/infer/face_detect",
-            "{\"input\":\"demo\"}",
+            "{\"input_type\":\"json\",\"payload\":\"demo\",\"prefer_device\":\"gpu\",\"options\":{\"simulate_delay_ms\":400}}",
             "application/json");
         if (!infer_result) {
             infer_status = 0;
@@ -271,24 +254,30 @@ int main() {
         infer_body = infer_result->body;
     });
 
-    for (int attempt = 0; attempt < 50 && !infer_started.load(); ++attempt) {
+    bool infer_busy = false;
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        const auto inflight_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+        if (inflight_catalog_result && inflight_catalog_result->status == 200) {
+            const auto inflight_catalog_payload = nlohmann::json::parse(inflight_catalog_result->body);
+            if (inflight_catalog_payload["items"][0]["busy_count"] == 1) {
+                infer_busy = true;
+                break;
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    if (!Expect(infer_started.load(), "infer request should enter backend")) {
-        hold_infer = false;
+    if (!Expect(infer_busy, "infer request should occupy instance pool")) {
         infer_thread.join();
         return 1;
     }
 
     const auto busy_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
     if (!Expect(busy_catalog_result && busy_catalog_result->status == 200, "catalog route should respond during infer")) {
-        hold_infer = false;
         infer_thread.join();
         return 1;
     }
     const auto busy_catalog_payload = nlohmann::json::parse(busy_catalog_result->body);
     if (!Expect(busy_catalog_payload["items"][0]["busy_count"] == 1, "catalog busy count should reflect in-flight infer")) {
-        hold_infer = false;
         infer_thread.join();
         return 1;
     }
@@ -308,7 +297,6 @@ int main() {
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     if (!Expect(!reload_called.load(), "reload should wait for in-flight infer to drain before forwarding")) {
-        hold_infer = false;
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -316,10 +304,9 @@ int main() {
 
     const auto draining_infer_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
-        "{\"input\":\"demo-drain\"}",
+        "{\"input_type\":\"json\",\"payload\":\"demo-drain\"}",
         "application/json");
     if (!Expect(draining_infer_result && draining_infer_result->status == 503, "infer should reject during drain")) {
-        hold_infer = false;
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -327,20 +314,17 @@ int main() {
 
     const auto draining_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
     if (!Expect(draining_catalog_result && draining_catalog_result->status == 200, "catalog route should respond during drain")) {
-        hold_infer = false;
         reload_thread.join();
         infer_thread.join();
         return 1;
     }
     const auto draining_catalog_payload = nlohmann::json::parse(draining_catalog_result->body);
     if (!Expect(draining_catalog_payload["draining"] == true, "catalog route should show draining state")) {
-        hold_infer = false;
         reload_thread.join();
         infer_thread.join();
         return 1;
     }
     if (!Expect(draining_catalog_payload["items"][0]["draining"] == true, "catalog item should show draining state")) {
-        hold_infer = false;
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -348,28 +332,25 @@ int main() {
 
     const auto busy_infer_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
-        "{\"input\":\"demo-2\"}",
+        "{\"input_type\":\"json\",\"payload\":\"demo-2\"}",
         "application/json");
     if (!Expect(busy_infer_result && busy_infer_result->status == 503, "infer route should reject when pool is busy")) {
-        hold_infer = false;
         infer_thread.join();
         return 1;
     }
 
     const auto missing_infer_result = proxy_client.Post(
         "/api/v1/infer/ocr",
-        "{\"input\":\"demo-3\"}",
+        "{\"input_type\":\"json\",\"payload\":\"demo-3\"}",
         "application/json");
     if (!Expect(missing_infer_result && missing_infer_result->status == 404, "infer route should reject unknown capability")) {
-        hold_infer = false;
         infer_thread.join();
         return 1;
     }
 
-    hold_infer = false;
     infer_thread.join();
     reload_thread.join();
-    if (!Expect(infer_status.has_value() && infer_status.value() == 200, "infer route should proxy successfully")) {
+    if (!Expect(infer_status.has_value() && infer_status.value() == 200, "infer route should respond successfully")) {
         return 1;
     }
     if (!Expect(reload_status.has_value() && reload_status.value() == 200, "reload route should complete after drain")) {
@@ -379,13 +360,28 @@ int main() {
         return 1;
     }
     const auto infer_payload = nlohmann::json::parse(infer_body);
-    if (!Expect(infer_payload["instance_id"] == "face_detect-1", "infer should forward instance id header")) {
+    if (!Expect(infer_payload["capability_name"] == "face_detect", "infer should return capability name")) {
         return 1;
     }
-    if (!Expect(infer_payload["preferred_device"] == "gpu", "infer should forward preferred device header")) {
+    if (!Expect(infer_payload["plugin_target"] == "linux_x86_64", "infer should return plugin target")) {
         return 1;
     }
-    if (!Expect(infer_payload["runtime_revision_id"] == "9", "infer should forward runtime revision header")) {
+    if (!Expect(infer_payload["device"] == "gpu", "infer should select gpu when available")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["runtime_revision_id"] == 9, "infer should return runtime revision")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["instance_id"] == "face_detect-1", "infer should return leased instance id")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["fallback_applied"] == false, "infer should report no fallback for gpu path")) {
+        return 1;
+    }
+    if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {
+        return 1;
+    }
+    if (!Expect(std::filesystem::exists(audit_log_path), "infer should append audit log")) {
         return 1;
     }
 
@@ -415,7 +411,7 @@ int main() {
     }
     const auto denied_infer_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
-        "{\"input\":\"demo-license\"}",
+        "{\"input_type\":\"json\",\"payload\":\"demo-license\"}",
         "application/json");
     if (!Expect(denied_infer_result && denied_infer_result->status == 403, "infer route should reject capability outside license scope")) {
         return 1;
@@ -512,5 +508,7 @@ int main() {
     proxy_thread.join();
     backend_thread.join();
     std::filesystem::remove_all(license_root);
+    std::filesystem::remove(runtime_log_path);
+    std::filesystem::remove(audit_log_path);
     return 0;
 }

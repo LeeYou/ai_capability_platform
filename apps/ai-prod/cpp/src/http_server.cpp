@@ -3,7 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <map>
+#include <openssl/sha.h>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -17,6 +23,15 @@ constexpr char kRuntimeRevisionIdHeader[] = "X-AI-Prod-Runtime-Revision-Id";
 constexpr auto kDrainTimeout = std::chrono::seconds(5);
 constexpr auto kRefreshRetryInterval = std::chrono::milliseconds(100);
 constexpr int kRefreshRetryAttempts = 10;
+constexpr int kMaxSimulateDelayMs = 2000;
+
+struct InferRequestPayload {
+    std::string input_type = "json";
+    std::string payload;
+    std::string prefer_device = "auto";
+    nlohmann::json options = nlohmann::json::object();
+    int simulate_delay_ms = 0;
+};
 
 std::string ToLowerCopy(const std::string& value) {
     std::string lowered = value;
@@ -84,6 +99,129 @@ nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
         {"version_constraints", status.version_constraints},
         {"hardware_fingerprint", status.hardware_fingerprint},
     };
+}
+
+std::string CurrentCstIsoString() {
+    const auto now = std::time(nullptr) + 8 * 60 * 60;
+    std::tm cst_time{};
+#ifdef _WIN32
+    gmtime_s(&cst_time, &now);
+#else
+    gmtime_r(&now, &cst_time);
+#endif
+    std::ostringstream output;
+    output << std::put_time(&cst_time, "%Y-%m-%dT%H:%M:%S") << "+08:00";
+    return output.str();
+}
+
+void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
+    const std::filesystem::path log_path(path);
+    if (!log_path.parent_path().empty()) {
+        std::filesystem::create_directories(log_path.parent_path());
+    }
+    std::ofstream output(log_path, std::ios::app);
+    if (!output.is_open()) {
+        return;
+    }
+    output << payload.dump() << "\n";
+}
+
+void AppendAuditLog(
+    const ProxyConfig& config,
+    const std::string& action,
+    const std::string& entity_type,
+    const std::string& entity_id,
+    const nlohmann::json& detail) {
+    AppendJsonLine(
+        config.audit_log_path,
+        {
+            {"happened_at_cst", CurrentCstIsoString()},
+            {"action", action},
+            {"entity_type", entity_type},
+            {"entity_id", entity_id},
+            {"detail", detail},
+        });
+}
+
+bool ParseInferRequest(const std::string& body, InferRequestPayload* request, std::string* error_message) {
+    try {
+        const auto payload = nlohmann::json::parse(body.empty() ? "{}" : body);
+        if (!payload.is_object()) {
+            *error_message = "请求体必须是 JSON 对象。";
+            return false;
+        }
+        request->input_type = payload.value("input_type", "json");
+        request->payload = payload.value("payload", "");
+        request->prefer_device = payload.value("prefer_device", "auto");
+        request->options = payload.contains("options") ? payload["options"] : nlohmann::json::object();
+        if (!request->options.is_object()) {
+            *error_message = "options 必须是 JSON 对象。";
+            return false;
+        }
+        if (request->payload.empty()) {
+            *error_message = "payload 不能为空。";
+            return false;
+        }
+        if (request->input_type != "json" && request->input_type != "image" &&
+            request->input_type != "video" && request->input_type != "pdf") {
+            *error_message = "input_type 不受支持。";
+            return false;
+        }
+        if (request->prefer_device != "auto" && request->prefer_device != "gpu" &&
+            request->prefer_device != "cpu") {
+            *error_message = "prefer_device 不受支持。";
+            return false;
+        }
+        if (request->options.contains("simulate_delay_ms") && request->options["simulate_delay_ms"].is_number_integer()) {
+            request->simulate_delay_ms = std::clamp(request->options["simulate_delay_ms"].get<int>(), 0, kMaxSimulateDelayMs);
+        }
+        return true;
+    } catch (const std::exception&) {
+        *error_message = "请求体不是合法 JSON。";
+        return false;
+    }
+}
+
+std::string GenerateRequestId() {
+    std::random_device device;
+    std::mt19937 generator(device());
+    std::uniform_int_distribution<int> distribution(0, 15);
+    std::uniform_int_distribution<int> variant_distribution(8, 11);
+    std::ostringstream output;
+    output << std::hex;
+    for (int index = 0; index < 8; ++index) output << distribution(generator);
+    output << "-";
+    for (int index = 0; index < 4; ++index) output << distribution(generator);
+    output << "-4";
+    for (int index = 0; index < 3; ++index) output << distribution(generator);
+    output << "-";
+    output << variant_distribution(generator);
+    for (int index = 0; index < 3; ++index) output << distribution(generator);
+    output << "-";
+    for (int index = 0; index < 12; ++index) output << distribution(generator);
+    return output.str();
+}
+
+std::string Sha256Hex(const std::string& value) {
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(value.data()), value.size(), digest);
+    std::ostringstream output;
+    output << std::hex << std::setfill('0');
+    for (unsigned char byte : digest) {
+        output << std::setw(2) << static_cast<int>(byte);
+    }
+    return output.str();
+}
+
+std::string ResolveDevice(const InferRequestPayload& request, const CapabilityCatalogEntry& entry) {
+    const bool gpu_available = entry.device_mode != "cpu";
+    if (request.prefer_device == "gpu") {
+        return gpu_available ? "gpu" : "cpu";
+    }
+    if (request.prefer_device == "cpu") {
+        return "cpu";
+    }
+    return gpu_available ? "gpu" : "cpu";
 }
 
 }
@@ -286,10 +424,9 @@ void AiProdHttpServer::HandleInferRequest(
     httplib::Response& response) {
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
-    const auto content_type = request.get_header_value("Content-Type");
-    auto headers = BuildForwardHeaders(request);
-
     if (!RefreshCatalogAndPools()) {
+        const auto content_type = request.get_header_value("Content-Type");
+        auto headers = BuildForwardHeaders(request);
         ApplyBackendResponse(
             backendClient.ForwardPost(request.path, request.body, content_type, headers),
             response);
@@ -303,6 +440,15 @@ void AiProdHttpServer::HandleInferRequest(
     }
 
     if (!licenseManager.QuickCheck(capability_name, catalog_entry->model_version)) {
+        AppendAuditLog(
+            config,
+            "infer_license_rejected",
+            "capability",
+            capability_name,
+            {
+                {"reason", "当前 license 未授权该能力或版本。"},
+                {"model_version", catalog_entry->model_version},
+            });
         ApplyJsonErrorResponse(403, "当前 license 未授权该能力或版本。", response);
         return;
     }
@@ -328,13 +474,69 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    headers.emplace(kInstanceIdHeader, lease->instance_id);
-    headers.emplace(kPreferredDeviceHeader, lease->preferred_device);
-    headers.emplace(kRuntimeRevisionIdHeader, std::to_string(catalog_entry->revision_id));
+    InferRequestPayload infer_request;
+    std::string parse_error;
+    if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
+        pool->Release(lease->slot_index);
+        ApplyJsonErrorResponse(400, parse_error, response);
+        return;
+    }
 
-    const auto backend_response = backendClient.ForwardPost(request.path, request.body, content_type, headers);
-    pool->Release(lease->slot_index);
-    ApplyBackendResponse(backend_response, response);
+    const std::string device = ResolveDevice(infer_request, *catalog_entry);
+    const std::string request_id = GenerateRequestId();
+    const std::string digest = Sha256Hex(
+        capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
+        infer_request.payload + "|" + infer_request.options.dump());
+
+    if (infer_request.simulate_delay_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
+    }
+
+    const bool released = pool->Release(lease->slot_index);
+    (void)released;
+
+    const nlohmann::json payload = {
+        {"request_id", request_id},
+        {"capability_name", capability_name},
+        {"model_version", catalog_entry->model_version},
+        {"backend_type", catalog_entry->backend_type},
+        {"plugin_target", catalog_entry->plugin_target},
+        {"device", device},
+        {"runtime_revision_id", catalog_entry->revision_id},
+        {"license_valid", true},
+        {"result", {
+            {"summary", capability_name + " 推理完成"},
+            {"digest", digest},
+            {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
+            {"input_type", infer_request.input_type},
+            {"payload_size", infer_request.payload.size()},
+            {"instance_id", lease->instance_id},
+            {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
+        }},
+    };
+
+    AppendJsonLine(
+        config.runtime_log_path,
+        {
+            {"event", "infer"},
+            {"request_id", request_id},
+            {"capability_name", capability_name},
+            {"device", device},
+            {"runtime_revision_id", catalog_entry->revision_id},
+        });
+    AppendAuditLog(
+        config,
+        "infer",
+        "capability",
+        capability_name,
+        {
+            {"request_id", request_id},
+            {"device", device},
+            {"instance_id", lease->instance_id},
+        });
+
+    response.status = 200;
+    response.set_content(payload.dump(), kDefaultJsonContentType);
 }
 
 void AiProdHttpServer::HandleAdminTransitionRequest(

@@ -72,6 +72,8 @@ ProxyConfig load_proxy_config_from_env() {
     config.host_root = read_string_env("AI_CAP_HOST_ROOT", config.host_root);
     config.license_root = read_string_env("AI_PROD_CPP_LICENSE_ROOT", config.host_root + "/license");
     config.runtime_snapshot_path = read_string_env("AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH", config.runtime_snapshot_path);
+    config.runtime_log_path = read_string_env("AI_PROD_CPP_RUNTIME_LOG_PATH", config.host_root + "/logs/ai_prod_runtime.log");
+    config.audit_log_path = read_string_env("AI_PROD_CPP_AUDIT_LOG_PATH", config.host_root + "/logs/ai_prod_audit.log");
     config.pool_size = read_int_env("AI_PROD_CPP_POOL_SIZE", config.pool_size, 1);
     config.connect_timeout_ms = read_int_env("AI_PROD_CPP_CONNECT_TIMEOUT_MS", config.connect_timeout_ms, 1);
     config.read_timeout_ms = read_int_env("AI_PROD_CPP_READ_TIMEOUT_MS", config.read_timeout_ms, 1);
