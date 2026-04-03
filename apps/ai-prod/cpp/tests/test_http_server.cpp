@@ -261,6 +261,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["snapshot_ready"] == true, "catalog route should mark snapshot ready")) {
         return 1;
     }
+    if (!Expect(catalog_payload["runtime_state"] == "ready", "catalog route should expose ready runtime state")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"].size() == 1, "catalog route should expose one capability")) {
         return 1;
     }
@@ -349,6 +352,15 @@ int main(int argc, char** argv) {
         reload_body = reload_result->body;
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const auto concurrent_reload_result = proxy_client.Post(
+        "/api/v1/admin/reload",
+        "{\"action\":\"reload\"}",
+        "application/json");
+    if (!Expect(concurrent_reload_result && concurrent_reload_result->status == 409, "reload route should reject concurrent transition")) {
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
     if (!Expect(!std::filesystem::exists(database_path), "reload should wait for in-flight infer to finish before persisting revision")) {
         reload_thread.join();
         infer_thread.join();
@@ -373,6 +385,11 @@ int main(int argc, char** argv) {
     }
     const auto draining_catalog_payload = nlohmann::json::parse(draining_catalog_result->body);
     if (!Expect(draining_catalog_payload["draining"] == true, "catalog route should show draining state")) {
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(draining_catalog_payload["runtime_state"] == "draining", "catalog route should expose draining runtime state")) {
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -447,6 +464,9 @@ int main(int argc, char** argv) {
     }
     const auto reloaded_catalog_payload = nlohmann::json::parse(reloaded_catalog_result->body);
     if (!Expect(reloaded_catalog_payload["runtime_revision_id"] == 1, "reload should refresh catalog revision")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["runtime_state"] == "ready", "catalog should return to ready runtime state after reload")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["pool_size"] == 2, "reload should rebuild pool size from new snapshot")) {

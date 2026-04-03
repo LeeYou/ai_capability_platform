@@ -324,11 +324,20 @@ void AiProdHttpServer::Stop() {
 
 bool AiProdHttpServer::EnsureRuntimeReady() {
     if (RefreshCatalogAndPools()) {
+        std::string state_error;
+        runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
         return true;
+    }
+
+    std::string state_error;
+    if (!runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kBootstrapping, &state_error)) {
+        MarkRuntimeError(state_error);
+        return false;
     }
 
     std::string bootstrap_error;
     if (!BootstrapRuntime(&bootstrap_error)) {
+        MarkRuntimeError(bootstrap_error);
         AppendJsonLine(
             config.runtime_log_path,
             {
@@ -346,7 +355,12 @@ bool AiProdHttpServer::EnsureRuntimeReady() {
         return false;
     }
 
-    return RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true);
+    if (!RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true)) {
+        MarkRuntimeError("启动自举已完成，但 C++ 侧目录刷新失败。");
+        return false;
+    }
+    runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
+    return true;
 }
 
 httplib::Headers AiProdHttpServer::BuildForwardHeaders(const httplib::Request& request) {
@@ -459,6 +473,10 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
     return {
         {"service", "ai-prod-cpp-http"},
         {"snapshot_ready", snapshot_ready},
+        {"runtime_state", runtimeStateMachine.GetStateName()},
+        {"runtime_state_error", runtimeStateMachine.GetLastError().empty()
+                                    ? nlohmann::json(nullptr)
+                                    : nlohmann::json(runtimeStateMachine.GetLastError())},
         {"draining", draining},
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
         {"items", items},
@@ -832,10 +850,19 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     };
 }
 
+void AiProdHttpServer::MarkRuntimeError(const std::string& error_message) {
+    runtimeStateMachine.MarkError(error_message);
+}
+
 void AiProdHttpServer::HandleAdminTransitionRequest(
     const httplib::Request& request,
     httplib::Response& response,
     bool rollback) {
+    std::unique_lock<std::mutex> transition_guard(runtimeTransitionMutex, std::try_to_lock);
+    if (!transition_guard.owns_lock()) {
+        ApplyJsonErrorResponse(409, "已有运行时切换任务正在执行。", response);
+        return;
+    }
     AdminTransitionRequestPayload transition_request;
     std::string parse_error;
     if (!ParseAdminTransitionRequest(request.body, rollback, &transition_request, &parse_error)) {
@@ -855,14 +882,26 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
         }
     }
 
+    std::string state_error;
+    if (!runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kDraining, &state_error)) {
+        ApplyJsonErrorResponse(409, state_error, response);
+        return;
+    }
     const auto pools = ListInstancePools();
     BeginDrainOnPools(pools);
     if (!WaitForPoolsIdle(pools, std::chrono::duration_cast<std::chrono::milliseconds>(kDrainTimeout))) {
         EndDrainOnPools(pools);
+        runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
         ApplyJsonErrorResponse(503, "当前仍有推理请求执行中，暂时无法切换运行时。", response);
         return;
     }
 
+    if (!runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kTransitioning, &state_error)) {
+        EndDrainOnPools(pools);
+        runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, nullptr);
+        ApplyJsonErrorResponse(409, state_error, response);
+        return;
+    }
     std::string transition_error;
     const auto transition_result = ExecuteRuntimeTransition(
         transition_request.action,
@@ -870,6 +909,7 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
         &transition_error);
     if (!transition_result.has_value()) {
         EndDrainOnPools(pools);
+        runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, nullptr);
         const int status_code =
             transition_error.find("license") != std::string::npos || transition_error.find("未覆盖") != std::string::npos
                 ? 403
@@ -880,9 +920,12 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
 
     if (!RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true)) {
         EndDrainOnPools(pools);
+        MarkRuntimeError("运行时切换已完成，但 C++ 侧目录刷新失败。");
         ApplyJsonErrorResponse(502, "运行时切换已完成，但 C++ 侧目录刷新失败。", response);
         return;
     }
+    EndDrainOnPools(pools);
+    runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, nullptr);
     response.status = 200;
     response.set_content(transition_result->dump(), kDefaultJsonContentType);
 }

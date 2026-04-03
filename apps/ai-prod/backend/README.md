@@ -56,8 +56,10 @@ ctest --test-dir build --output-on-failure
 11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
 12. runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，供 C++ infer 侧直接装载并调用插件
 13. 启动阶段已支持在 runtime snapshot 缺失时由 C++ 直接完成资源扫描、license 校验、bootstrap revision 持久化与 snapshot 初始写入
-14. 作为后续继续替换完整插件生命周期与运行时状态机的过渡实现
-15. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
+14. 当前已新增 runtime 显式状态机，`/api/v1/admin/catalog` 可输出 `bootstrapping / ready / draining / transitioning / error` 状态与错误信息
+15. `reload/rollback` 已增加切换互斥保护，并发管理操作会直接拒绝，避免运行时状态竞争
+16. 作为后续继续替换完整插件生命周期的过渡实现
+17. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

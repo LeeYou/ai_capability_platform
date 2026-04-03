@@ -24,6 +24,7 @@ add_executable(ai_prod_cpp_proxy
     src/proxy_config.cpp
     src/revision_store.cpp
     src/runtime_resource_scanner.cpp
+    src/runtime_state_machine.cpp
     src/runtime_snapshot_manager.cpp
 )
 
@@ -61,6 +62,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/proxy_config.cpp
         src/revision_store.cpp
         src/runtime_resource_scanner.cpp
+        src/runtime_state_machine.cpp
         src/runtime_snapshot_manager.cpp
     )
 
@@ -85,6 +87,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/proxy_config.cpp
         src/revision_store.cpp
         src/runtime_resource_scanner.cpp
+        src/runtime_state_machine.cpp
         src/runtime_snapshot_manager.cpp
     )
 
@@ -104,6 +107,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         tests/test_runtime_components.cpp
         src/capability_catalog.cpp
         src/instance_pool.cpp
+        src/runtime_state_machine.cpp
     )
 
     target_include_directories(test_runtime_components PRIVATE

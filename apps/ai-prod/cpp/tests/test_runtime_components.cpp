@@ -1,5 +1,6 @@
 #include "capability_catalog.h"
 #include "instance_pool.h"
+#include "runtime_state_machine.h"
 
 #include <filesystem>
 #include <fstream>
@@ -114,6 +115,46 @@ int main() {
         return 1;
     }
     if (!Expect(pool.Acquire().has_value(), "instance pool should recover after drain")) {
+        return 1;
+    }
+
+    RuntimeStateMachine state_machine;
+    std::string state_error;
+    if (!Expect(
+            state_machine.TransitionTo(RuntimeLifecycleState::kBootstrapping, &state_error),
+            "runtime state machine should enter bootstrapping")) {
+        return 1;
+    }
+    if (!Expect(
+            state_machine.TransitionTo(RuntimeLifecycleState::kReady, &state_error),
+            "runtime state machine should enter ready")) {
+        return 1;
+    }
+    if (!Expect(
+            state_machine.TransitionTo(RuntimeLifecycleState::kDraining, &state_error),
+            "runtime state machine should enter draining")) {
+        return 1;
+    }
+    if (!Expect(
+            state_machine.TransitionTo(RuntimeLifecycleState::kTransitioning, &state_error),
+            "runtime state machine should enter transitioning")) {
+        return 1;
+    }
+    if (!Expect(
+            state_machine.TransitionTo(RuntimeLifecycleState::kReady, &state_error),
+            "runtime state machine should return to ready")) {
+        return 1;
+    }
+    if (!Expect(
+            !state_machine.TransitionTo(RuntimeLifecycleState::kBootstrapping, &state_error),
+            "runtime state machine should reject invalid transition")) {
+        return 1;
+    }
+    state_machine.MarkError("transition failed");
+    if (!Expect(state_machine.GetStateName() == "error", "runtime state machine should enter error")) {
+        return 1;
+    }
+    if (!Expect(state_machine.GetLastError() == "transition failed", "runtime state machine should record last error")) {
         return 1;
     }
 

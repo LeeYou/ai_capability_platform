@@ -9,6 +9,7 @@
 #include "proxy_config.h"
 #include "revision_store.h"
 #include "runtime_resource_scanner.h"
+#include "runtime_state_machine.h"
 #include "runtime_snapshot_manager.h"
 
 #include <cpp-httplib/httplib.h>
@@ -47,6 +48,7 @@ private:
     bool EnsureRuntimeReady();
     bool BootstrapRuntime(std::string* error_message);
     std::optional<nlohmann::json> ExecuteRuntimeTransition(const std::string& action, std::optional<int> target_revision_id, std::string* error_message);
+    void MarkRuntimeError(const std::string& error_message);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;
     static void BeginDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools);
@@ -64,6 +66,8 @@ private:
     PluginExecutor pluginExecutor;
     RuntimeSnapshotManager snapshotManager;
     mutable std::mutex runtimeStateMutex;
+    std::mutex runtimeTransitionMutex;
+    RuntimeStateMachine runtimeStateMachine;
     int activeCatalogRevisionId = 0;
     std::unique_ptr<httplib::Server> server;
 };
