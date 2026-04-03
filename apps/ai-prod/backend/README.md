@@ -10,7 +10,7 @@ ai-prod 后端首期工程，提供统一生产 REST 服务、宿主机资源扫
 2. 宿主机挂载优先、镜像基线回退的资源扫描与能力装载
 3. 标准 license 文件验签、时间窗口/能力范围/版本约束/硬件指纹校验
 4. runtime revision、实例池、GPU 优先/CPU 自动回退
-5. 统一推理接口、内置测试页所需数据接口
+5. 统一推理接口与启动时/推理时双层 license 校验
 6. reload/rollback、结构化日志与审计日志
 
 ## 本地运行
@@ -43,15 +43,16 @@ ctest --test-dir build --output-on-failure
 默认行为：
 
 1. C++ 服务监听 `0.0.0.0:26005`
-2. `/api/v1/health`、`/api/v1/capabilities`、`/api/v1/license/status` 优先读取 runtime snapshot 直接响应
-3. snapshot 不可用或过期时，自动降级转发到 Python 后端 `127.0.0.1:26004`
+2. `/api/v1/health`、`/api/v1/capabilities` 优先读取 runtime snapshot 直接响应
+3. `/api/v1/license/status` 由 C++ 直接读取标准 license 文件返回当前状态
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
 6. snapshot 可用时，`/api/v1/infer/{capability_name}` 已接入 C++ 侧能力存在性校验、实例池借还与繁忙保护
 7. `reload/rollback` 已在 C++ 侧接入实例池 drain 编排，切换期间阻断新的 infer 请求并在成功后刷新 catalog/pool
 8. `license/status` 已改为由 C++ 直接读取标准 license 文件，`infer` 与 `reload/rollback` 已接入 license quick check
 9. 已新增 `/api/v1/admin/license-reload`，支持 C++ 侧 license 手动重载与自动监测刷新
-10. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
+11. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 

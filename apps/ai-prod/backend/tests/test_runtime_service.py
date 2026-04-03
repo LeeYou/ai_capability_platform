@@ -39,16 +39,23 @@ def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
-def _create_license_bundle(license_root: Path, *, hardware_fingerprint: str) -> None:
+def _create_license_bundle(
+    license_root: Path,
+    *,
+    hardware_fingerprint: str,
+    capability_scope: list[str] | None = None,
+    min_version: str = "v1_0_0",
+    max_version: str = "v9_9_9",
+) -> None:
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     payload = {
         "customer_code": "cust_prod",
-        "capability_scope": ["face_detect", "ocr"],
+        "capability_scope": capability_scope or ["face_detect", "ocr"],
         "hardware_fingerprint": hardware_fingerprint,
         "start_at_cst": (datetime.now(CST) - timedelta(days=1)).isoformat(),
         "expire_at_cst": (datetime.now(CST) + timedelta(days=30)).isoformat(),
-        "version_constraints": {"min_version": "v1_0_0", "max_version": "v9_9_9"},
+        "version_constraints": {"min_version": min_version, "max_version": max_version},
     }
     signature = private_key.sign(_canonical_json_bytes(payload))
     license_payload = {
@@ -200,6 +207,12 @@ class RuntimeServiceTestCase(unittest.TestCase):
             )
             revisions_before = list_runtime_revisions(session)
             _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
+            fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
+            _create_license_bundle(
+                self.host_root / "license",
+                hardware_fingerprint=fingerprint,
+                capability_scope=["face_detect", "ocr", "plate_detect"],
+            )
             reloaded = reload_runtime(
                 session,
                 runtime_snapshot_path=settings.runtime_snapshot_path,
@@ -240,6 +253,95 @@ class RuntimeServiceTestCase(unittest.TestCase):
         revisions_after = list_runtime_revisions(session)
         self.assertEqual(revisions_after[-1]["action"], "rollback")
 
+    def test_reload_rejects_capability_outside_license_scope_and_records_audit(self) -> None:
+        settings = get_settings()
+        with get_session_factory()() as session:
+            bootstrap_runtime(
+                session,
+                runtime_snapshot_path=settings.runtime_snapshot_path,
+                runtime_log_path=settings.runtime_log_path,
+                audit_log_path=settings.audit_log_path,
+                host_root=settings.host_root,
+                image_resource_root=self.image_root,
+                license_root=settings.license_root,
+                hardware_features=settings.hardware_features,
+                pool_size=settings.pool_size,
+                gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
+            )
+            _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
+            with self.assertRaisesRegex(Exception, "plate_detect"):
+                reload_runtime(
+                    session,
+                    runtime_snapshot_path=settings.runtime_snapshot_path,
+                    runtime_log_path=settings.runtime_log_path,
+                    audit_log_path=settings.audit_log_path,
+                    host_root=settings.host_root,
+                    image_resource_root=self.image_root,
+                    license_root=settings.license_root,
+                    hardware_features=settings.hardware_features,
+                    pool_size=settings.pool_size,
+                    gpu_available=settings.gpu_available,
+                    action="reload",
+                    target_revision_id=None,
+                    service_name=settings.service_name,
+                    company_name=settings.company_name,
+                    company_domain=settings.company_domain,
+                )
+
+        logs = list_audit_logs(settings.audit_log_path, limit=20)
+        self.assertTrue(any(item["action"] == "reload_license_rejected" and item["entity_id"] == "plate_detect" for item in logs))
+
+    def test_rollback_rejects_version_constrained_capability_and_records_audit(self) -> None:
+        settings = get_settings()
+        with get_session_factory()() as session:
+            bootstrap_runtime(
+                session,
+                runtime_snapshot_path=settings.runtime_snapshot_path,
+                runtime_log_path=settings.runtime_log_path,
+                audit_log_path=settings.audit_log_path,
+                host_root=settings.host_root,
+                image_resource_root=self.image_root,
+                license_root=settings.license_root,
+                hardware_features=settings.hardware_features,
+                pool_size=settings.pool_size,
+                gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
+            )
+            revisions_before = list_runtime_revisions(session)
+            fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
+            _create_license_bundle(
+                self.host_root / "license",
+                hardware_fingerprint=fingerprint,
+                capability_scope=["face_detect", "ocr"],
+                max_version="v0_9_9",
+            )
+            with self.assertRaisesRegex(Exception, "face_detect"):
+                reload_runtime(
+                    session,
+                    runtime_snapshot_path=settings.runtime_snapshot_path,
+                    runtime_log_path=settings.runtime_log_path,
+                    audit_log_path=settings.audit_log_path,
+                    host_root=settings.host_root,
+                    image_resource_root=self.image_root,
+                    license_root=settings.license_root,
+                    hardware_features=settings.hardware_features,
+                    pool_size=settings.pool_size,
+                    gpu_available=settings.gpu_available,
+                    action="rollback",
+                    target_revision_id=revisions_before[-1]["revision_id"],
+                    service_name=settings.service_name,
+                    company_name=settings.company_name,
+                    company_domain=settings.company_domain,
+                )
+
+        logs = list_audit_logs(settings.audit_log_path, limit=20)
+        self.assertTrue(any(item["action"] == "rollback_license_rejected" and item["entity_id"] == "face_detect" for item in logs))
+
     def test_license_status_and_audit_logs_available(self) -> None:
         settings = get_settings()
         with get_session_factory()() as session:
@@ -259,7 +361,11 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 company_domain=settings.company_domain,
             )
 
-        status = get_license_status(license_root=settings.license_root, hardware_features=settings.hardware_features)
+        status = get_license_status(
+            license_root=settings.license_root,
+            hardware_features=settings.hardware_features,
+            audit_log_path=settings.audit_log_path,
+        )
         logs = list_audit_logs(settings.audit_log_path, limit=20)
         self.assertTrue(status["valid"])
-        self.assertGreaterEqual(len(logs), 1)
+        self.assertTrue(any(item["action"] == "license_status_query" for item in logs))

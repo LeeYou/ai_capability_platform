@@ -72,6 +72,7 @@ def get_license_status_route() -> LicenseStatusResponse:
         payload = get_license_status(
             license_root=settings.license_root,
             hardware_features=settings.hardware_features,
+            audit_log_path=settings.audit_log_path,
         )
     except LicenseValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

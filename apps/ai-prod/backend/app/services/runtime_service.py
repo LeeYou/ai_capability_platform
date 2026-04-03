@@ -25,6 +25,51 @@ _ACTIVE_CAPABILITIES: dict[str, dict[str, Any]] = {}
 _ACTIVE_REVISION_ID: int | None = None
 
 
+def _build_license_failure_message(capability_name: str, license_status: dict[str, Any]) -> str:
+    return f"能力 {capability_name} license 校验失败：{license_status['reason']}"
+
+
+def _validate_runtime_capabilities_license(
+    *,
+    capabilities: dict[str, dict[str, Any]],
+    license_root: Path,
+    hardware_features: dict[str, str],
+    audit_log_path: Path,
+    action: str,
+    entity_id: str,
+) -> dict[str, Any]:
+    license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+    capability_statuses: dict[str, dict[str, Any]] = {}
+    for capability_name, capability in sorted(capabilities.items()):
+        capability_license_status = validate_license_bundle(
+            license_root,
+            hardware_features=hardware_features,
+            capability_name=capability_name,
+            product_version=str(capability["model_version"]),
+        )
+        capability_statuses[capability_name] = capability_license_status
+        if not capability_license_status["valid"]:
+            append_audit_log(
+                audit_log_path,
+                action=f"{action}_license_rejected",
+                entity_type="capability",
+                entity_id=capability_name,
+                detail={
+                    "reason": capability_license_status["reason"],
+                    "model_version": capability["model_version"],
+                },
+            )
+            raise LicenseValidationError(_build_license_failure_message(capability_name, capability_license_status))
+
+    return {
+        **license_status,
+        "capability_statuses": capability_statuses,
+        "validated_capability_names": sorted(capability_statuses),
+        "validation_action": action,
+        "validation_entity_id": entity_id,
+    }
+
+
 def initialize_database() -> None:
     from app.db.database import Base, get_engine
     from app.db import models  # noqa: F401
@@ -248,7 +293,14 @@ def bootstrap_runtime(
     with _RUNTIME_LOCK:
         target_name = _platform_target_name()
         capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
-        license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+        license_status = _validate_runtime_capabilities_license(
+            capabilities=capabilities,
+            license_root=license_root,
+            hardware_features=hardware_features,
+            audit_log_path=audit_log_path,
+            action="bootstrap",
+            entity_id="bootstrap",
+        )
         revision = RuntimeRevisionModel(
             revision_token=str(uuid4()),
             action="bootstrap",
@@ -316,9 +368,22 @@ def get_license_status(
     *,
     license_root: Path,
     hardware_features: dict[str, str],
+    audit_log_path: Path | None = None,
 ) -> dict[str, Any]:
     status = validate_license_bundle(license_root, hardware_features=hardware_features)
     status["runtime_revision_id"] = _ACTIVE_REVISION_ID
+    if audit_log_path is not None:
+        append_audit_log(
+            audit_log_path,
+            action="license_status_query",
+            entity_type="license",
+            entity_id="current",
+            detail={
+                "valid": bool(status["valid"]),
+                "reason": status["reason"],
+                "runtime_revision_id": _ACTIVE_REVISION_ID,
+            },
+        )
     return status
 
 
@@ -345,6 +410,16 @@ def infer(
             product_version=str(capability["model_version"]),
         )
         if not license_status["valid"]:
+            append_audit_log(
+                audit_log_path,
+                action="infer_license_rejected",
+                entity_type="capability",
+                entity_id=capability_name,
+                detail={
+                    "reason": license_status["reason"],
+                    "model_version": capability["model_version"],
+                },
+            )
             raise LicenseValidationError(str(license_status["reason"]))
 
         pool = _INSTANCE_POOLS[capability_name]
@@ -425,7 +500,14 @@ def reload_runtime(
         if action == "reload":
             target_name = _platform_target_name()
             capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
-            license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+            license_status = _validate_runtime_capabilities_license(
+                capabilities=capabilities,
+                license_root=license_root,
+                hardware_features=hardware_features,
+                audit_log_path=audit_log_path,
+                action="reload",
+                entity_id="reload",
+            )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="reload",
@@ -450,7 +532,14 @@ def reload_runtime(
             target_name = _platform_target_name()
             capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
             selected = {name: capabilities[name] for name in capability_names if name in capabilities}
-            license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+            license_status = _validate_runtime_capabilities_license(
+                capabilities=selected,
+                license_root=license_root,
+                hardware_features=hardware_features,
+                audit_log_path=audit_log_path,
+                action="rollback",
+                entity_id=str(target_revision_id),
+            )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="rollback",
