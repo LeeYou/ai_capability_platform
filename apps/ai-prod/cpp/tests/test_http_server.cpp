@@ -1,6 +1,7 @@
 #include "backend_client.h"
 #include "http_server.h"
 #include "proxy_config.h"
+#include "test_license_helpers.h"
 
 #include <cpp-httplib/httplib.h>
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <string>
 #include <thread>
@@ -72,11 +74,39 @@ void WriteSnapshot(
         << "}";
 }
 
+std::string NowCstWithOffset(int day_offset) {
+    const auto now = std::time(nullptr) + 8 * 60 * 60 + day_offset * 24 * 60 * 60;
+    std::tm cst_time{};
+#ifdef _WIN32
+    gmtime_s(&cst_time, &now);
+#else
+    gmtime_r(&now, &cst_time);
+#endif
+    std::ostringstream output;
+    output << std::put_time(&cst_time, "%Y-%m-%dT%H:%M:%S") << "+08:00";
+    return output.str();
+}
+
 }
 
 int main() {
     const std::filesystem::path snapshot_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_snapshot_test.json";
     WriteSnapshot(snapshot_path, 9, 1);
+    const std::filesystem::path license_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_license_test";
+    std::filesystem::remove_all(license_root);
+    const std::map<std::string, std::string> hardware_features = {
+        {"cpu", "intel-i7"},
+        {"mac", "00:11:22:33:44:55"},
+    };
+    nlohmann::json license_payload = {
+        {"customer_code", "cust_prod"},
+        {"capability_scope", nlohmann::json::array({"face_detect"})},
+        {"hardware_fingerprint", test_license_helpers::BuildHardwareFingerprint(hardware_features)},
+        {"start_at_cst", NowCstWithOffset(-1)},
+        {"expire_at_cst", NowCstWithOffset(30)},
+        {"version_constraints", {{"min_version", "v1_0_0"}, {"max_version", "v9_9_9"}}},
+    };
+    test_license_helpers::WriteLicenseBundle(license_root, license_payload);
 
     if (!Expect(
             AiProdBackendClient::NormalizeRollbackBody("{}") == "{\"action\":\"rollback\"}",
@@ -144,6 +174,9 @@ int main() {
     config.bind_port = proxy_port;
     config.backend_host = "127.0.0.1";
     config.backend_port = backend_port;
+    config.license_root = license_root.string();
+    config.hardware_features = hardware_features;
+    config.license_auto_reload_interval_seconds = 1;
     config.runtime_snapshot_path = snapshot_path.string();
     config.connect_timeout_ms = 1000;
     config.read_timeout_ms = 1000;
@@ -197,6 +230,18 @@ int main() {
         return 1;
     }
     if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
+        return 1;
+    }
+
+    const auto license_status_result = proxy_client.Get("/api/v1/license/status");
+    if (!Expect(license_status_result && license_status_result->status == 200, "license status route should respond")) {
+        return 1;
+    }
+    const auto license_status_payload = nlohmann::json::parse(license_status_result->body);
+    if (!Expect(license_status_payload["valid"] == true, "license status should be valid")) {
+        return 1;
+    }
+    if (!Expect(license_status_payload["capability_scope"].size() == 1, "license status should expose capability scope")) {
         return 1;
     }
 
@@ -350,6 +395,39 @@ int main() {
         return 1;
     }
 
+    license_payload["capability_scope"] = nlohmann::json::array({"ocr"});
+    test_license_helpers::WriteLicenseBundle(license_root, license_payload);
+    const auto license_reload_result = proxy_client.Post(
+        "/api/v1/admin/license-reload",
+        "{}",
+        "application/json");
+    if (!Expect(license_reload_result && license_reload_result->status == 200, "license reload route should succeed")) {
+        return 1;
+    }
+    const auto denied_infer_result = proxy_client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input\":\"demo-license\"}",
+        "application/json");
+    if (!Expect(denied_infer_result && denied_infer_result->status == 403, "infer route should reject capability outside license scope")) {
+        return 1;
+    }
+    const auto denied_reload_result = proxy_client.Post(
+        "/api/v1/admin/reload",
+        "{\"action\":\"reload\"}",
+        "application/json");
+    if (!Expect(denied_reload_result && denied_reload_result->status == 403, "reload route should reject invalid license status")) {
+        return 1;
+    }
+    license_payload["capability_scope"] = nlohmann::json::array({"face_detect"});
+    test_license_helpers::WriteLicenseBundle(license_root, license_payload);
+    const auto restore_license_result = proxy_client.Post(
+        "/api/v1/admin/license-reload",
+        "{}",
+        "application/json");
+    if (!Expect(restore_license_result && restore_license_result->status == 200, "license reload should restore valid license")) {
+        return 1;
+    }
+
     std::filesystem::remove(snapshot_path);
     const auto fallback_health_result = proxy_client.Get("/api/v1/health");
     if (!Expect(fallback_health_result && fallback_health_result->status == 200, "health route should fallback to backend")) {
@@ -424,5 +502,6 @@ int main() {
     backend_server.stop();
     proxy_thread.join();
     backend_thread.join();
+    std::filesystem::remove_all(license_root);
     return 0;
 }

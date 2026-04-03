@@ -74,14 +74,32 @@ void ApplyJsonErrorResponse(
         kDefaultJsonContentType);
 }
 
+nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
+    return {
+        {"valid", status.valid},
+        {"reason", status.reason},
+        {"checked_at_cst", status.checked_at_cst},
+        {"customer_code", status.customer_code},
+        {"capability_scope", status.capability_scope},
+        {"version_constraints", status.version_constraints},
+        {"hardware_fingerprint", status.hardware_fingerprint},
+    };
+}
+
 }
 
 AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
     : config(config_value),
       capabilityCatalog(config_value.runtime_snapshot_path),
       backendClient(config_value),
+      licenseManager(
+          config_value.license_root,
+          config_value.hardware_features,
+          config_value.license_auto_reload_interval_seconds),
       snapshotManager(config_value),
       server(std::make_unique<httplib::Server>()) {
+    licenseManager.Initialize();
+    licenseManager.StartAutoReloadMonitor();
     RefreshCatalogAndPools();
     RegisterRoutes();
 }
@@ -284,6 +302,11 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
+    if (!licenseManager.QuickCheck(capability_name, catalog_entry->model_version)) {
+        ApplyJsonErrorResponse(403, "当前 license 未授权该能力或版本。", response);
+        return;
+    }
+
     const auto pool = GetInstancePool(capability_name);
     if (!pool) {
         ApplyJsonErrorResponse(503, "能力实例池不可用。", response);
@@ -321,12 +344,24 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     const auto content_type = request.get_header_value("Content-Type");
     auto headers = BuildForwardHeaders(request);
 
+    if (!licenseManager.GetStatus().valid) {
+        ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
+        return;
+    }
+
     if (!RefreshCatalogAndPools()) {
         const auto backend_response = rollback
             ? backendClient.ForwardRollback(request.body, content_type, headers)
             : backendClient.ForwardPost(request.path, request.body, content_type, headers);
         ApplyBackendResponse(backend_response, response);
         return;
+    }
+
+    for (const auto& entry : capabilityCatalog.ListEntries()) {
+        if (!licenseManager.QuickCheck(entry.capability_name, entry.model_version)) {
+            ApplyJsonErrorResponse(403, "当前 license 未覆盖已装载能力，无法执行运行时切换。", response);
+            return;
+        }
     }
 
     const auto pools = ListInstancePools();
@@ -354,6 +389,40 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     ApplyBackendResponse(backend_response, response);
 }
 
+void AiProdHttpServer::HandleLicenseStatusRequest(
+    const httplib::Request&,
+    httplib::Response& response) const {
+    response.status = 200;
+    response.set_content(
+        BuildLicenseStatusPayload(licenseManager.GetStatus()).dump(),
+        kDefaultJsonContentType);
+}
+
+void AiProdHttpServer::HandleLicenseReloadRequest(
+    const httplib::Request&,
+    httplib::Response& response) {
+    if (licenseManager.Reload()) {
+        response.status = 200;
+        response.set_content(
+            nlohmann::json{
+                {"status", "ok"},
+                {"license_status", BuildLicenseStatusPayload(licenseManager.GetStatus())},
+            }.dump(),
+            kDefaultJsonContentType);
+        return;
+    }
+
+    const auto failure_status = licenseManager.GetLastReloadFailureStatus();
+    response.status = 400;
+    response.set_content(
+        nlohmann::json{
+            {"status", "error"},
+            {"message", failure_status.reason},
+            {"license_status", BuildLicenseStatusPayload(failure_status)},
+        }.dump(),
+        kDefaultJsonContentType);
+}
+
 void AiProdHttpServer::RegisterRoutes() {
     server->Get("/", [&](const httplib::Request&, httplib::Response& response) {
         std::ostringstream payload;
@@ -373,7 +442,7 @@ void AiProdHttpServer::RegisterRoutes() {
         ApplySnapshotOrBackendResponse(snapshotManager.BuildCapabilitiesResponse(), request, response);
     });
     server->Get("/api/v1/license/status", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplySnapshotOrBackendResponse(snapshotManager.BuildLicenseStatusResponse(), request, response);
+        HandleLicenseStatusRequest(request, response);
     });
     server->Get("/api/v1/admin/catalog", [&](const httplib::Request&, httplib::Response& response) {
         const bool snapshot_ready = RefreshCatalogAndPools();
@@ -391,6 +460,9 @@ void AiProdHttpServer::RegisterRoutes() {
     });
     server->Post("/api/v1/admin/rollback", [&](const httplib::Request& request, httplib::Response& response) {
         HandleAdminTransitionRequest(request, response, true);
+    });
+    server->Post("/api/v1/admin/license-reload", [&](const httplib::Request& request, httplib::Response& response) {
+        HandleLicenseReloadRequest(request, response);
     });
     server->Post(R"(/api/v1/infer/([^/]+))", [&](const httplib::Request& request, httplib::Response& response) {
         HandleInferRequest(request, response);

@@ -18,7 +18,7 @@
 | P8 | 基础版压测、联调与验收 | 已完成 |
 | P9 | 引入 C++ HTTP 服务主链路 | 进行中 |
 | P10 | 引入 C++ Runtime / 插件管理 / 实例池 / drain 机制 | 已完成 |
-| P11 | 收敛 License / 热更新 / 回滚与 ai_platform 参考实现 | 未开始 |
+| P11 | 收敛 License / 热更新 / 回滚与 ai_platform 参考实现 | 进行中 |
 | P12 | 保留并重构 Python/React 测试验收外壳 | 未开始 |
 | P13 | 面向客户交付的压测、验收与运行规范固化 | 未开始 |
 
@@ -46,13 +46,15 @@
 6. 当前已启动 P10 首轮实施，在 C++ 侧新增 capability catalog 与轻量实例池骨架，并提供 `/api/v1/admin/catalog` 诊断接口。
 7. 当前继续推进 P10 第二轮实施，已让 infer 路由接入 capability catalog 与轻量实例池借还流程，并补齐未知能力/池繁忙保护。
 8. 当前已完成 P10 第三轮实施，在 C++ 侧为 reload/rollback 接入实例池 drain 编排、切换等待与切换后 catalog/pool 刷新。
+9. 当前已启动 P11 首轮实施，在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验。
 
 ### 4.3 未完成
 
 1. C++ HTTP 主服务尚未完全替换当前仓库的 ai-prod 主链路，当前虽已完成 P10 范围内的 catalog / pool / drain / reload 编排，但实际推理执行仍主要由 Python runtime 承担，P9 仍需继续收口。
-2. Python 测试页尚未转型为仅服务内部人工验收的交互外壳。
-3. 面向客户交付的性能、稳定性、更新回滚规范尚未完全固化。
+2. P11 尚未完成与 `ai_platform` 参考实现的全部收敛，当前仅完成首轮 C++ LicenseManager、infer quick check 与 admin license reload，后续仍需继续收敛更完整的热更新/回滚统一策略。
+3. Python 测试页尚未转型为仅服务内部人工验收的交互外壳。
+4. 面向客户交付的性能、稳定性、更新回滚规范尚未完全固化。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P10 三轮收口：在保持现有 Python runtime 可用的前提下，C++ 侧已经具备 snapshot 驱动的 capability catalog、轻量实例池、infer 前置借还控制，以及 reload/rollback 的 drain 编排与切换后 catalog/pool 刷新能力，能够在运行时切换期间阻断新的推理请求并保持目录状态一致；当前已完成本地编译、单测、后端回归与端到端 smoke 验证，后续将转入 P9 收口与 P11 的 License/热更新/回滚实现统一。
+ai-prod 当前已进入 P11 首轮实现：在保持现有 Python runtime 可用的前提下，C++ 侧除了已有的 catalog / pool / drain 编排外，又补齐了标准 license 文件直读、状态查询、能力 quick check、手动/自动 license reload，以及 infer 与管理切换接口上的 license 前置校验；当前已完成本地编译、单测、后端回归与端到端 smoke 验证，后续将继续围绕 P11 收敛更完整的热更新/回滚统一策略，并同步推进 P9 主链路收口。

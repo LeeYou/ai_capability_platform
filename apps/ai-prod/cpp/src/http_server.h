@@ -4,6 +4,7 @@
 #include "capability_catalog.h"
 #include "backend_client.h"
 #include "instance_pool.h"
+#include "license_manager.h"
 #include "proxy_config.h"
 #include "runtime_snapshot_manager.h"
 
@@ -38,6 +39,8 @@ private:
         const httplib::Request& request,
         httplib::Response& response,
         bool rollback);
+    void HandleLicenseStatusRequest(const httplib::Request& request, httplib::Response& response) const;
+    void HandleLicenseReloadRequest(const httplib::Request& request, httplib::Response& response);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;
     static void BeginDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools);
@@ -51,6 +54,7 @@ private:
     CapabilityCatalog capabilityCatalog;
     AiProdBackendClient backendClient;
     std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
+    LicenseManager licenseManager;
     RuntimeSnapshotManager snapshotManager;
     mutable std::mutex runtimeStateMutex;
     int activeCatalogRevisionId = 0;
