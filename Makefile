@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: init-host-root shared-assets backend-test frontend-check docker-build compose-config ai-prod-cpp-build ai-prod-cpp-test
+.PHONY: init-host-root shared-assets backend-test frontend-check docker-build compose-config ai-prod-cpp-build ai-prod-cpp-test ai-prod-acceptance ai-prod-pressure-smoke
 
 init-host-root:
 	bash scripts/docker/init_host_root.sh
@@ -42,3 +42,15 @@ ai-prod-cpp-build:
 ai-prod-cpp-test:
 	mkdir -p apps/ai-prod/cpp/build
 	cd apps/ai-prod/cpp/build && cmake .. && cmake --build . --parallel && ctest --output-on-failure
+
+ai-prod-acceptance:
+	python3 apps/ai-prod/scripts/acceptance_check.py --base-url $${AI_PROD_ACCEPT_BASE_URL:-http://127.0.0.1:26005}
+
+ai-prod-pressure-smoke:
+	python3 apps/ai-prod/scripts/pressure_smoke.py \
+		--base-url $${AI_PROD_PRESSURE_BASE_URL:-http://127.0.0.1:26005} \
+		--path $${AI_PROD_PRESSURE_PATH:-/api/v1/health} \
+		--method $${AI_PROD_PRESSURE_METHOD:-GET} \
+		--requests $${AI_PROD_PRESSURE_REQUESTS:-32} \
+		--concurrency $${AI_PROD_PRESSURE_CONCURRENCY:-8} \
+		--max-p95-ms $${AI_PROD_PRESSURE_MAX_P95_MS:-5000}

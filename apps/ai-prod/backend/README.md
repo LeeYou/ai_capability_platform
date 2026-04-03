@@ -56,6 +56,13 @@ ctest --test-dir build --output-on-failure
 11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
 12. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
+## 交付验收与运行规范
+
+1. 默认环境模板：`/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/config/prod_defaults.env`
+2. 交付验收脚本：`/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/scripts/acceptance_check.py`
+3. 基础压测脚本：`/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/scripts/pressure_smoke.py`
+4. 运行规范文档：`/home/runner/work/ai_capability_platform/ai_capability_platform/docs/07_部署运维/ai-prod运行规范.md`
+
 可选环境变量：
 
 - `AI_PROD_CPP_BIND_HOST`

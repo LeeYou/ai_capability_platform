@@ -52,3 +52,4 @@ bash scripts/docker/health_check.sh
 1. ai-test 通过 `AI_TRAIN_API_BASE_URL` 指向 ai-train
 2. ai-builder 通过 `AI_TRAIN_API_BASE_URL`、`AI_LICENSE_MGR_API_BASE_URL` 访问上游服务
 3. ai-prod 与 ai-sdk 直接消费宿主机 `models/`、`libs/`、`license/` 等目录
+4. 当前根目录 `docker-compose.yml` 仍主要用于六模块联调；如需执行 ai-prod 面向客户交付的独立验收与压测，请额外参考 `docs/07_部署运维/ai-prod运行规范.md`
