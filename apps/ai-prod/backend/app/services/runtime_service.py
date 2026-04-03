@@ -130,6 +130,11 @@ def _scan_models(root: Path) -> dict[str, dict[str, Any]]:
             "model_root": str(selected_version_dir.resolve()),
             "model_version": str(manifest.get("model_version", selected_version_dir.name)),
             "backend_type": str(manifest.get("backend_type", "onnxruntime")),
+            "max_batch_size": max(
+                1,
+                int(manifest.get("max_batch_size", manifest.get("batch_size", 1))),
+            ),
+            "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
             "manifest": manifest,
         }
     return capability_map
@@ -156,6 +161,8 @@ def _scan_plugins(root: Path, target_name: str) -> dict[str, dict[str, Any]]:
             "plugin_target": target_name,
             "build_mode": str(manifest.get("build_mode", "template")),
             "binary_path": str(binary_candidates[0].resolve()) if binary_candidates else "",
+            "max_batch_size": max(1, int(manifest.get("max_batch_size", 1))),
+            "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
             "manifest": manifest,
         }
     return capability_map
@@ -182,6 +189,8 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
             "plugin_target": plugin_entry["plugin_target"],
             "build_mode": plugin_entry["build_mode"],
             "binary_path": plugin_entry["binary_path"],
+            "max_batch_size": int(plugin_entry.get("max_batch_size") or model_entry.get("max_batch_size") or 1),
+            "instance_count": int(plugin_entry.get("instance_count") or model_entry.get("instance_count") or 0),
             "model_manifest": model_entry["manifest"],
             "plugin_manifest": plugin_entry["manifest"],
             "active_source": "host"
@@ -199,9 +208,10 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
 
 def _ensure_instance_pool(capabilities: dict[str, dict[str, Any]], *, pool_size: int, gpu_available: bool) -> None:
     _INSTANCE_POOLS.clear()
-    for capability_name in capabilities:
+    for capability_name, payload in capabilities.items():
         pool = deque()
-        for index in range(pool_size):
+        configured_pool_size = max(1, int(payload.get("instance_count") or pool_size))
+        for index in range(configured_pool_size):
             pool.append(
                 {
                     "instance_id": f"{capability_name}-{index + 1}",
@@ -222,6 +232,7 @@ def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict
         "binary_path": payload.get("binary_path", ""),
         "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
         "pool_size": len(_INSTANCE_POOLS.get(capability_name, [])),
+        "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
         "revision_id": _ACTIVE_REVISION_ID,
     }
 
@@ -237,6 +248,8 @@ def _serialize_runtime_capability_record(capability_name: str, payload: dict[str
         "build_mode": payload["build_mode"],
         "binary_path": payload["binary_path"],
         "active_source": payload["active_source"],
+        "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
+        "instance_count": max(1, int(payload["instance_count"])) if payload.get("instance_count") else 0,
         "model_manifest": payload.get("model_manifest", {}),
         "plugin_manifest": payload.get("plugin_manifest", {}),
     }
@@ -267,6 +280,8 @@ def _restore_runtime_capability_records(detail: dict[str, Any]) -> dict[str, dic
             "build_mode": str(item.get("build_mode", "")),
             "binary_path": str(item.get("binary_path", "")),
             "active_source": str(item.get("active_source", "")),
+            "max_batch_size": max(1, int(item.get("max_batch_size", 1))),
+            "instance_count": max(1, int(item["instance_count"])) if item.get("instance_count") else 0,
             "model_manifest": item.get("model_manifest", {}),
             "plugin_manifest": item.get("plugin_manifest", {}),
         }

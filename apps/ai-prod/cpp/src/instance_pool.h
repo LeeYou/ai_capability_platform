@@ -28,6 +28,7 @@ public:
     bool WaitForIdle(std::chrono::milliseconds timeout);
     bool IsDraining() const;
     int GetBusyCount() const;
+    int GetBusyRejectCount() const;
     int GetTotalSize() const;
     std::vector<InstancePoolItem> Snapshot() const;
 
@@ -38,6 +39,7 @@ private:
     mutable std::mutex mutex;
     std::vector<InstancePoolItem> items;
     bool draining = false;
+    int busyRejectCount = 0;
 };
 
 #endif

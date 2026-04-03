@@ -273,6 +273,7 @@ nlohmann::json BuildSnapshotCapabilityPayload(
     const RuntimeCapabilityRecord& capability_record,
     int revision_id,
     const ProxyConfig& config) {
+    const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
     return {
         {"capability_name", capability_record.capability_name},
         {"plugin_target", capability_record.plugin_target},
@@ -282,7 +283,8 @@ nlohmann::json BuildSnapshotCapabilityPayload(
         {"model_root", capability_record.model_root},
         {"binary_path", capability_record.binary_path},
         {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
-        {"pool_size", config.pool_size},
+        {"pool_size", pool_size},
+        {"max_batch_size", capability_record.max_batch_size},
         {"revision_id", revision_id},
     };
 }
@@ -569,7 +571,9 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"model_root", entry.model_root},
                 {"binary_path", entry.binary_path},
                 {"pool_size", total_size},
+                {"max_batch_size", entry.max_batch_size},
                 {"busy_count", busy_count},
+                {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
                 {"revision_id", entry.revision_id},
@@ -651,6 +655,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
     nlohmann::json capability_metrics = nlohmann::json::array();
     int total_pool_slots = 0;
     int total_busy_slots = 0;
+    int total_busy_reject_count = 0;
     int total_capability_requests = 0;
     int total_capability_failures = 0;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
@@ -662,6 +667,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
             busy_count = pool_it->second->GetBusyCount();
             total_size = pool_it->second->GetTotalSize();
             draining = pool_it->second->IsDraining();
+            total_busy_reject_count += pool_it->second->GetBusyRejectCount();
         }
         total_pool_slots += total_size;
         total_busy_slots += busy_count;
@@ -672,8 +678,10 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                 {"busy_count", busy_count},
                 {"idle_count", std::max(0, total_size - busy_count)},
                 {"utilization_ratio", total_size > 0 ? static_cast<double>(busy_count) / static_cast<double>(total_size) : 0.0},
+                {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
                 {"draining", draining},
                 {"device_mode", entry.device_mode},
+                {"max_batch_size", entry.max_batch_size},
             });
 
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
@@ -710,6 +718,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         {"request_summary", {
              {"capability_total_requests", total_capability_requests},
              {"capability_failed_requests", total_capability_failures},
+             {"busy_reject_count", total_busy_reject_count},
          }},
         {"endpoint_metrics", endpoint_metrics},
         {"pool_metrics", pool_metrics},

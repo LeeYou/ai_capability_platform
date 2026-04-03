@@ -36,6 +36,7 @@ int main() {
             << "\"active_source\":\"host\","
             << "\"device_mode\":\"gpu/cpu\","
             << "\"pool_size\":2,"
+            << "\"max_batch_size\":8,"
             << "\"revision_id\":12"
             << "},"
             << "{"
@@ -46,6 +47,7 @@ int main() {
             << "\"active_source\":\"image\","
             << "\"device_mode\":\"cpu\","
             << "\"pool_size\":1,"
+            << "\"max_batch_size\":2,"
             << "\"revision_id\":12"
             << "}"
             << "]"
@@ -68,6 +70,9 @@ int main() {
         return 1;
     }
     if (!Expect(face_detect->pool_size == 2, "face_detect pool size mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->max_batch_size == 8, "face_detect max batch size mismatch")) {
         return 1;
     }
 

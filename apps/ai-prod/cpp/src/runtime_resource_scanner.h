@@ -17,6 +17,8 @@ struct RuntimeCapabilityRecord {
     std::string build_mode;
     std::string binary_path;
     std::string active_source;
+    int max_batch_size = 1;
+    int instance_count = 0;
     nlohmann::json model_manifest = nlohmann::json::object();
     nlohmann::json plugin_manifest = nlohmann::json::object();
 };

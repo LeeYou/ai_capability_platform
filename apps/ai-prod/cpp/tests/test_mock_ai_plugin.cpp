@@ -9,6 +9,8 @@ namespace {
 struct MockPluginContext {
     std::string model_dir;
     AiDeviceType device = AI_DEVICE_CPU;
+    int max_batch_size = 1;
+    std::string extra_info_json = "{}";
     int warmup_count = 0;
     int health_check_count = 0;
 };
@@ -39,6 +41,8 @@ AI_PLUGIN_EXPORT int ai_plugin_init(const AiPluginInitParams* params, AiPluginHa
     }
     context->model_dir = params->model_dir != nullptr ? params->model_dir : "";
     context->device = params->device;
+    context->max_batch_size = params->max_batch_size > 0 ? params->max_batch_size : 1;
+    context->extra_info_json = "{\"max_batch_size\":" + std::to_string(context->max_batch_size) + "}";
     *out_handle = context;
     return 0;
 }
@@ -61,6 +65,7 @@ AI_PLUGIN_EXPORT int ai_plugin_infer(AiPluginHandle handle, const AiPluginInput*
     json += "\"device\":\"";
     json += context->device == AI_DEVICE_CUDA ? "cuda" : "cpu";
     json += "\",";
+    json += "\"max_batch_size\":" + std::to_string(context->max_batch_size) + ",";
     json += "\"media_type\":\"";
     json += ToMediaTypeName(input->media_type);
     json += "\",";
@@ -101,7 +106,7 @@ AI_PLUGIN_EXPORT int ai_plugin_get_info(AiPluginHandle handle, AiPluginInfo* inf
     info->api_version_minor = 0;
     info->api_version_patch = 0;
     info->current_device = static_cast<MockPluginContext*>(handle)->device;
-    info->extra_info_json = "{}";
+    info->extra_info_json = static_cast<MockPluginContext*>(handle)->extra_info_json.c_str();
     return 0;
 }
 

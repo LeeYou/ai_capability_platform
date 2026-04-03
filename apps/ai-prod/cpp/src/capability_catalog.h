@@ -21,6 +21,7 @@ struct CapabilityCatalogEntry {
     std::string model_root;
     std::string binary_path;
     int pool_size = 0;
+    int max_batch_size = 1;
     int revision_id = 0;
 };
 

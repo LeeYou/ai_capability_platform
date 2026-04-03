@@ -106,6 +106,7 @@ bool CapabilityCatalog::ParseSnapshotUnlocked(const nlohmann::json& snapshot_jso
                 item.value("model_root", ""),
                 item.value("binary_path", ""),
                 item.value("pool_size", 0),
+                item.value("max_batch_size", 1),
                 item.value("revision_id", snapshot_json.value("revision_id", 0)),
             });
     }

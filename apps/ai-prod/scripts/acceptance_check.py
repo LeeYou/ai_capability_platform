@@ -116,7 +116,9 @@ def main() -> int:
             status_code=catalog_status,
             latency_ms=catalog_latency,
             max_latency_ms=args.catalog_max_ms,
-            predicate=isinstance(catalog_payload, dict) and "items" in catalog_payload,
+            predicate=isinstance(catalog_payload, dict)
+            and "items" in catalog_payload
+            and all(isinstance(item, dict) and "max_batch_size" in item for item in catalog_payload.get("items", [])),
             detail=f"status={catalog_status}, payload={catalog_payload}",
         )
     )

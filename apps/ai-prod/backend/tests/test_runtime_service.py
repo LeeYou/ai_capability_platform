@@ -73,13 +73,25 @@ def _create_license_bundle(
     )
 
 
-def _create_model_and_plugin(base_root: Path, *, capability_name: str, model_version: str, target_name: str, source: str) -> None:
+def _create_model_and_plugin(
+    base_root: Path,
+    *,
+    capability_name: str,
+    model_version: str,
+    target_name: str,
+    source: str,
+    max_batch_size: int = 1,
+    instance_count: int = 0,
+) -> None:
     model_manifest = {
         "capability_name": capability_name,
         "model_version": model_version,
         "backend_type": "onnxruntime",
         "source": source,
+        "max_batch_size": max_batch_size,
     }
+    if instance_count > 0:
+        model_manifest["instance_count"] = instance_count
     _write_text(base_root / "models" / capability_name / model_version / "manifest.json", json.dumps(model_manifest, ensure_ascii=False))
     _write_text(base_root / "models" / capability_name / model_version / "model.onnx", "fake-model")
     plugin_manifest = {
@@ -88,7 +100,10 @@ def _create_model_and_plugin(base_root: Path, *, capability_name: str, model_ver
         "target_name": target_name,
         "build_mode": "native" if source == "host" else "baseline",
         "toolchain_name": "cmake-native",
+        "max_batch_size": max_batch_size,
     }
+    if instance_count > 0:
+        plugin_manifest["instance_count"] = instance_count
     _write_text(
         base_root / "libs" / target_name / capability_name / "manifest" / "manifest.json",
         json.dumps(plugin_manifest, ensure_ascii=False),
@@ -113,8 +128,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
 
         fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
         _create_license_bundle(self.host_root / "license", hardware_fingerprint=fingerprint)
-        _create_model_and_plugin(self.host_root, capability_name="face_detect", model_version="v1_0_0", target_name="linux_x86_64", source="host")
-        _create_model_and_plugin(self.image_root, capability_name="ocr", model_version="v2_0_0", target_name="linux_x86_64", source="image")
+        _create_model_and_plugin(self.host_root, capability_name="face_detect", model_version="v1_0_0", target_name="linux_x86_64", source="host", max_batch_size=4, instance_count=3)
+        _create_model_and_plugin(self.image_root, capability_name="ocr", model_version="v2_0_0", target_name="linux_x86_64", source="image", max_batch_size=2, instance_count=2)
 
     def tearDown(self) -> None:
         reset_database_cache()
@@ -152,6 +167,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
         self.assertEqual(snapshot_payload["capability_count"], 2)
         self.assertEqual(len(snapshot_payload["capabilities"]), 2)
         self.assertEqual(snapshot_payload["service_name"], settings.service_name)
+        capabilities_by_name = {item["capability_name"]: item for item in capabilities}
+        self.assertEqual(capabilities_by_name["face_detect"]["max_batch_size"], 4)
+        self.assertEqual(capabilities_by_name["face_detect"]["pool_size"], 3)
 
     def test_infer_uses_dual_layer_license_validation_and_gpu_fallback(self) -> None:
         settings = get_settings()
@@ -208,7 +226,7 @@ class RuntimeServiceTestCase(unittest.TestCase):
             revisions_before = list_runtime_revisions(session)
             capabilities_before = {item["capability_name"]: item for item in list_capabilities()}
             self.assertEqual(capabilities_before["face_detect"]["model_version"], "v1_0_0")
-            _create_model_and_plugin(self.host_root, capability_name="face_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
+            _create_model_and_plugin(self.host_root, capability_name="face_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host", max_batch_size=6, instance_count=4)
             _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
             fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
             _create_license_bundle(
@@ -235,6 +253,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
             )
             capabilities_after_reload = {item["capability_name"]: item for item in list_capabilities()}
             self.assertEqual(capabilities_after_reload["face_detect"]["model_version"], "v3_0_0")
+            self.assertEqual(capabilities_after_reload["face_detect"]["max_batch_size"], 6)
+            self.assertEqual(capabilities_after_reload["face_detect"]["pool_size"], 4)
             rolled_back = reload_runtime(
                 session,
                 runtime_snapshot_path=settings.runtime_snapshot_path,
@@ -259,6 +279,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
         self.assertEqual(revisions_after[-1]["action"], "rollback")
         capabilities_after_rollback = {item["capability_name"]: item for item in list_capabilities()}
         self.assertEqual(capabilities_after_rollback["face_detect"]["model_version"], "v1_0_0")
+        self.assertEqual(capabilities_after_rollback["face_detect"]["max_batch_size"], 4)
+        self.assertEqual(capabilities_after_rollback["face_detect"]["pool_size"], 3)
 
     def test_reload_rejects_capability_outside_license_scope_and_records_audit(self) -> None:
         settings = get_settings()

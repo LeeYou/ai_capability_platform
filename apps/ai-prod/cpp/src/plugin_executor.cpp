@@ -164,10 +164,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
             continue;
         }
         bindings_payload.push_back(
-            {
-                {"device", binding.device},
-                {"pool_size", binding.pool_size},
-                {"total_requests", binding.total_execute_count},
+                {
+                    {"device", binding.device},
+                    {"pool_size", binding.pool_size},
+                    {"max_batch_size", binding.max_batch_size},
+                    {"total_requests", binding.total_execute_count},
                 {"successful_requests", binding.successful_execute_count},
                 {"failed_requests", binding.failed_execute_count},
                 {"avg_infer_time_ms", binding.successful_execute_count > 0
@@ -228,6 +229,7 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     }
 
     return nlohmann::json{
+        {"max_batch_size", bindings_payload[0].value("max_batch_size", 1)},
         {"total_requests", total_requests},
         {"successful_requests", successful_requests},
         {"failed_requests", failed_requests},
@@ -349,6 +351,7 @@ bool PluginExecutor::EnsureBindingLoaded(
     next_binding.model_root = entry.model_root;
     next_binding.device = device;
     next_binding.pool_size = std::max(1, entry.pool_size);
+    next_binding.max_batch_size = std::max(1, entry.max_batch_size);
     next_binding.library_handle = OpenLibrary(entry.binary_path);
     if (next_binding.library_handle == nullptr) {
         if (error_message != nullptr) {
@@ -378,7 +381,7 @@ bool PluginExecutor::EnsureBindingLoaded(
         init_params.model_dir = next_binding.model_root.c_str();
         init_params.device = ToAiDeviceType(device);
         init_params.device_id = 0;
-        init_params.max_batch_size = 1;
+        init_params.max_batch_size = next_binding.max_batch_size;
         init_params.extra_config = "{}";
         init_params.log_level = 3;
         AiPluginHandle plugin_handle = nullptr;

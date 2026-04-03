@@ -44,6 +44,7 @@ private:
         std::string model_root;
         std::string device;
         int pool_size = 1;
+        int max_batch_size = 1;
         void* library_handle = nullptr;
         fn_ai_plugin_destroy destroy = nullptr;
         fn_ai_plugin_infer infer = nullptr;

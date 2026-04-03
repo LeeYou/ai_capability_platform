@@ -5,6 +5,7 @@
 void InstancePool::Reset(const std::string& capability_name, int pool_size, bool gpu_available) {
     std::lock_guard<std::mutex> guard(mutex);
     draining = false;
+    busyRejectCount = 0;
     items.clear();
     items.reserve(static_cast<std::size_t>(std::max(pool_size, 0)));
     for (int index = 0; index < pool_size; ++index) {
@@ -29,6 +30,7 @@ std::optional<InstancePoolItem> InstancePool::Acquire() {
             return item;
         }
     }
+    busyRejectCount += 1;
     return std::nullopt;
 }
 
@@ -77,6 +79,11 @@ int InstancePool::GetBusyCount() const {
         items.begin(),
         items.end(),
         [](const InstancePoolItem& item) { return item.in_use; }));
+}
+
+int InstancePool::GetBusyRejectCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return busyRejectCount;
 }
 
 int InstancePool::GetTotalSize() const {

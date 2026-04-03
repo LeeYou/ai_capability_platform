@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     entry.model_root = model_root.string();
     entry.binary_path = plugin_binary.string();
     entry.pool_size = 2;
+    entry.max_batch_size = 4;
 
     PluginExecutionResult result;
     std::string error_message;
@@ -74,6 +75,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(result.plugin_result.value("device", "") == "cpu", "plugin should receive cpu device")) {
+        return 1;
+    }
+    if (!Expect(result.plugin_result.value("max_batch_size", 0) == 4, "plugin should receive configured max batch size")) {
         return 1;
     }
     if (!Expect(
@@ -103,7 +107,16 @@ int main(int argc, char** argv) {
     if (!Expect((*cpu_metrics)["failed_requests"] == 0, "cpu metrics should count zero failed requests")) {
         return 1;
     }
+    if (!Expect((*cpu_metrics)["max_batch_size"] == 4, "plugin metrics should expose max batch size")) {
+        return 1;
+    }
     if (!Expect((*cpu_metrics)["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "plugin metrics should expose plugin info")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["bindings"][0]["max_batch_size"] == 4, "binding metrics should expose max batch size")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["bindings"][0]["plugin_info"]["extra_info_json"] == "{\"max_batch_size\":4}", "plugin info should expose batch metadata")) {
         return 1;
     }
     if (!Expect((*cpu_metrics)["warmup_status"] == "passed", "plugin metrics should expose successful warmup status")) {
@@ -120,6 +133,7 @@ int main(int argc, char** argv) {
     }
 
     entry.model_root = (temp_root / "models" / "face_detect" / "v2_0_0").string();
+    entry.max_batch_size = 3;
     WriteText(std::filesystem::path(entry.model_root) / "manifest.json", R"({"capability_name":"face_detect","model_version":"v2_0_0"})");
     executor.SyncEntries({entry});
     if (!Expect(
@@ -150,6 +164,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect((*gpu_metrics)["bindings"][0]["device"] == "gpu", "binding metrics should expose device")) {
+        return 1;
+    }
+    if (!Expect((*gpu_metrics)["bindings"][0]["max_batch_size"] == 3, "binding metrics should refresh max batch size")) {
         return 1;
     }
     if (!Expect((*gpu_metrics)["bindings"][0]["plugin_info"]["current_device"] == "gpu", "plugin info should expose current device")) {

@@ -66,6 +66,7 @@ void WriteSnapshot(
     const std::filesystem::path& snapshot_path,
     int revision_id,
     int pool_size,
+    int max_batch_size,
     const std::filesystem::path& model_root,
     const std::filesystem::path& binary_path) {
     std::ofstream snapshot_output(snapshot_path);
@@ -86,6 +87,7 @@ void WriteSnapshot(
         << "\"model_root\":\"" << model_root.string() << "\","
         << "\"binary_path\":\"" << binary_path.string() << "\","
         << "\"pool_size\":" << pool_size << ","
+        << "\"max_batch_size\":" << max_batch_size << ","
         << "\"revision_id\":" << revision_id
         << "}],"
         << "\"license_status\":{"
@@ -142,10 +144,10 @@ int main(int argc, char** argv) {
     }
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime"})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5})");
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release"})");
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2})");
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -153,10 +155,10 @@ int main(int argc, char** argv) {
         std::filesystem::copy_options::overwrite_existing);
     WriteTextFile(
         image_root / "models" / "ocr" / "v1_0_0" / "manifest.json",
-        R"({"capability_name":"ocr","model_version":"v1_0_0","backend_type":"onnxruntime"})");
+        R"({"capability_name":"ocr","model_version":"v1_0_0","backend_type":"onnxruntime","max_batch_size":3})");
     WriteTextFile(
         image_root / "libs" / "linux_x86_64" / "ocr" / "manifest" / "manifest.json",
-        R"({"capability_name":"ocr","target_name":"linux_x86_64","build_mode":"template"})");
+        R"({"capability_name":"ocr","target_name":"linux_x86_64","build_mode":"template","instance_count":2})");
     std::filesystem::create_directories(image_root / "libs" / "linux_x86_64" / "ocr" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -166,6 +168,7 @@ int main(int argc, char** argv) {
         snapshot_path,
         9,
         1,
+        4,
         host_root / "models" / "face_detect" / "v2_0_0",
         host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so");
     const std::map<std::string, std::string> hardware_features = {
@@ -284,6 +287,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["max_batch_size"] == 4, "catalog should expose max batch size from snapshot")) {
+        return 1;
+    }
 
     const auto initial_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
     if (!Expect(initial_metrics_result && initial_metrics_result->status == 200, "metrics route should respond")) {
@@ -384,6 +390,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const auto busy_infer_result = proxy_client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"demo-2\"}",
+        "application/json");
+    if (!Expect(busy_infer_result && busy_infer_result->status == 503, "infer route should reject when pool is busy")) {
+        infer_thread.join();
+        return 1;
+    }
+    const auto busy_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(busy_metrics_result && busy_metrics_result->status == 200, "metrics route should respond during busy reject")) {
+        infer_thread.join();
+        return 1;
+    }
+    const auto busy_metrics_payload = nlohmann::json::parse(busy_metrics_result->body);
+    if (!Expect(busy_metrics_payload["pool_metrics"][0]["busy_reject_count"] >= 1, "metrics should count busy rejects per pool")) {
+        infer_thread.join();
+        return 1;
+    }
+
     std::optional<int> reload_status;
     std::string reload_body;
     std::thread reload_thread([&]() {
@@ -449,15 +474,6 @@ int main(int argc, char** argv) {
     }
     if (!Expect(draining_catalog_payload["items"][0]["draining"] == true, "catalog item should show draining state")) {
         reload_thread.join();
-        infer_thread.join();
-        return 1;
-    }
-
-    const auto busy_infer_result = proxy_client.Post(
-        "/api/v1/infer/face_detect",
-        "{\"input_type\":\"json\",\"payload\":\"demo-2\"}",
-        "application/json");
-    if (!Expect(busy_infer_result && busy_infer_result->status == 503, "infer route should reject when pool is busy")) {
         infer_thread.join();
         return 1;
     }
@@ -528,6 +544,9 @@ int main(int argc, char** argv) {
     if (!Expect(reloaded_catalog_payload["items"][0]["pool_size"] == 2, "reload should rebuild pool size from new snapshot")) {
         return 1;
     }
+    if (!Expect(reloaded_catalog_payload["items"][0]["max_batch_size"] == 5, "reload should expose refreshed max batch size")) {
+        return 1;
+    }
     if (!Expect(reloaded_catalog_payload["draining"] == false, "catalog should leave draining state after reload")) {
         return 1;
     }
@@ -587,6 +606,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["successful_requests"] == 2, "catalog metrics should count successful requests")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["max_batch_size"] == 3, "catalog metrics should expose capability max batch size")) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "catalog metrics should expose plugin info")) {

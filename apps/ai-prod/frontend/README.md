@@ -9,6 +9,7 @@ ai-prod 前端为 **内部测试 / 验收外壳**，基于 React + TypeScript + 
 3. reload / rollback 管理操作入口
 4. 内置在线推理测试页面
 5. 运行时指标摘要与 endpoint 延迟分位可视化
+6. capability 级 `max_batch_size` 元数据展示
 
 ## 内外边界
 

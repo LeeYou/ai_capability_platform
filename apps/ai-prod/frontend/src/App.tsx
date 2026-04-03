@@ -9,6 +9,7 @@ type CapabilityItem = {
   active_source: string
   device_mode: string
   pool_size: number
+  max_batch_size: number
   revision_id: number | null
 }
 
@@ -84,6 +85,7 @@ type RuntimeMetrics = {
   request_summary: {
     capability_total_requests: number
     capability_failed_requests: number
+    busy_reject_count: number
   }
   endpoint_metrics: Record<
     string,
@@ -328,6 +330,7 @@ function App() {
                     <th>能力</th>
                     <th>模型版本</th>
                     <th>插件目标</th>
+                    <th>max_batch_size</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -336,11 +339,12 @@ function App() {
                       <td>{item.capability_name}</td>
                       <td>{item.model_version}</td>
                       <td>{item.plugin_target}</td>
+                      <td>{item.max_batch_size}</td>
                     </tr>
                   ))}
                   {dashboard.capabilities.length === 0 && (
                     <tr>
-                      <td colSpan={3}>暂无已装载能力</td>
+                      <td colSpan={4}>暂无已装载能力</td>
                     </tr>
                   )}
                 </tbody>
@@ -377,6 +381,7 @@ function App() {
                 <li>实例池总槽位：{dashboard.runtimeMetrics?.pool_summary.total_pool_slots ?? 0}</li>
                 <li>繁忙槽位：{dashboard.runtimeMetrics?.pool_summary.busy_pool_slots ?? 0}</li>
                 <li>失败请求：{dashboard.runtimeMetrics?.request_summary.capability_failed_requests ?? 0}</li>
+                <li>繁忙拒绝：{dashboard.runtimeMetrics?.request_summary.busy_reject_count ?? 0}</li>
               </ul>
             </article>
             <article className="sub-panel">

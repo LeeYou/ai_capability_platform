@@ -25,6 +25,13 @@ bool ReadRequiredString(
     return true;
 }
 
+int ReadPositiveIntOrDefault(const nlohmann::json& payload, const char* key, int fallback) {
+    if (!payload.contains(key) || !payload[key].is_number_integer()) {
+        return fallback;
+    }
+    return std::max(1, payload[key].get<int>());
+}
+
 std::vector<std::filesystem::path> SortedDirs(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
         return {};
@@ -61,6 +68,8 @@ struct ModelEntry {
     std::string model_root;
     std::string model_version;
     std::string backend_type;
+    int max_batch_size = 1;
+    int instance_count = 0;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -69,6 +78,8 @@ struct PluginEntry {
     std::string plugin_target;
     std::string build_mode;
     std::string binary_path;
+    int max_batch_size = 1;
+    int instance_count = 0;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -93,6 +104,14 @@ std::map<std::string, ModelEntry> ScanModels(const std::filesystem::path& root) 
                 selected_version_dir.lexically_normal().string(),
                 manifest.value("model_version", selected_version_dir.filename().string()),
                 manifest.value("backend_type", std::string("onnxruntime")),
+                manifest.contains("max_batch_size") && manifest["max_batch_size"].is_number_integer()
+                    ? std::max(1, manifest["max_batch_size"].get<int>())
+                    : (manifest.contains("batch_size") && manifest["batch_size"].is_number_integer()
+                           ? std::max(1, manifest["batch_size"].get<int>())
+                           : 1),
+                manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
+                    ? std::max(1, manifest["instance_count"].get<int>())
+                    : 0,
                 manifest,
             });
     }
@@ -132,6 +151,10 @@ std::map<std::string, PluginEntry> ScanPlugins(const std::filesystem::path& root
                 target_name,
                 manifest.value("build_mode", std::string("template")),
                 binary_path,
+                ReadPositiveIntOrDefault(manifest, "max_batch_size", 1),
+                manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
+                    ? std::max(1, manifest["instance_count"].get<int>())
+                    : 0,
                 manifest,
             });
     }
@@ -190,6 +213,8 @@ RuntimeResourceScanResult RuntimeResourceScanner::ResolveSources(
                 plugin_entry.build_mode,
                 plugin_entry.binary_path,
                 host_model_it != host_models.end() && host_plugin_it != host_plugins.end() ? "host" : "image",
+                plugin_entry.max_batch_size > 1 ? plugin_entry.max_batch_size : model_entry.max_batch_size,
+                plugin_entry.instance_count > 0 ? plugin_entry.instance_count : model_entry.instance_count,
                 model_entry.manifest,
                 plugin_entry.manifest,
             });
@@ -220,6 +245,8 @@ nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& r
         {"build_mode", record.build_mode},
         {"binary_path", record.binary_path},
         {"active_source", record.active_source},
+        {"max_batch_size", record.max_batch_size},
+        {"instance_count", record.instance_count},
         {"model_manifest", record.model_manifest},
         {"plugin_manifest", record.plugin_manifest},
     };
@@ -247,6 +274,12 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
         !ReadRequiredString(payload, "active_source", &record.active_source, error_message)) {
         return std::nullopt;
     }
+    record.max_batch_size = payload.contains("max_batch_size") && payload["max_batch_size"].is_number_integer()
+                                ? std::max(1, payload["max_batch_size"].get<int>())
+                                : 1;
+    record.instance_count = payload.contains("instance_count") && payload["instance_count"].is_number_integer()
+                                ? std::max(1, payload["instance_count"].get<int>())
+                                : 0;
 
     if (payload.contains("model_manifest")) {
         if (!payload["model_manifest"].is_object()) {
