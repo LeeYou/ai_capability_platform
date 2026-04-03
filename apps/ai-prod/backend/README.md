@@ -43,7 +43,7 @@ ctest --test-dir build --output-on-failure
 
 默认行为：
 
-1. C++ 服务监听 `0.0.0.0:26005`
+1. C++ 服务在独立运行时默认监听 `0.0.0.0:26005`；生产镜像/compose 默认改为对外 `26004`
 2. `/api/v1/health`、`/api/v1/capabilities` 优先读取 runtime snapshot 直接响应
 3. `/api/v1/license/status` 由 C++ 直接读取标准 license 文件返回当前状态
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
@@ -55,6 +55,7 @@ ctest --test-dir build --output-on-failure
 10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
 11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
 12. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+13. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

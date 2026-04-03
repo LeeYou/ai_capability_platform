@@ -65,6 +65,13 @@ services:
       dockerfile: apps/ai-prod/Dockerfile
       args:
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
+    environment:
+      AI_CAP_HOST_ROOT: /data/ai_capability_platform
+      AI_PROD_PY_BACKEND_BIND_HOST: 127.0.0.1
+      AI_PROD_PY_BACKEND_HOST: 127.0.0.1
+      AI_PROD_PY_BACKEND_PORT: 26014
+      AI_PROD_CPP_BIND_HOST: 0.0.0.0
+      AI_PROD_CPP_BIND_PORT: 26004
     ports:
       - "26004:26004"
 

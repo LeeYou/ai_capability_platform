@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -317,7 +317,7 @@ def bootstrap_runtime(
         _apply_revision(capabilities, revision.id, pool_size=pool_size, gpu_available=gpu_available)
         snapshot_payload = {
             "snapshot_version": 1,
-            "updated_at_utc": datetime.now(UTC).isoformat(),
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
             "revision_id": revision.id,
             "revision_token": revision.revision_token,
             "capability_names": sorted(capabilities),
@@ -563,7 +563,7 @@ def reload_runtime(
 
         snapshot_payload = {
             "snapshot_version": 1,
-            "updated_at_utc": datetime.now(UTC).isoformat(),
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
             "revision_id": revision.id,
             "revision_token": revision.revision_token,
             "capability_names": json.loads(revision.capabilities_json),

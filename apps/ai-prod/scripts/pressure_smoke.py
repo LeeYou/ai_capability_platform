@@ -42,7 +42,7 @@ def percentile(values: list[int], ratio: float) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a lightweight concurrent smoke benchmark for ai-prod public APIs.")
-    parser.add_argument("--base-url", default="http://127.0.0.1:26005")
+    parser.add_argument("--base-url", default="http://127.0.0.1:26004")
     parser.add_argument("--path", default="/api/v1/health")
     parser.add_argument("--method", default="GET", choices=["GET", "POST"])
     parser.add_argument("--body-json", default="")

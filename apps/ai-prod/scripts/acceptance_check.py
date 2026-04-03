@@ -55,7 +55,7 @@ def run_check(name: str, *, status_code: int, latency_ms: int, max_latency_ms: i
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run ai-prod delivery acceptance checks against the public C++ entrypoint.")
-    parser.add_argument("--base-url", default="http://127.0.0.1:26005")
+    parser.add_argument("--base-url", default="http://127.0.0.1:26004")
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--health-max-ms", type=int, default=1000)
     parser.add_argument("--capabilities-max-ms", type=int, default=1000)

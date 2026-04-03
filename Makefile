@@ -44,11 +44,11 @@ ai-prod-cpp-test:
 	cd apps/ai-prod/cpp/build && cmake .. && cmake --build . --parallel && ctest --output-on-failure
 
 ai-prod-acceptance:
-	python3 apps/ai-prod/scripts/acceptance_check.py --base-url $${AI_PROD_ACCEPT_BASE_URL:-http://127.0.0.1:26005}
+	python3 apps/ai-prod/scripts/acceptance_check.py --base-url $${AI_PROD_ACCEPT_BASE_URL:-http://127.0.0.1:26004}
 
 ai-prod-pressure-smoke:
 	python3 apps/ai-prod/scripts/pressure_smoke.py \
-		--base-url $${AI_PROD_PRESSURE_BASE_URL:-http://127.0.0.1:26005} \
+		--base-url $${AI_PROD_PRESSURE_BASE_URL:-http://127.0.0.1:26004} \
 		--path $${AI_PROD_PRESSURE_PATH:-/api/v1/health} \
 		--method $${AI_PROD_PRESSURE_METHOD:-GET} \
 		--requests $${AI_PROD_PRESSURE_REQUESTS:-32} \

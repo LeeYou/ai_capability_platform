@@ -16,7 +16,7 @@
 | P6 | 实现 reload/rollback | 已完成 |
 | P7 | 实现生产镜像与挂载模板 | 已完成 |
 | P8 | 基础版压测、联调与验收 | 已完成 |
-| P9 | 引入 C++ HTTP 服务主链路 | 进行中 |
+| P9 | 引入 C++ HTTP 服务主链路 | 已完成 |
 | P10 | 引入 C++ Runtime / 插件管理 / 实例池 / drain 机制 | 已完成 |
 | P11 | 收敛 License / 热更新 / 回滚与 ai_platform 参考实现 | 已完成 |
 | P12 | 保留并重构 Python/React 测试验收外壳 | 已完成 |
@@ -49,12 +49,12 @@
 9. 当前已完成 P11：在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验；同时在 Python runtime 的 bootstrap / infer / reload / rollback 路径补齐按能力/版本维度的二次 license 校验与审计日志。
 10. 当前已完成 P12：将 Python/React 测试验收外壳的内部查询接口拆分到 `/internal/*`，前端显式标记为内部验收外壳，并让 Vite 开发代理直连 Python 后端；同时移除 C++ 生产主链路对 revision / operation 等内部查询接口的转发暴露。
 11. 当前已完成 P13：补齐 ai-prod 面向客户交付的默认环境模板、公共 API 验收脚本、基础并发压测脚本与运行规范文档，并在 Makefile / 运维文档中固化标准入口。
+12. 当前已完成 P9 收口：生产镜像与 docker-compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路，C++ HTTP 正式成为交付主入口。
 
 ### 4.3 未完成
 
-1. C++ HTTP 主服务尚未完全替换当前仓库的 ai-prod 主链路，当前虽已完成 P10 范围内的 catalog / pool / drain / reload 编排，但实际推理执行仍主要由 Python runtime 承担，P9 仍需继续收口。
-2. C++ HTTP 主服务与真实 C++ Runtime 的最终收口仍未完成，当前交付规范仍基于“C++ HTTP 主入口 + Python runtime 承担实际推理执行”的过渡形态。
+1. C++ HTTP 主服务与真实 C++ Runtime 的最终收口仍未完成，当前交付规范仍基于“C++ HTTP 主入口 + Python runtime 承担实际推理执行”的过渡形态。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P13：在已完成 P12 的基础上，进一步补齐了面向客户交付的运行规范文档、默认环境模板、公共 API 验收脚本与基础并发压测脚本，并把相关入口接入 Makefile 与运维文档，形成“构建校验 + 公共 API 验收 + 并发 smoke + 排障指引”的最小交付闭环。当前已完成本地编译、单测、前端构建/lint、compose 校验与脚本自校验，后续将继续收口 P9 主链路。
+ai-prod 当前已完成 P9 与 P13：在已完成 P12 的基础上，一方面将生产镜像/compose 切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，另一方面补齐了运行规范文档、默认环境模板、公共 API 验收脚本与基础并发压测脚本，并把相关入口接入 Makefile 与运维文档，形成“镜像主链路 + 构建校验 + 公共 API 验收 + 并发 smoke + 排障指引”的最小交付闭环。当前后续重点转向真实 C++ Runtime 的最终替换。
