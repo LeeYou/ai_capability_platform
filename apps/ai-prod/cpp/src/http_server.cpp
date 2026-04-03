@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -12,6 +14,9 @@ constexpr char kDefaultJsonContentType[] = "application/json; charset=utf-8";
 constexpr char kInstanceIdHeader[] = "X-AI-Prod-Instance-Id";
 constexpr char kPreferredDeviceHeader[] = "X-AI-Prod-Preferred-Device";
 constexpr char kRuntimeRevisionIdHeader[] = "X-AI-Prod-Runtime-Revision-Id";
+constexpr auto kDrainTimeout = std::chrono::seconds(5);
+constexpr auto kRefreshRetryInterval = std::chrono::milliseconds(100);
+constexpr int kRefreshRetryAttempts = 10;
 
 std::string ToLowerCopy(const std::string& value) {
     std::string lowered = value;
@@ -120,7 +125,7 @@ void AiProdHttpServer::ApplySnapshotOrBackendResponse(
     ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
 }
 
-bool AiProdHttpServer::RefreshCatalogAndPools() {
+bool AiProdHttpServer::RefreshCatalogAndPools(bool force_rebuild) {
     std::lock_guard<std::mutex> guard(runtimeStateMutex);
     const bool snapshot_ready = capabilityCatalog.RefreshIfNeeded(config.snapshot_max_age_seconds);
     if (!snapshot_ready) {
@@ -128,7 +133,7 @@ bool AiProdHttpServer::RefreshCatalogAndPools() {
     }
 
     const int revision_id = capabilityCatalog.GetRevisionId();
-    if (revision_id == activeCatalogRevisionId && !instancePools.empty()) {
+    if (!force_rebuild && revision_id == activeCatalogRevisionId && !instancePools.empty()) {
         return true;
     }
 
@@ -144,6 +149,19 @@ bool AiProdHttpServer::RefreshCatalogAndPools() {
     instancePools = std::move(next_pools);
     activeCatalogRevisionId = revision_id;
     return true;
+}
+
+bool AiProdHttpServer::RefreshCatalogAndPoolsWithRetry(
+    int attempts,
+    std::chrono::milliseconds wait_interval,
+    bool force_rebuild) {
+    for (int attempt = 0; attempt < attempts; ++attempt) {
+        if (RefreshCatalogAndPools(force_rebuild)) {
+            return true;
+        }
+        std::this_thread::sleep_for(wait_interval);
+    }
+    return false;
 }
 
 nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const {
@@ -167,13 +185,23 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"device_mode", entry.device_mode},
                 {"pool_size", total_size},
                 {"busy_count", busy_count},
+                {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
                 {"revision_id", entry.revision_id},
             });
+    }
+
+    bool draining = false;
+    for (const auto& item : instancePools) {
+        if (item.second && item.second->IsDraining()) {
+            draining = true;
+            break;
+        }
     }
 
     return {
         {"service", "ai-prod-cpp-http"},
         {"snapshot_ready", snapshot_ready},
+        {"draining", draining},
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
         {"items", items},
     };
@@ -186,6 +214,53 @@ std::shared_ptr<InstancePool> AiProdHttpServer::GetInstancePool(const std::strin
         return {};
     }
     return it->second;
+}
+
+std::vector<std::shared_ptr<InstancePool>> AiProdHttpServer::ListInstancePools() const {
+    std::lock_guard<std::mutex> guard(runtimeStateMutex);
+    std::vector<std::shared_ptr<InstancePool>> pools;
+    pools.reserve(instancePools.size());
+    for (const auto& entry : instancePools) {
+        if (entry.second) {
+            pools.push_back(entry.second);
+        }
+    }
+    return pools;
+}
+
+void AiProdHttpServer::BeginDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools) {
+    for (const auto& pool : pools) {
+        if (pool) {
+            pool->BeginDrain();
+        }
+    }
+}
+
+void AiProdHttpServer::EndDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools) {
+    for (const auto& pool : pools) {
+        if (pool) {
+            pool->EndDrain();
+        }
+    }
+}
+
+bool AiProdHttpServer::WaitForPoolsIdle(
+    const std::vector<std::shared_ptr<InstancePool>>& pools,
+    std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (const auto& pool : pools) {
+        if (!pool) {
+            continue;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            return false;
+        }
+        if (!pool->WaitForIdle(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void AiProdHttpServer::HandleInferRequest(
@@ -215,8 +290,17 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
+    if (pool->IsDraining()) {
+        ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
+        return;
+    }
+
     const auto lease = pool->Acquire();
     if (!lease.has_value()) {
+        if (pool->IsDraining()) {
+            ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
+            return;
+        }
         ApplyJsonErrorResponse(503, "能力实例池繁忙，请稍后重试。", response);
         return;
     }
@@ -227,6 +311,46 @@ void AiProdHttpServer::HandleInferRequest(
 
     const auto backend_response = backendClient.ForwardPost(request.path, request.body, content_type, headers);
     pool->Release(lease->slot_index);
+    ApplyBackendResponse(backend_response, response);
+}
+
+void AiProdHttpServer::HandleAdminTransitionRequest(
+    const httplib::Request& request,
+    httplib::Response& response,
+    bool rollback) {
+    const auto content_type = request.get_header_value("Content-Type");
+    auto headers = BuildForwardHeaders(request);
+
+    if (!RefreshCatalogAndPools()) {
+        const auto backend_response = rollback
+            ? backendClient.ForwardRollback(request.body, content_type, headers)
+            : backendClient.ForwardPost(request.path, request.body, content_type, headers);
+        ApplyBackendResponse(backend_response, response);
+        return;
+    }
+
+    const auto pools = ListInstancePools();
+    BeginDrainOnPools(pools);
+    if (!WaitForPoolsIdle(pools, std::chrono::duration_cast<std::chrono::milliseconds>(kDrainTimeout))) {
+        EndDrainOnPools(pools);
+        ApplyJsonErrorResponse(503, "当前仍有推理请求执行中，暂时无法切换运行时。", response);
+        return;
+    }
+
+    const auto backend_response = rollback
+        ? backendClient.ForwardRollback(request.body, content_type, headers)
+        : backendClient.ForwardPost(request.path, request.body, content_type, headers);
+    if (backend_response.status >= 200 && backend_response.status < 300) {
+        if (!RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true)) {
+            EndDrainOnPools(pools);
+            ApplyJsonErrorResponse(502, "运行时切换已提交，但 C++ 侧目录刷新失败。", response);
+            return;
+        }
+        ApplyBackendResponse(backend_response, response);
+        return;
+    }
+
+    EndDrainOnPools(pools);
     ApplyBackendResponse(backend_response, response);
 }
 
@@ -263,16 +387,10 @@ void AiProdHttpServer::RegisterRoutes() {
         ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
     });
     server->Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
-        const auto content_type = request.get_header_value("Content-Type");
-        ApplyBackendResponse(
-            backendClient.ForwardPost(request.path, request.body, content_type, BuildForwardHeaders(request)),
-            response);
+        HandleAdminTransitionRequest(request, response, false);
     });
     server->Post("/api/v1/admin/rollback", [&](const httplib::Request& request, httplib::Response& response) {
-        const auto content_type = request.get_header_value("Content-Type");
-        ApplyBackendResponse(
-            backendClient.ForwardRollback(request.body, content_type, BuildForwardHeaders(request)),
-            response);
+        HandleAdminTransitionRequest(request, response, true);
     });
     server->Post(R"(/api/v1/infer/([^/]+))", [&](const httplib::Request& request, httplib::Response& response) {
         HandleInferRequest(request, response);

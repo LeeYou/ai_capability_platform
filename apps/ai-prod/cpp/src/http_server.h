@@ -9,10 +9,12 @@
 
 #include <cpp-httplib/httplib.h>
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 class AiProdHttpServer {
 public:
@@ -28,10 +30,21 @@ private:
         const SnapshotResponse& snapshot_response,
         const httplib::Request& request,
         httplib::Response& response) const;
-    bool RefreshCatalogAndPools();
+    bool RefreshCatalogAndPools(bool force_rebuild = false);
+    bool RefreshCatalogAndPoolsWithRetry(int attempts, std::chrono::milliseconds wait_interval, bool force_rebuild);
     nlohmann::json BuildCatalogPayload(bool snapshot_ready) const;
     void HandleInferRequest(const httplib::Request& request, httplib::Response& response);
+    void HandleAdminTransitionRequest(
+        const httplib::Request& request,
+        httplib::Response& response,
+        bool rollback);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
+    std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;
+    static void BeginDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools);
+    static void EndDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools);
+    static bool WaitForPoolsIdle(
+        const std::vector<std::shared_ptr<InstancePool>>& pools,
+        std::chrono::milliseconds timeout);
     void RegisterRoutes();
 
     ProxyConfig config;

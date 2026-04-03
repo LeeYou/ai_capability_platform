@@ -48,7 +48,8 @@ ctest --test-dir build --output-on-failure
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
 6. snapshot 可用时，`/api/v1/infer/{capability_name}` 已接入 C++ 侧能力存在性校验、实例池借还与繁忙保护
-7. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+7. `reload/rollback` 已在 C++ 侧接入实例池 drain 编排，切换期间阻断新的 infer 请求并在成功后刷新 catalog/pool
+8. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 

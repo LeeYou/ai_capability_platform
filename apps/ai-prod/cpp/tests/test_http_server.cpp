@@ -37,41 +37,46 @@ bool WaitForHttpReady(const std::string& host, int port, const std::string& path
     return false;
 }
 
+void WriteSnapshot(
+    const std::filesystem::path& snapshot_path,
+    int revision_id,
+    int pool_size) {
+    std::ofstream snapshot_output(snapshot_path);
+    snapshot_output
+        << "{"
+        << "\"revision_id\":" << revision_id << ","
+        << "\"capability_count\":1,"
+        << "\"service_name\":\"ai-prod\","
+        << "\"company_name\":\"北京爱知之星科技股份有限公司（Agile Star）\","
+        << "\"company_domain\":\"agilestar.cn\","
+        << "\"capabilities\":[{"
+        << "\"capability_name\":\"face_detect\","
+        << "\"plugin_target\":\"linux_x86_64\","
+        << "\"model_version\":\"v1_0_0\","
+        << "\"backend_type\":\"onnxruntime\","
+        << "\"active_source\":\"host\","
+        << "\"device_mode\":\"gpu/cpu\","
+        << "\"pool_size\":" << pool_size << ","
+        << "\"revision_id\":" << revision_id
+        << "}],"
+        << "\"license_status\":{"
+        << "\"valid\":true,"
+        << "\"reason\":\"ok\","
+        << "\"checked_at_cst\":\"2026-04-02T17:00:00+08:00\","
+        << "\"customer_code\":\"cust_prod\","
+        << "\"capability_scope\":[\"face_detect\"],"
+        << "\"version_constraints\":{},"
+        << "\"hardware_fingerprint\":\"abc\","
+        << "\"runtime_revision_id\":" << revision_id
+        << "}"
+        << "}";
+}
+
 }
 
 int main() {
     const std::filesystem::path snapshot_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_snapshot_test.json";
-    {
-        std::ofstream snapshot_output(snapshot_path);
-        snapshot_output
-            << "{"
-            << "\"revision_id\":9,"
-            << "\"capability_count\":1,"
-            << "\"service_name\":\"ai-prod\","
-            << "\"company_name\":\"北京爱知之星科技股份有限公司（Agile Star）\","
-            << "\"company_domain\":\"agilestar.cn\","
-            << "\"capabilities\":[{"
-            << "\"capability_name\":\"face_detect\","
-            << "\"plugin_target\":\"linux_x86_64\","
-            << "\"model_version\":\"v1_0_0\","
-            << "\"backend_type\":\"onnxruntime\","
-            << "\"active_source\":\"host\","
-            << "\"device_mode\":\"gpu/cpu\","
-            << "\"pool_size\":1,"
-            << "\"revision_id\":9"
-            << "}],"
-            << "\"license_status\":{"
-            << "\"valid\":true,"
-            << "\"reason\":\"ok\","
-            << "\"checked_at_cst\":\"2026-04-02T17:00:00+08:00\","
-            << "\"customer_code\":\"cust_prod\","
-            << "\"capability_scope\":[\"face_detect\"],"
-            << "\"version_constraints\":{},"
-            << "\"hardware_fingerprint\":\"abc\","
-            << "\"runtime_revision_id\":9"
-            << "}"
-            << "}";
-    }
+    WriteSnapshot(snapshot_path, 9, 1);
 
     if (!Expect(
             AiProdBackendClient::NormalizeRollbackBody("{}") == "{\"action\":\"rollback\"}",
@@ -87,6 +92,8 @@ int main() {
     std::string forwarded_infer_revision;
     std::atomic<bool> hold_infer(false);
     std::atomic<bool> infer_started(false);
+    std::atomic<bool> reload_called(false);
+    std::atomic<int> reload_call_count(0);
 
     httplib::Server backend_server;
     backend_server.Get("/api/v1/health", [](const httplib::Request&, httplib::Response& response) {
@@ -94,6 +101,14 @@ int main() {
     });
     backend_server.Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
         forwarded_reload_body = request.body;
+        reload_called = true;
+        ++reload_call_count;
+        const auto payload = nlohmann::json::parse(request.body.empty() ? "{}" : request.body);
+        if (payload.value("action", "reload") == "rollback") {
+            WriteSnapshot(snapshot_path, 11, 1);
+        } else {
+            WriteSnapshot(snapshot_path, 10, 2);
+        }
         response.set_content(request.body, "application/json");
     });
     backend_server.Post(R"(/api/v1/infer/([^/]+))", [&](const httplib::Request& request, httplib::Response& response) {
@@ -224,6 +239,59 @@ int main() {
         return 1;
     }
 
+    std::optional<int> reload_status;
+    std::thread reload_thread([&]() {
+        httplib::Client reload_client("127.0.0.1", proxy_port);
+        const auto reload_result = reload_client.Post(
+            "/api/v1/admin/reload",
+            "{\"action\":\"reload\"}",
+            "application/json");
+        if (!reload_result) {
+            reload_status = 0;
+            return;
+        }
+        reload_status = reload_result->status;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    if (!Expect(!reload_called.load(), "reload should wait for in-flight infer to drain before forwarding")) {
+        hold_infer = false;
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+
+    const auto draining_infer_result = proxy_client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input\":\"demo-drain\"}",
+        "application/json");
+    if (!Expect(draining_infer_result && draining_infer_result->status == 503, "infer should reject during drain")) {
+        hold_infer = false;
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+
+    const auto draining_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(draining_catalog_result && draining_catalog_result->status == 200, "catalog route should respond during drain")) {
+        hold_infer = false;
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+    const auto draining_catalog_payload = nlohmann::json::parse(draining_catalog_result->body);
+    if (!Expect(draining_catalog_payload["draining"] == true, "catalog route should show draining state")) {
+        hold_infer = false;
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(draining_catalog_payload["items"][0]["draining"] == true, "catalog item should show draining state")) {
+        hold_infer = false;
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+
     const auto busy_infer_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
         "{\"input\":\"demo-2\"}",
@@ -246,7 +314,14 @@ int main() {
 
     hold_infer = false;
     infer_thread.join();
+    reload_thread.join();
     if (!Expect(infer_status.has_value() && infer_status.value() == 200, "infer route should proxy successfully")) {
+        return 1;
+    }
+    if (!Expect(reload_status.has_value() && reload_status.value() == 200, "reload route should complete after drain")) {
+        return 1;
+    }
+    if (!Expect(reload_call_count.load() == 1, "reload should be forwarded exactly once")) {
         return 1;
     }
     const auto infer_payload = nlohmann::json::parse(infer_body);
@@ -257,6 +332,21 @@ int main() {
         return 1;
     }
     if (!Expect(infer_payload["runtime_revision_id"] == "9", "infer should forward runtime revision header")) {
+        return 1;
+    }
+
+    const auto reloaded_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(reloaded_catalog_result && reloaded_catalog_result->status == 200, "catalog route should respond after reload")) {
+        return 1;
+    }
+    const auto reloaded_catalog_payload = nlohmann::json::parse(reloaded_catalog_result->body);
+    if (!Expect(reloaded_catalog_payload["runtime_revision_id"] == 10, "reload should refresh catalog revision")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["items"][0]["pool_size"] == 2, "reload should rebuild pool size from new snapshot")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["draining"] == false, "catalog should leave draining state after reload")) {
         return 1;
     }
 
@@ -299,6 +389,30 @@ int main() {
         return 1;
     }
     if (!Expect(payload["target_revision_id"] == 7, "rollback route should preserve target revision")) {
+        proxy_server.Stop();
+        backend_server.stop();
+        proxy_thread.join();
+        backend_thread.join();
+        return 1;
+    }
+    if (!Expect(reload_call_count.load() == 2, "rollback should also be forwarded through reload endpoint")) {
+        proxy_server.Stop();
+        backend_server.stop();
+        proxy_thread.join();
+        backend_thread.join();
+        return 1;
+    }
+
+    const auto rollback_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(rollback_catalog_result && rollback_catalog_result->status == 200, "catalog should respond after rollback")) {
+        proxy_server.Stop();
+        backend_server.stop();
+        proxy_thread.join();
+        backend_thread.join();
+        return 1;
+    }
+    const auto rollback_catalog_payload = nlohmann::json::parse(rollback_catalog_result->body);
+    if (!Expect(rollback_catalog_payload["runtime_revision_id"] == 11, "rollback should refresh catalog revision")) {
         proxy_server.Stop();
         backend_server.stop();
         proxy_thread.join();

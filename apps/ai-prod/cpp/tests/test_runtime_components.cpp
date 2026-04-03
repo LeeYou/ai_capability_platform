@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 namespace {
 
@@ -85,6 +86,34 @@ int main() {
         return 1;
     }
     if (!Expect(pool.GetBusyCount() == 0, "busy count should return to zero")) {
+        return 1;
+    }
+
+    const auto draining_lease = pool.Acquire();
+    if (!Expect(draining_lease.has_value(), "instance pool acquire before drain should succeed")) {
+        return 1;
+    }
+    pool.BeginDrain();
+    if (!Expect(pool.IsDraining(), "instance pool should enter draining state")) {
+        return 1;
+    }
+    if (!Expect(!pool.Acquire().has_value(), "instance pool should reject new acquire during drain")) {
+        return 1;
+    }
+    std::thread release_thread([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        pool.Release(draining_lease->slot_index);
+    });
+    if (!Expect(pool.WaitForIdle(std::chrono::milliseconds(500)), "instance pool should become idle during drain")) {
+        release_thread.join();
+        return 1;
+    }
+    release_thread.join();
+    pool.EndDrain();
+    if (!Expect(!pool.IsDraining(), "instance pool should leave draining state")) {
+        return 1;
+    }
+    if (!Expect(pool.Acquire().has_value(), "instance pool should recover after drain")) {
         return 1;
     }
 
