@@ -74,6 +74,66 @@ AI_PROD_DOCKER_SOURCES = (
     "ai_platform/third_party",
 )
 
+ACCEPTANCE_CHECKLIST_TEMPLATE = [
+    (
+        "基础环境",
+        [
+            "已执行 `bash scripts/docker/init_host_root.sh`",
+            "宿主机存在 `data/ datasets/ models/ license/ libs/ configs/ logs/ exports/`",
+            "所有服务端口 26000-26005 未被占用",
+            "ai-prod 已确认容器内 `26014` 仅供 Python backend 内部壳层使用，不对外暴露",
+        ],
+    ),
+    (
+        "模块健康检查",
+        [
+            "`ai-train` `/api/v1/health` 返回成功",
+            "`ai-test` `/api/v1/health` 返回成功",
+            "`ai-license-mgr` `/api/v1/health` 返回成功",
+            "`ai-builder` `/api/v1/health` 返回成功",
+            "`ai-prod` `/api/v1/health` 返回成功",
+            "`ai-sdk` `/api/v1/health` 返回成功",
+        ],
+    ),
+    (
+        "数据与协议兼容性",
+        [
+            "ai-train 生成模型包与 `manifest.json`",
+            "ai-test 能同步 ai-train 模型目录",
+            "ai-license-mgr 能生成 `license.bin` 与 `pubkey.pem`",
+            "ai-builder 能读取模型与 license 并输出 `libs/<target>/<capability>/`",
+            "ai-builder manifest 满足共享 schema",
+            "ai-prod 能装载模型、库与 license 并完成推理",
+            "ai-sdk 能基于 ai-builder 交付目录生成单机交付包",
+            "ai-sdk manifest 满足共享 schema",
+            "manifest/checksum/license 三者可追溯且相互兼容",
+        ],
+    ),
+    (
+        "质量校验",
+        [
+            "六个后端模块测试通过",
+            "五个前端模块 `npm ci && build && lint` 通过",
+            "共享 schema 与示例校验通过",
+            "`docker compose config` 校验通过",
+            "六个 Docker 镜像构建通过",
+            "ai-prod 已执行 `python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004`",
+            "ai-prod 已执行基础并发 smoke，记录成功率与 p95/p99",
+        ],
+    ),
+    (
+        "交付材料",
+        [
+            "已整理共享 schema 目录",
+            "已整理错误码说明",
+            "已整理 docker-compose 使用说明",
+            "已整理交付物清单",
+            "已整理故障排查指南",
+            "已整理 ai-prod 运行规范与默认环境模板",
+        ],
+    ),
+]
+
 
 class BuildTaskNotFoundError(ValueError):
     """构建任务不存在。"""
@@ -370,6 +430,18 @@ def _copy_file(source_path: Path, destination_path: Path) -> None:
     shutil.copy2(source_path, destination_path)
 
 
+def _relative_to_package(path: Path, package_root: Path) -> str:
+    return str(path.resolve().relative_to(package_root.resolve()))
+
+
+def _delivery_file_entry(path: Path, package_root: Path) -> dict[str, object]:
+    return {
+        "path": _relative_to_package(path, package_root),
+        "checksum": _sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
 def _create_docker_bundle(
     docker_dir: Path,
     *,
@@ -534,6 +606,10 @@ def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
                 "        'tools',",
                 "        'docs',",
                 "        'licenses',",
+                "        'acceptance_checklist.json',",
+                "        'version_manifest.json',",
+                "        'delivery_summary.json',",
+                "        'delivery_summary.md',",
                 "    ]",
                 "    missing = [item for item in required if not (package_root / item).exists()]",
                 "    if missing:",
@@ -662,6 +738,180 @@ def _create_docs_bundle(
     }
 
 
+def _create_acceptance_checklist(
+    package_root: Path,
+    *,
+    task_id: int,
+    capability_name: str,
+    model_version: str,
+) -> dict[str, object]:
+    checklist = {
+        "task_id": task_id,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "source_document": "docs/07_部署运维/联调验收清单.md",
+        "sections": [
+            {
+                "section_name": section_name,
+                "items": [
+                    {
+                        "item_id": f"S{section_index:02d}-I{item_index:02d}",
+                        "description": description,
+                        "status": "pending",
+                    }
+                    for item_index, description in enumerate(items, start=1)
+                ],
+            }
+            for section_index, (section_name, items) in enumerate(ACCEPTANCE_CHECKLIST_TEMPLATE, start=1)
+        ],
+    }
+    _write_text(
+        package_root / "acceptance_checklist.json",
+        json.dumps(checklist, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return checklist
+
+
+def _create_version_manifest(
+    package_root: Path,
+    *,
+    task_id: int,
+    capability_name: str,
+    model_version: str,
+    issue_record_id: int,
+    license_issue: dict[str, Any],
+    target_rows: list[BuildTargetModel],
+    sdk_items: list[dict[str, str]],
+    docker_manifest: dict[str, object],
+    docs_manifest: dict[str, object],
+    tools_manifest: dict[str, object],
+) -> dict[str, object]:
+    sdk_lookup = {item["target_name"]: item for item in sdk_items}
+    file_entries: list[dict[str, object]] = []
+    for target in target_rows:
+        sdk_item = sdk_lookup.get(target.target_name)
+        binary_path = Path(target.binary_path)
+        archive_path = Path(target.download_archive_path)
+        manifest_path = Path(target.manifest_path)
+        for candidate in (binary_path, archive_path, manifest_path):
+            if candidate.is_file():
+                file_entries.append(_delivery_file_entry(candidate, package_root))
+        if sdk_item:
+            file_entries.append(
+                {
+                    "target_name": target.target_name,
+                    "sdk_dir": sdk_item["sdk_dir"],
+                    "binary_checksum": target.checksum,
+                    "binary_path": sdk_item["binary_path"],
+                    "manifest_path": sdk_item["manifest_path"],
+                }
+            )
+
+    license_files = [
+        package_root / "licenses" / f"issue_{issue_record_id}" / "license.bin",
+        package_root / "licenses" / f"issue_{issue_record_id}" / "pubkey.pem",
+        package_root / "licenses" / f"issue_{issue_record_id}" / "manifest.json",
+        package_root / "docker" / "ai-prod_image_build_context.tar.gz",
+    ]
+    checksum_entries = [
+        _delivery_file_entry(path, package_root)
+        for path in license_files
+        if path.is_file()
+    ]
+    version_manifest = {
+        "task_id": task_id,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "issue_record_id": issue_record_id,
+        "customer_code": license_issue["customer_code"],
+        "capability_scope": license_issue.get("capability_scope", []),
+        "version_constraints": license_issue.get("version_constraints", {}),
+        "delivery_targets": sorted(target.target_name for target in target_rows),
+        "sdk_items": file_entries,
+        "delivery_checksums": checksum_entries,
+        "docker_bundle": docker_manifest,
+        "docs_bundle": docs_manifest,
+        "tools_bundle": tools_manifest,
+    }
+    _write_text(
+        package_root / "version_manifest.json",
+        json.dumps(version_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return version_manifest
+
+
+def _create_delivery_summary(
+    package_root: Path,
+    *,
+    task_id: int,
+    capability_name: str,
+    model_version: str,
+    issue_record_id: int,
+    sdk_items: list[dict[str, str]],
+    acceptance_checklist: dict[str, object],
+    version_manifest: dict[str, object],
+) -> dict[str, object]:
+    summary = {
+        "task_id": task_id,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "issue_record_id": issue_record_id,
+        "sdk_count": len(sdk_items),
+        "acceptance_section_count": len(acceptance_checklist.get("sections", [])),
+        "delivery_files": [
+            "acceptance_checklist.json",
+            "version_manifest.json",
+            "delivery_summary.json",
+            "delivery_summary.md",
+        ],
+        "recommended_steps": [
+            "核对 acceptance_checklist.json 并按现场交付逐项验收。",
+            "核对 version_manifest.json 中 capability/model/license/targets 是否与合同版本一致。",
+            "根据 docker/README.md 与 mount_template/README.md 准备部署环境。",
+            "使用 tools/validation 下的脚本完成 API 验收与基础压测。",
+        ],
+        "delivery_directories": sorted(
+            item.name for item in package_root.iterdir() if item.is_dir()
+        ),
+        "version_manifest_path": "version_manifest.json",
+    }
+    _write_text(
+        package_root / "delivery_summary.json",
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    _write_text(
+        package_root / "delivery_summary.md",
+        "\n".join(
+            [
+                "# delivery_summary",
+                "",
+                f"- task_id: {task_id}",
+                f"- capability_name: {capability_name}",
+                f"- model_version: {model_version}",
+                f"- issue_record_id: {issue_record_id}",
+                f"- sdk_count: {len(sdk_items)}",
+                f"- acceptance_section_count: {len(acceptance_checklist.get('sections', []))}",
+                "",
+                "## 交付物摘要",
+                "",
+                "- 已生成验收清单：`acceptance_checklist.json`",
+                "- 已生成版本清单：`version_manifest.json`",
+                "- 已生成交付摘要：`delivery_summary.json` / `delivery_summary.md`",
+                f"- 已汇总关键 checksum 条目数：{len(version_manifest.get('delivery_checksums', []))}",
+                "",
+                "## 推荐下一步",
+                "",
+                "1. 依据 acceptance_checklist.json 执行现场验收。",
+                "2. 依据 version_manifest.json 核对能力、模型、license 与目标平台版本。",
+                "3. 依据 docker/ 与 mount_template/ 完成环境准备与镜像构建。",
+                "4. 运行 tools/validation 中的验收与压测脚本并归档结果。",
+                "",
+            ]
+        ),
+    )
+    return summary
+
+
 def _create_delivery_package(
     *,
     build_task: BuildTaskModel,
@@ -732,6 +982,35 @@ def _create_delivery_package(
         model_version=safe_model_version,
         issue_record_id=issue_record_id,
     )
+    acceptance_checklist = _create_acceptance_checklist(
+        package_root,
+        task_id=build_task.id,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+    )
+    version_manifest = _create_version_manifest(
+        package_root,
+        task_id=build_task.id,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        issue_record_id=issue_record_id,
+        license_issue=license_issue,
+        target_rows=target_rows,
+        sdk_items=sdk_items,
+        docker_manifest=docker_manifest,
+        docs_manifest=docs_manifest,
+        tools_manifest=tools_manifest,
+    )
+    delivery_summary = _create_delivery_summary(
+        package_root,
+        task_id=build_task.id,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        issue_record_id=issue_record_id,
+        sdk_items=sdk_items,
+        acceptance_checklist=acceptance_checklist,
+        version_manifest=version_manifest,
+    )
     _write_text(
         package_root / "README.md",
         "\n".join(
@@ -741,7 +1020,7 @@ def _create_delivery_package(
                 f"- task_id: {build_task.id}",
                 f"- capability_name: {safe_capability_name}",
                 f"- model_version: {safe_model_version}",
-                "- 当前阶段已完成标准 `delivery_package/` 目录、ai-prod 生产镜像构建上下文 tarball、mount_template、tools 与 docs 打包。",
+                "- 当前阶段已完成标准 `delivery_package/` 目录、ai-prod 生产镜像构建上下文 tarball、mount_template、tools、docs，以及验收清单、版本清单、交付摘要生成。",
                 "",
             ]
         ),
@@ -766,12 +1045,15 @@ def _create_delivery_package(
                 "stage_status": {
                     "B9": "completed",
                     "B10": "completed",
-                    "B11": "pending",
+                    "B11": "completed",
                 },
                 "docker": docker_manifest,
                 "mount_template": mount_template_manifest,
                 "tools": tools_manifest,
                 "docs": docs_manifest,
+                "acceptance_checklist_path": "acceptance_checklist.json",
+                "version_manifest_path": "version_manifest.json",
+                "delivery_summary": delivery_summary,
             },
             ensure_ascii=False,
             indent=2,
@@ -1087,13 +1369,12 @@ def create_build_task(
         ],
     }
     task_manifest_path = task_root / "build_manifest.json"
-    _write_text(task_manifest_path, json.dumps(task_manifest, ensure_ascii=False, indent=2, sort_keys=True))
 
     manifest_row = BuildManifestModel(
         task_id=build_task.id,
         manifest_version="1.0.0",
         manifest_path=str(task_manifest_path),
-        manifest_json=json.dumps(task_manifest, ensure_ascii=False, sort_keys=True),
+        manifest_json="{}",
         dependency_summary_json=json.dumps(dependency_summary, ensure_ascii=False, sort_keys=True),
     )
     session.add(manifest_row)
@@ -1107,6 +1388,16 @@ def create_build_task(
         license_issue=license_issue,
         target_rows=target_rows,
     )
+    task_manifest["delivery_package"] = {
+        "directory": str(delivery_package_dir),
+        "archive_path": str(delivery_package_archive_path),
+        "acceptance_checklist_path": str((delivery_package_dir / "acceptance_checklist.json").resolve()),
+        "version_manifest_path": str((delivery_package_dir / "version_manifest.json").resolve()),
+        "delivery_summary_json_path": str((delivery_package_dir / "delivery_summary.json").resolve()),
+        "delivery_summary_md_path": str((delivery_package_dir / "delivery_summary.md").resolve()),
+    }
+    _write_text(task_manifest_path, json.dumps(task_manifest, ensure_ascii=False, indent=2, sort_keys=True))
+    manifest_row.manifest_json = json.dumps(task_manifest, ensure_ascii=False, sort_keys=True)
     build_task.manifest_path = str(task_manifest_path)
     build_task.delivery_package_dir = str(delivery_package_dir)
     build_task.delivery_package_archive_path = str(delivery_package_archive_path)
