@@ -206,6 +206,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 company_domain=settings.company_domain,
             )
             revisions_before = list_runtime_revisions(session)
+            capabilities_before = {item["capability_name"]: item for item in list_capabilities()}
+            self.assertEqual(capabilities_before["face_detect"]["model_version"], "v1_0_0")
+            _create_model_and_plugin(self.host_root, capability_name="face_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
             _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
             fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
             _create_license_bundle(
@@ -230,6 +233,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
             )
+            capabilities_after_reload = {item["capability_name"]: item for item in list_capabilities()}
+            self.assertEqual(capabilities_after_reload["face_detect"]["model_version"], "v3_0_0")
             rolled_back = reload_runtime(
                 session,
                 runtime_snapshot_path=settings.runtime_snapshot_path,
@@ -252,6 +257,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(list_runtime_operations(session)), 2)
         revisions_after = list_runtime_revisions(session)
         self.assertEqual(revisions_after[-1]["action"], "rollback")
+        capabilities_after_rollback = {item["capability_name"]: item for item in list_capabilities()}
+        self.assertEqual(capabilities_after_rollback["face_detect"]["model_version"], "v1_0_0")
 
     def test_reload_rejects_capability_outside_license_scope_and_records_audit(self) -> None:
         settings = get_settings()

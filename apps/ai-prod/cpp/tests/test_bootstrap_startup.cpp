@@ -196,6 +196,66 @@ int main(int argc, char** argv) {
         proxy_thread.join();
         return 1;
     }
+    if (!Expect(infer_payload["model_version"] == "v2_0_0", "bootstrap infer should expose initial model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    WriteTextFile(
+        host_root / "models" / "face_detect" / "v3_0_0" / "manifest.json",
+        R"({"capability_name":"face_detect","model_version":"v3_0_0","backend_type":"onnxruntime"})");
+    const auto reload_result = client.Post(
+        "/api/v1/admin/reload",
+        "{\"action\":\"reload\"}",
+        "application/json");
+    if (!Expect(reload_result && reload_result->status == 200, "reload should succeed after adding new model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto infer_after_reload = client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"demo-reload\"}",
+        "application/json");
+    if (!Expect(infer_after_reload && infer_after_reload->status == 200, "infer should succeed after reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto infer_after_reload_payload = nlohmann::json::parse(infer_after_reload->body);
+    if (!Expect(infer_after_reload_payload["model_version"] == "v3_0_0", "reload should switch to latest model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto rollback_result = client.Post(
+        "/api/v1/admin/rollback",
+        "{\"target_revision_id\":1}",
+        "application/json");
+    if (!Expect(rollback_result && rollback_result->status == 200, "rollback should restore bootstrap revision")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto infer_after_rollback = client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"demo-rollback\"}",
+        "application/json");
+    if (!Expect(infer_after_rollback && infer_after_rollback->status == 200, "infer should succeed after rollback")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto infer_after_rollback_payload = nlohmann::json::parse(infer_after_rollback->body);
+    if (!Expect(infer_after_rollback_payload["model_version"] == "v2_0_0", "rollback should restore bootstrap model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
 
     proxy_server.Stop();
     proxy_thread.join();

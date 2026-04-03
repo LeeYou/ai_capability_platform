@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <map>
+#include <optional>
 #include <string>
 
 struct RuntimeCapabilityRecord {
@@ -33,5 +34,10 @@ public:
         const std::string& image_resource_root,
         const std::string& target_name);
 };
+
+nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& record);
+std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
+    const nlohmann::json& payload,
+    std::string* error_message);
 
 #endif

@@ -62,8 +62,9 @@ ctest --test-dir build --output-on-failure
 17. 当前已补齐能力级 `execution_metrics` 与 `plugin_info` 观测字段，`/api/v1/admin/catalog` 可输出请求量、成功/失败次数、推理耗时及当前插件元数据
 18. 当前已补齐可选 `warmup` / `health_check` 生命周期钩子，相关状态、时间戳与失败信息会并入 capability 级 `execution_metrics`
 19. 当前已新增统一输入 `payload codec`，`image / video / pdf` 请求会在 C++ 侧完成 base64 解码、格式校验，并将 `input_metadata` 回填到推理结果与审计日志
-20. 作为后续继续替换完整插件生命周期与运行时编排的过渡实现
-21. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
+20. 当前已补齐基于 revision 的能力资源快照持久化；rollback 会优先恢复目标 revision 的具体模型目录、插件目录、插件文件与 manifest 元数据，而不是仅按能力名重扫当前目录
+21. 作为后续继续替换完整插件生命周期与运行时编排的过渡实现
+22. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

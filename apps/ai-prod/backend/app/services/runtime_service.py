@@ -226,6 +226,69 @@ def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict
     }
 
 
+def _serialize_runtime_capability_record(capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "capability_name": capability_name,
+        "model_root": payload["model_root"],
+        "model_version": payload["model_version"],
+        "backend_type": payload["backend_type"],
+        "plugin_root": payload["plugin_root"],
+        "plugin_target": payload["plugin_target"],
+        "build_mode": payload["build_mode"],
+        "binary_path": payload["binary_path"],
+        "active_source": payload["active_source"],
+        "model_manifest": payload.get("model_manifest", {}),
+        "plugin_manifest": payload.get("plugin_manifest", {}),
+    }
+
+
+def _serialize_runtime_capability_records(capabilities: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_serialize_runtime_capability_record(name, payload) for name, payload in sorted(capabilities.items())]
+
+
+def _restore_runtime_capability_records(detail: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
+    capability_records = detail.get("capability_records")
+    if not isinstance(capability_records, list):
+        return None
+    restored: dict[str, dict[str, Any]] = {}
+    for item in capability_records:
+        if not isinstance(item, dict):
+            raise ValueError("revision capability_records 格式不正确。")
+        capability_name = str(item.get("capability_name", "")).strip()
+        if not capability_name:
+            raise ValueError("revision capability_records 缺少 capability_name。")
+        restored[capability_name] = {
+            "capability_name": capability_name,
+            "model_root": str(item.get("model_root", "")),
+            "model_version": str(item.get("model_version", "")),
+            "backend_type": str(item.get("backend_type", "")),
+            "plugin_root": str(item.get("plugin_root", "")),
+            "plugin_target": str(item.get("plugin_target", "")),
+            "build_mode": str(item.get("build_mode", "")),
+            "binary_path": str(item.get("binary_path", "")),
+            "active_source": str(item.get("active_source", "")),
+            "model_manifest": item.get("model_manifest", {}),
+            "plugin_manifest": item.get("plugin_manifest", {}),
+        }
+    return restored
+
+
+def _validate_runtime_capability_artifacts(capabilities: dict[str, dict[str, Any]]) -> None:
+    for capability_name, payload in capabilities.items():
+        model_root_value = str(payload.get("model_root", ""))
+        plugin_root_value = str(payload.get("plugin_root", ""))
+        binary_path_value = str(payload.get("binary_path", ""))
+        model_root = Path(model_root_value)
+        plugin_root = Path(plugin_root_value)
+        binary_path = Path(binary_path_value)
+        if not model_root_value or not model_root.exists():
+            raise ValueError(f"回滚目标模型目录不存在：{model_root}")
+        if not plugin_root_value or not plugin_root.exists():
+            raise ValueError(f"回滚目标插件目录不存在：{plugin_root}")
+        if not binary_path_value or not binary_path.exists():
+            raise ValueError(f"回滚目标插件文件不存在：{binary_path}")
+
+
 def _revision_item(revision: RuntimeRevisionModel) -> dict[str, Any]:
     return {
         "revision_id": revision.id,
@@ -310,7 +373,14 @@ def bootstrap_runtime(
             source_summary_json=json.dumps(source_summary, ensure_ascii=False, sort_keys=True),
             capabilities_json=json.dumps(sorted(capabilities), ensure_ascii=False, sort_keys=True),
             license_valid=bool(license_status["valid"]),
-            detail_json=json.dumps({"license_status": license_status}, ensure_ascii=False, sort_keys=True),
+            detail_json=json.dumps(
+                {
+                    "license_status": license_status,
+                    "capability_records": _serialize_runtime_capability_records(capabilities),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             rollback_of_revision_id=None,
         )
         session.add(revision)
@@ -517,7 +587,14 @@ def reload_runtime(
                 source_summary_json=json.dumps(source_summary, ensure_ascii=False, sort_keys=True),
                 capabilities_json=json.dumps(sorted(capabilities), ensure_ascii=False, sort_keys=True),
                 license_valid=bool(license_status["valid"]),
-                detail_json=json.dumps({"license_status": license_status}, ensure_ascii=False, sort_keys=True),
+                detail_json=json.dumps(
+                    {
+                        "license_status": license_status,
+                        "capability_records": _serialize_runtime_capability_records(capabilities),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 rollback_of_revision_id=None,
             )
             session.add(revision)
@@ -531,9 +608,16 @@ def reload_runtime(
             if source_revision is None:
                 raise ValueError("目标 revision 不存在。")
             capability_names = json.loads(source_revision.capabilities_json)
-            target_name = _platform_target_name()
-            capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
-            selected = {name: capabilities[name] for name in capability_names if name in capabilities}
+            source_summary = json.loads(source_revision.source_summary_json)
+            source_detail = json.loads(source_revision.detail_json)
+            restored_capabilities = _restore_runtime_capability_records(source_detail)
+            if restored_capabilities is not None:
+                selected = restored_capabilities
+                _validate_runtime_capability_artifacts(selected)
+            else:
+                target_name = _platform_target_name()
+                capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
+                selected = {name: capabilities[name] for name in capability_names if name in capabilities}
             license_status = _validate_runtime_capabilities_license(
                 capabilities=selected,
                 license_root=license_root,
@@ -550,7 +634,11 @@ def reload_runtime(
                 capabilities_json=json.dumps(sorted(selected), ensure_ascii=False, sort_keys=True),
                 license_valid=bool(license_status["valid"]),
                 detail_json=json.dumps(
-                    {"license_status": license_status, "rollback_to": target_revision_id},
+                    {
+                        "license_status": license_status,
+                        "rollback_to": target_revision_id,
+                        "capability_records": _serialize_runtime_capability_records(selected),
+                    },
                     ensure_ascii=False,
                     sort_keys=True,
                 ),

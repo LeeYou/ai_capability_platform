@@ -10,6 +10,21 @@
 
 namespace {
 
+bool ReadRequiredString(
+    const nlohmann::json& payload,
+    const char* key,
+    std::string* value,
+    std::string* error_message) {
+    if (!payload.contains(key) || !payload[key].is_string()) {
+        if (error_message != nullptr) {
+            *error_message = std::string("capability record 缺少字段：") + key;
+        }
+        return false;
+    }
+    *value = payload[key].get<std::string>();
+    return true;
+}
+
 std::vector<std::filesystem::path> SortedDirs(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
         return {};
@@ -192,4 +207,64 @@ RuntimeResourceScanResult RuntimeResourceScanner::ResolveSources(
     for (const auto& item : image_models) result.source_summary["image_models"].push_back(item.first);
     for (const auto& item : image_plugins) result.source_summary["image_plugins"].push_back(item.first);
     return result;
+}
+
+nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& record) {
+    return {
+        {"capability_name", record.capability_name},
+        {"model_root", record.model_root},
+        {"model_version", record.model_version},
+        {"backend_type", record.backend_type},
+        {"plugin_root", record.plugin_root},
+        {"plugin_target", record.plugin_target},
+        {"build_mode", record.build_mode},
+        {"binary_path", record.binary_path},
+        {"active_source", record.active_source},
+        {"model_manifest", record.model_manifest},
+        {"plugin_manifest", record.plugin_manifest},
+    };
+}
+
+std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
+    const nlohmann::json& payload,
+    std::string* error_message) {
+    if (!payload.is_object()) {
+        if (error_message != nullptr) {
+            *error_message = "capability record 必须是对象。";
+        }
+        return std::nullopt;
+    }
+
+    RuntimeCapabilityRecord record;
+    if (!ReadRequiredString(payload, "capability_name", &record.capability_name, error_message) ||
+        !ReadRequiredString(payload, "model_root", &record.model_root, error_message) ||
+        !ReadRequiredString(payload, "model_version", &record.model_version, error_message) ||
+        !ReadRequiredString(payload, "backend_type", &record.backend_type, error_message) ||
+        !ReadRequiredString(payload, "plugin_root", &record.plugin_root, error_message) ||
+        !ReadRequiredString(payload, "plugin_target", &record.plugin_target, error_message) ||
+        !ReadRequiredString(payload, "build_mode", &record.build_mode, error_message) ||
+        !ReadRequiredString(payload, "binary_path", &record.binary_path, error_message) ||
+        !ReadRequiredString(payload, "active_source", &record.active_source, error_message)) {
+        return std::nullopt;
+    }
+
+    if (payload.contains("model_manifest")) {
+        if (!payload["model_manifest"].is_object()) {
+            if (error_message != nullptr) {
+                *error_message = "model_manifest 必须是对象。";
+            }
+            return std::nullopt;
+        }
+        record.model_manifest = payload["model_manifest"];
+    }
+    if (payload.contains("plugin_manifest")) {
+        if (!payload["plugin_manifest"].is_object()) {
+            if (error_message != nullptr) {
+                *error_message = "plugin_manifest 必须是对象。";
+            }
+            return std::nullopt;
+        }
+        record.plugin_manifest = payload["plugin_manifest"];
+    }
+    return record;
 }

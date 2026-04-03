@@ -245,6 +245,84 @@ std::string ResolveDevice(const InferRequestPayload& request, const CapabilityCa
     return gpu_available ? "gpu" : "cpu";
 }
 
+nlohmann::json BuildSnapshotCapabilityPayload(
+    const RuntimeCapabilityRecord& capability_record,
+    int revision_id,
+    const ProxyConfig& config) {
+    return {
+        {"capability_name", capability_record.capability_name},
+        {"plugin_target", capability_record.plugin_target},
+        {"model_version", capability_record.model_version},
+        {"backend_type", capability_record.backend_type},
+        {"active_source", capability_record.active_source},
+        {"model_root", capability_record.model_root},
+        {"binary_path", capability_record.binary_path},
+        {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
+        {"pool_size", config.pool_size},
+        {"revision_id", revision_id},
+    };
+}
+
+nlohmann::json BuildCapabilityRecordArray(const std::map<std::string, RuntimeCapabilityRecord>& capabilities) {
+    nlohmann::json payload = nlohmann::json::array();
+    for (const auto& capability_entry : capabilities) {
+        payload.push_back(SerializeRuntimeCapabilityRecord(capability_entry.second));
+    }
+    return payload;
+}
+
+bool ValidateCapabilityRecords(
+    const std::map<std::string, RuntimeCapabilityRecord>& capabilities,
+    std::string* error_message) {
+    for (const auto& capability_entry : capabilities) {
+        const auto& record = capability_entry.second;
+        if (record.model_root.empty() || !std::filesystem::exists(record.model_root)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标模型目录不存在：" + record.model_root;
+            }
+            return false;
+        }
+        if (record.plugin_root.empty() || !std::filesystem::exists(record.plugin_root)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标插件目录不存在：" + record.plugin_root;
+            }
+            return false;
+        }
+        if (record.binary_path.empty() || !std::filesystem::exists(record.binary_path)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标插件文件不存在：" + record.binary_path;
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<std::map<std::string, RuntimeCapabilityRecord>> LoadCapabilityRecordsFromRevision(
+    const RuntimeRevisionRecord& revision,
+    std::string* error_message) {
+    if (!revision.detail.is_object() || !revision.detail.contains("capability_records")) {
+        return std::nullopt;
+    }
+    const auto& capability_records = revision.detail["capability_records"];
+    if (!capability_records.is_array()) {
+        if (error_message != nullptr) {
+            *error_message = "revision capability_records 格式不正确。";
+        }
+        return std::nullopt;
+    }
+
+    std::map<std::string, RuntimeCapabilityRecord> restored;
+    for (const auto& item : capability_records) {
+        const auto record = DeserializeRuntimeCapabilityRecord(item, error_message);
+        if (!record.has_value()) {
+            return std::nullopt;
+        }
+        restored.emplace(record->capability_name, *record);
+    }
+    return restored;
+}
+
 nlohmann::json SerializeRevisionRecord(const RuntimeRevisionRecord& record) {
     nlohmann::json payload = {
         {"revision_id", record.id},
@@ -716,6 +794,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         config.image_resource_root,
         RuntimeResourceScanner::DetectPlatformTarget());
     std::map<std::string, RuntimeCapabilityRecord> selected_capabilities = scan_result.capabilities;
+    nlohmann::json source_summary = scan_result.source_summary;
 
     RevisionStore revision_store(config.database_path);
     if (!revision_store.EnsureSchema(error_message)) {
@@ -730,17 +809,26 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
             return std::nullopt;
         }
         rollback_of_revision_id = source_revision->id;
-        std::map<std::string, RuntimeCapabilityRecord> filtered_capabilities;
-        for (const auto& capability_item : source_revision->capability_names) {
-            if (!capability_item.is_string()) {
-                continue;
+        source_summary = source_revision->source_summary;
+        const auto restored_capabilities = LoadCapabilityRecordsFromRevision(*source_revision, error_message);
+        if (restored_capabilities.has_value()) {
+            selected_capabilities = *restored_capabilities;
+            if (!ValidateCapabilityRecords(selected_capabilities, error_message)) {
+                return std::nullopt;
             }
-            const auto capability_it = scan_result.capabilities.find(capability_item.get<std::string>());
-            if (capability_it != scan_result.capabilities.end()) {
-                filtered_capabilities.emplace(capability_it->first, capability_it->second);
+        } else {
+            std::map<std::string, RuntimeCapabilityRecord> filtered_capabilities;
+            for (const auto& capability_item : source_revision->capability_names) {
+                if (!capability_item.is_string()) {
+                    continue;
+                }
+                const auto capability_it = scan_result.capabilities.find(capability_item.get<std::string>());
+                if (capability_it != scan_result.capabilities.end()) {
+                    filtered_capabilities.emplace(capability_it->first, capability_it->second);
+                }
             }
+            selected_capabilities = std::move(filtered_capabilities);
         }
-        selected_capabilities = std::move(filtered_capabilities);
     }
 
     const auto current_license_status = licenseManager.GetStatus();
@@ -783,6 +871,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
 
     nlohmann::json detail = {
         {"license_status", license_status},
+        {"capability_records", BuildCapabilityRecordArray(selected_capabilities)},
     };
     if (rollback_of_revision_id.has_value()) {
         detail["rollback_to"] = *rollback_of_revision_id;
@@ -792,7 +881,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         GenerateRequestId(),
         action,
         "active",
-        scan_result.source_summary,
+        source_summary,
         capability_names,
         true,
         detail,
@@ -803,19 +892,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        snapshot_capabilities.push_back(
-            {
-                {"capability_name", capability_entry.first},
-                {"plugin_target", capability_entry.second.plugin_target},
-                {"model_version", capability_entry.second.model_version},
-                {"backend_type", capability_entry.second.backend_type},
-                {"active_source", capability_entry.second.active_source},
-                {"model_root", capability_entry.second.model_root},
-                {"binary_path", capability_entry.second.binary_path},
-                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
-                {"pool_size", config.pool_size},
-                {"revision_id", revision->id},
-            });
+        snapshot_capabilities.push_back(BuildSnapshotCapabilityPayload(capability_entry.second, revision->id, config));
     }
 
     nlohmann::json snapshot_payload = {
@@ -826,7 +903,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         {"capability_names", capability_names},
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
-        {"source_summary", scan_result.source_summary},
+        {"source_summary", source_summary},
         {"license_status", {
             {"valid", current_license_status.valid},
             {"reason", current_license_status.reason},
@@ -1072,6 +1149,7 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         true,
         {
             {"license_status", license_status},
+            {"capability_records", BuildCapabilityRecordArray(selected_capabilities)},
         },
         std::nullopt,
         error_message);
@@ -1080,19 +1158,7 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        snapshot_capabilities.push_back(
-            {
-                {"capability_name", capability_entry.first},
-                {"plugin_target", capability_entry.second.plugin_target},
-                {"model_version", capability_entry.second.model_version},
-                {"backend_type", capability_entry.second.backend_type},
-                {"active_source", capability_entry.second.active_source},
-                {"model_root", capability_entry.second.model_root},
-                {"binary_path", capability_entry.second.binary_path},
-                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
-                {"pool_size", config.pool_size},
-                {"revision_id", revision->id},
-            });
+        snapshot_capabilities.push_back(BuildSnapshotCapabilityPayload(capability_entry.second, revision->id, config));
     }
 
     nlohmann::json snapshot_payload = {

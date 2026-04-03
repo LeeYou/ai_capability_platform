@@ -62,6 +62,18 @@ int main() {
     if (!Expect(scan_result.capabilities.at("ocr").active_source == "image", "image capability should be used when host missing")) {
         return 1;
     }
+    const auto serialized_capability = SerializeRuntimeCapabilityRecord(scan_result.capabilities.at("face_detect"));
+    std::string deserialize_error;
+    const auto deserialized_capability = DeserializeRuntimeCapabilityRecord(serialized_capability, &deserialize_error);
+    if (!Expect(deserialized_capability.has_value(), deserialize_error.c_str())) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->model_version == "v2_0_0", "serialized capability should keep model version")) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->binary_path == scan_result.capabilities.at("face_detect").binary_path, "serialized capability should keep binary path")) {
+        return 1;
+    }
 
     RevisionStore revision_store(database_path.string());
     std::string error_message;
