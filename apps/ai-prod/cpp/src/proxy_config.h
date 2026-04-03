@@ -10,11 +10,14 @@ struct ProxyConfig {
     std::string backend_host = "127.0.0.1";
     int backend_port = 26004;
     std::string host_root = "/data/ai_capability_platform";
+    std::string image_resource_root = "/workspace/backend/app/resources";
     std::string license_root = "/data/ai_capability_platform/license";
+    std::string database_path = "/data/ai_capability_platform/data/ai_prod.db";
     std::string runtime_snapshot_path = "/data/ai_capability_platform/data/ai_prod_runtime_snapshot.json";
     std::string runtime_log_path = "/data/ai_capability_platform/logs/ai_prod_runtime.log";
     std::string audit_log_path = "/data/ai_capability_platform/logs/ai_prod_audit.log";
     int pool_size = 2;
+    bool gpu_available = true;
     int connect_timeout_ms = 3000;
     int read_timeout_ms = 30000;
     int write_timeout_ms = 30000;

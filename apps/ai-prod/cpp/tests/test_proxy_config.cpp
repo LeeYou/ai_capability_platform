@@ -10,6 +10,9 @@ void clear_env() {
     unsetenv("AI_PROD_CPP_BIND_PORT");
     unsetenv("AI_PROD_PY_BACKEND_HOST");
     unsetenv("AI_PROD_PY_BACKEND_PORT");
+    unsetenv("AI_PROD_CPP_IMAGE_RESOURCE_ROOT");
+    unsetenv("AI_CAP_DATABASE_PATH");
+    unsetenv("AI_CAP_GPU_AVAILABLE");
     unsetenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_READ_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_WRITE_TIMEOUT_MS");
@@ -45,6 +48,9 @@ int main() {
     setenv("AI_PROD_CPP_BIND_PORT", "26105", 1);
     setenv("AI_PROD_PY_BACKEND_HOST", "127.0.0.2", 1);
     setenv("AI_PROD_PY_BACKEND_PORT", "26104", 1);
+    setenv("AI_PROD_CPP_IMAGE_RESOURCE_ROOT", "/tmp/ai_prod_resources", 1);
+    setenv("AI_CAP_DATABASE_PATH", "/tmp/ai_prod.db", 1);
+    setenv("AI_CAP_GPU_AVAILABLE", "0", 1);
     setenv("AI_PROD_CPP_CONNECT_TIMEOUT_MS", "1234", 1);
     setenv("AI_PROD_CPP_READ_TIMEOUT_MS", "2345", 1);
     setenv("AI_PROD_CPP_WRITE_TIMEOUT_MS", "3456", 1);
@@ -60,6 +66,9 @@ int main() {
         if (!expect(config.bind_port == 26105, "override bind port mismatch")) return 1;
         if (!expect(config.backend_host == "127.0.0.2", "override backend host mismatch")) return 1;
         if (!expect(config.backend_port == 26104, "override backend port mismatch")) return 1;
+        if (!expect(config.image_resource_root == "/tmp/ai_prod_resources", "image resource root mismatch")) return 1;
+        if (!expect(config.database_path == "/tmp/ai_prod.db", "database path mismatch")) return 1;
+        if (!expect(config.gpu_available == false, "gpu flag mismatch")) return 1;
         if (!expect(config.connect_timeout_ms == 1234, "override connect timeout mismatch")) return 1;
         if (!expect(config.read_timeout_ms == 2345, "override read timeout mismatch")) return 1;
         if (!expect(config.write_timeout_ms == 3456, "override write timeout mismatch")) return 1;

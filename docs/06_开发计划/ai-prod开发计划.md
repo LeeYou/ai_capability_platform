@@ -22,6 +22,7 @@
 | P12 | 保留并重构 Python/React 测试验收外壳 | 已完成 |
 | P13 | 面向客户交付的压测、验收与运行规范固化 | 已完成 |
 | P14 | 首轮将 infer 主链路收敛为 C++ 直接执行闭环 | 已完成 |
+| P15 | 将 reload/rollback、revision/operation 持久化收敛为 C++ 直接执行闭环 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -52,11 +53,12 @@
 11. 当前已完成 P13：补齐 ai-prod 面向客户交付的默认环境模板、公共 API 验收脚本、基础并发压测脚本与运行规范文档，并在 Makefile / 运维文档中固化标准入口。
 12. 当前已完成 P9 收口：生产镜像与 docker-compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路，C++ HTTP 正式成为交付主入口。
 13. 当前已完成 P14：在 runtime snapshot 可用时，`/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、结果生成与基础日志审计，仅在 snapshot 不可用时回退到 Python backend。
+14. 当前已完成 P15：`/api/v1/admin/reload` 与 `/api/v1/admin/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写与 catalog/pool 刷新，仅保留 Python 作为内部测试验收外壳与兼容壳层。
 
 ### 4.3 未完成
 
-1. C++ infer 主链路已开始从 Python 收敛到 C++，但 reload/rollback、revision/operation 持久化、资源扫描与运行时版本切换仍主要由 Python runtime 承担，真实 C++ Runtime 的最终收口仍未完成。
+1. C++ 已完成 infer 与 reload/rollback 管理闭环，但真实插件加载、实例执行内核、bootstrap 首次装载与更完整的运行时版本切换仍未完全替换 Python runtime，真实 C++ Runtime 的最终收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P14：在已完成 P12/P13 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且 infer 热路径已进一步收敛为“snapshot 可用时由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、结果生成与基础日志审计，snapshot 不可用时自动降级到 Python backend”的首轮 C++ 直接执行闭环。当前后续重点继续转向 reload/rollback、资源扫描、版本切换等真实 C++ Runtime 能力的最终替换。
+ai-prod 当前已完成 P9-P15：在已完成 P12/P13/P14 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径已收敛为 C++ 直接执行，reload/rollback 也已进一步收敛为“C++ 直接完成资源扫描、license 校验、revision/operation SQLite 持久化、runtime snapshot 重写与 catalog/pool 刷新”的管理闭环。当前后续重点继续转向真实插件执行内核、bootstrap 首次装载与最终 C++ Runtime 替换。

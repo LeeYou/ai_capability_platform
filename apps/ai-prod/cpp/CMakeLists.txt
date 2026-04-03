@@ -10,6 +10,7 @@ option(AI_PROD_CPP_BUILD_TESTS "Build ai-prod cpp tests" ON)
 set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ai_platform/third_party")
 
 find_package(OpenSSL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 add_executable(ai_prod_cpp_proxy
     src/capability_catalog.cpp
@@ -19,6 +20,8 @@ add_executable(ai_prod_cpp_proxy
     src/license_manager.cpp
     src/main.cpp
     src/proxy_config.cpp
+    src/revision_store.cpp
+    src/runtime_resource_scanner.cpp
     src/runtime_snapshot_manager.cpp
 )
 
@@ -27,7 +30,7 @@ target_include_directories(ai_prod_cpp_proxy PRIVATE
     ${AI_PLATFORM_THIRD_PARTY_DIR}
 )
 
-target_link_libraries(ai_prod_cpp_proxy PRIVATE OpenSSL::Crypto)
+target_link_libraries(ai_prod_cpp_proxy PRIVATE OpenSSL::Crypto SQLite::SQLite3)
 
 if(AI_PROD_CPP_BUILD_TESTS)
     enable_testing()
@@ -52,6 +55,8 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/instance_pool.cpp
         src/license_manager.cpp
         src/proxy_config.cpp
+        src/revision_store.cpp
+        src/runtime_resource_scanner.cpp
         src/runtime_snapshot_manager.cpp
     )
 
@@ -60,7 +65,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         ${AI_PLATFORM_THIRD_PARTY_DIR}
     )
 
-    target_link_libraries(test_http_server PRIVATE OpenSSL::Crypto)
+    target_link_libraries(test_http_server PRIVATE OpenSSL::Crypto SQLite::SQLite3)
 
     add_test(NAME ai_prod_cpp_test_http_server COMMAND test_http_server)
 
@@ -76,6 +81,21 @@ if(AI_PROD_CPP_BUILD_TESTS)
     )
 
     add_test(NAME ai_prod_cpp_test_runtime_components COMMAND test_runtime_components)
+
+    add_executable(test_runtime_transition_components
+        tests/test_runtime_transition_components.cpp
+        src/revision_store.cpp
+        src/runtime_resource_scanner.cpp
+    )
+
+    target_include_directories(test_runtime_transition_components PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    target_link_libraries(test_runtime_transition_components PRIVATE SQLite::SQLite3)
+
+    add_test(NAME ai_prod_cpp_test_runtime_transition_components COMMAND test_runtime_transition_components)
 
     add_executable(test_license_manager
         tests/test_license_manager.cpp

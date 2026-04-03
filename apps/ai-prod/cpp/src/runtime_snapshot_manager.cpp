@@ -1,6 +1,7 @@
 #include "runtime_snapshot_manager.h"
 
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -52,6 +53,31 @@ SnapshotResponse RuntimeSnapshotManager::BuildLicenseStatusResponse() {
     }
 
     return BuildJsonResponse(snapshotJson.value("license_status", nlohmann::json::object()));
+}
+
+bool RuntimeSnapshotManager::WriteSnapshot(const nlohmann::json& payload) {
+    std::lock_guard<std::mutex> guard(mutex);
+    try {
+        const std::filesystem::path path(snapshotPath);
+        if (!path.parent_path().empty()) {
+            std::filesystem::create_directories(path.parent_path());
+        }
+        const auto temp_path = path.string() + ".tmp";
+        {
+            std::ofstream output(temp_path, std::ios::trunc);
+            if (!output.is_open()) {
+                return false;
+            }
+            output << payload.dump(2);
+        }
+        std::filesystem::rename(temp_path, path);
+        snapshotJson = payload;
+        lastLoadedWriteTime = std::filesystem::last_write_time(path);
+        hasLoadedSnapshot = true;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool RuntimeSnapshotManager::EnsureSnapshotLoaded() {

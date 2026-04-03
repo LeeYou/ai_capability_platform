@@ -14,6 +14,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -87,6 +88,12 @@ std::string NowCstWithOffset(int day_offset) {
     return output.str();
 }
 
+void WriteTextFile(const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path);
+    output << content;
+}
+
 }
 
 int main() {
@@ -95,16 +102,40 @@ int main() {
     const std::filesystem::path license_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_license_test";
     const std::filesystem::path runtime_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_test.log";
     const std::filesystem::path audit_log_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_audit_test.log";
+    const std::filesystem::path host_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_host_root";
+    const std::filesystem::path image_root = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_image_root";
+    const std::filesystem::path database_path = std::filesystem::temp_directory_path() / "ai_prod_cpp_runtime_test.db";
     std::filesystem::remove_all(license_root);
+    std::filesystem::remove_all(host_root);
+    std::filesystem::remove_all(image_root);
+    std::filesystem::remove(database_path);
     std::filesystem::remove(runtime_log_path);
     std::filesystem::remove(audit_log_path);
+    WriteTextFile(
+        host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime"})");
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release"})");
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so",
+        "binary");
+    WriteTextFile(
+        image_root / "models" / "ocr" / "v1_0_0" / "manifest.json",
+        R"({"capability_name":"ocr","model_version":"v1_0_0","backend_type":"onnxruntime"})");
+    WriteTextFile(
+        image_root / "libs" / "linux_x86_64" / "ocr" / "manifest" / "manifest.json",
+        R"({"capability_name":"ocr","target_name":"linux_x86_64","build_mode":"template"})");
+    WriteTextFile(
+        image_root / "libs" / "linux_x86_64" / "ocr" / "lib" / "libocr.so",
+        "binary");
     const std::map<std::string, std::string> hardware_features = {
         {"cpu", "intel-i7"},
         {"mac", "00:11:22:33:44:55"},
     };
     nlohmann::json license_payload = {
         {"customer_code", "cust_prod"},
-        {"capability_scope", nlohmann::json::array({"face_detect"})},
+        {"capability_scope", nlohmann::json::array({"face_detect", "ocr"})},
         {"hardware_fingerprint", test_license_helpers::BuildHardwareFingerprint(hardware_features)},
         {"start_at_cst", NowCstWithOffset(-1)},
         {"expire_at_cst", NowCstWithOffset(30)},
@@ -120,25 +151,10 @@ int main() {
 
     const int backend_port = 29104;
     const int proxy_port = 29105;
-    std::string forwarded_reload_body;
-    std::atomic<bool> reload_called(false);
-    std::atomic<int> reload_call_count(0);
 
     httplib::Server backend_server;
     backend_server.Get("/api/v1/health", [](const httplib::Request&, httplib::Response& response) {
         response.set_content("{\"status\":\"ok\",\"service\":\"backend\"}", "application/json");
-    });
-    backend_server.Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
-        forwarded_reload_body = request.body;
-        reload_called = true;
-        ++reload_call_count;
-        const auto payload = nlohmann::json::parse(request.body.empty() ? "{}" : request.body);
-        if (payload.value("action", "reload") == "rollback") {
-            WriteSnapshot(snapshot_path, 11, 1);
-        } else {
-            WriteSnapshot(snapshot_path, 10, 2);
-        }
-        response.set_content(request.body, "application/json");
     });
 
     std::thread backend_thread([&]() {
@@ -156,12 +172,16 @@ int main() {
     config.bind_port = proxy_port;
     config.backend_host = "127.0.0.1";
     config.backend_port = backend_port;
+    config.host_root = host_root.string();
+    config.image_resource_root = image_root.string();
     config.license_root = license_root.string();
+    config.database_path = database_path.string();
     config.hardware_features = hardware_features;
     config.license_auto_reload_interval_seconds = 1;
     config.runtime_snapshot_path = snapshot_path.string();
     config.runtime_log_path = runtime_log_path.string();
     config.audit_log_path = audit_log_path.string();
+    config.pool_size = 2;
     config.connect_timeout_ms = 1000;
     config.read_timeout_ms = 1000;
     config.write_timeout_ms = 1000;
@@ -225,7 +245,7 @@ int main() {
     if (!Expect(license_status_payload["valid"] == true, "license status should be valid")) {
         return 1;
     }
-    if (!Expect(license_status_payload["capability_scope"].size() == 1, "license status should expose capability scope")) {
+    if (!Expect(license_status_payload["capability_scope"].size() == 2, "license status should expose capability scope")) {
         return 1;
     }
 
@@ -283,6 +303,7 @@ int main() {
     }
 
     std::optional<int> reload_status;
+    std::string reload_body;
     std::thread reload_thread([&]() {
         httplib::Client reload_client("127.0.0.1", proxy_port);
         const auto reload_result = reload_client.Post(
@@ -294,9 +315,10 @@ int main() {
             return;
         }
         reload_status = reload_result->status;
+        reload_body = reload_result->body;
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    if (!Expect(!reload_called.load(), "reload should wait for in-flight infer to drain before forwarding")) {
+    if (!Expect(!std::filesystem::exists(database_path), "reload should wait for in-flight infer to finish before persisting revision")) {
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -356,9 +378,6 @@ int main() {
     if (!Expect(reload_status.has_value() && reload_status.value() == 200, "reload route should complete after drain")) {
         return 1;
     }
-    if (!Expect(reload_call_count.load() == 1, "reload should be forwarded exactly once")) {
-        return 1;
-    }
     const auto infer_payload = nlohmann::json::parse(infer_body);
     if (!Expect(infer_payload["capability_name"] == "face_detect", "infer should return capability name")) {
         return 1;
@@ -390,13 +409,16 @@ int main() {
         return 1;
     }
     const auto reloaded_catalog_payload = nlohmann::json::parse(reloaded_catalog_result->body);
-    if (!Expect(reloaded_catalog_payload["runtime_revision_id"] == 10, "reload should refresh catalog revision")) {
+    if (!Expect(reloaded_catalog_payload["runtime_revision_id"] == 1, "reload should refresh catalog revision")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["pool_size"] == 2, "reload should rebuild pool size from new snapshot")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["draining"] == false, "catalog should leave draining state after reload")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["items"].size() == 2, "reload should publish merged capabilities")) {
         return 1;
     }
 
@@ -423,13 +445,18 @@ int main() {
     if (!Expect(denied_reload_result && denied_reload_result->status == 403, "reload route should reject invalid license status")) {
         return 1;
     }
-    license_payload["capability_scope"] = nlohmann::json::array({"face_detect"});
+    license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "ocr"});
     test_license_helpers::WriteLicenseBundle(license_root, license_payload);
     const auto restore_license_result = proxy_client.Post(
         "/api/v1/admin/license-reload",
         "{}",
         "application/json");
     if (!Expect(restore_license_result && restore_license_result->status == 200, "license reload should restore valid license")) {
+        return 1;
+    }
+
+    const auto reload_payload = nlohmann::json::parse(reload_body);
+    if (!Expect(reload_payload["revision"]["revision_id"] == 1, "reload response should expose new revision id")) {
         return 1;
     }
 
@@ -453,9 +480,9 @@ int main() {
 
     const auto rollback_result = proxy_client.Post(
         "/api/v1/admin/rollback",
-        "{\"target_revision_id\":7}",
+        "{\"target_revision_id\":1}",
         "application/json");
-    if (!Expect(rollback_result && rollback_result->status == 200, "rollback route should proxy successfully")) {
+    if (!Expect(rollback_result && rollback_result->status == 200, "rollback route should execute successfully")) {
         proxy_server.Stop();
         backend_server.stop();
         proxy_thread.join();
@@ -463,22 +490,15 @@ int main() {
         return 1;
     }
 
-    const auto payload = nlohmann::json::parse(forwarded_reload_body);
-    if (!Expect(payload["action"] == "rollback", "rollback route should force action=rollback")) {
+    const auto rollback_payload = nlohmann::json::parse(rollback_result->body);
+    if (!Expect(rollback_payload["revision"]["action"] == "rollback", "rollback response should mark action")) {
         proxy_server.Stop();
         backend_server.stop();
         proxy_thread.join();
         backend_thread.join();
         return 1;
     }
-    if (!Expect(payload["target_revision_id"] == 7, "rollback route should preserve target revision")) {
-        proxy_server.Stop();
-        backend_server.stop();
-        proxy_thread.join();
-        backend_thread.join();
-        return 1;
-    }
-    if (!Expect(reload_call_count.load() == 2, "rollback should also be forwarded through reload endpoint")) {
+    if (!Expect(rollback_payload["revision"]["rollback_of_revision_id"] == 1, "rollback should preserve target revision id")) {
         proxy_server.Stop();
         backend_server.stop();
         proxy_thread.join();
@@ -495,7 +515,7 @@ int main() {
         return 1;
     }
     const auto rollback_catalog_payload = nlohmann::json::parse(rollback_catalog_result->body);
-    if (!Expect(rollback_catalog_payload["runtime_revision_id"] == 11, "rollback should refresh catalog revision")) {
+    if (!Expect(rollback_catalog_payload["runtime_revision_id"] == 2, "rollback should refresh catalog revision")) {
         proxy_server.Stop();
         backend_server.stop();
         proxy_thread.join();
@@ -508,6 +528,9 @@ int main() {
     proxy_thread.join();
     backend_thread.join();
     std::filesystem::remove_all(license_root);
+    std::filesystem::remove_all(host_root);
+    std::filesystem::remove_all(image_root);
+    std::filesystem::remove(database_path);
     std::filesystem::remove(runtime_log_path);
     std::filesystem::remove(audit_log_path);
     return 0;

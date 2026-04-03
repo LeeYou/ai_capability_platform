@@ -49,7 +49,7 @@ ctest --test-dir build --output-on-failure
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
 6. snapshot 可用时，`/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、结果生成与基础日志审计；snapshot 不可用时自动回退 Python backend
-7. `reload/rollback` 已在 C++ 侧接入实例池 drain 编排，切换期间阻断新的 infer 请求并在成功后刷新 catalog/pool
+7. `reload/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写，以及实例池 drain 编排与切换后 catalog/pool 刷新
 8. `license/status` 已改为由 C++ 直接读取标准 license 文件，`infer` 与 `reload/rollback` 已接入 license quick check
 9. 已新增 `/api/v1/admin/license-reload`，支持 C++ 侧 license 手动重载与自动监测刷新
 10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
@@ -70,12 +70,15 @@ ctest --test-dir build --output-on-failure
 - `AI_PROD_CPP_BIND_PORT`
 - `AI_PROD_PY_BACKEND_HOST`
 - `AI_PROD_PY_BACKEND_PORT`
+- `AI_CAP_DATABASE_PATH`
+- `AI_CAP_GPU_AVAILABLE`
 - `AI_PROD_CPP_CONNECT_TIMEOUT_MS`
 - `AI_PROD_CPP_READ_TIMEOUT_MS`
 - `AI_PROD_CPP_WRITE_TIMEOUT_MS`
 - `AI_PROD_CPP_RUNTIME_SNAPSHOT_PATH`
 - `AI_PROD_CPP_RUNTIME_LOG_PATH`
 - `AI_PROD_CPP_AUDIT_LOG_PATH`
+- `AI_PROD_CPP_IMAGE_RESOURCE_ROOT`
 - `AI_PROD_CPP_POOL_SIZE`
 - `AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS`
 - `AI_PROD_CPP_LICENSE_ROOT`

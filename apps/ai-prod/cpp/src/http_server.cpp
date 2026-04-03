@@ -25,6 +25,11 @@ constexpr auto kRefreshRetryInterval = std::chrono::milliseconds(100);
 constexpr int kRefreshRetryAttempts = 10;
 constexpr int kMaxSimulateDelayMs = 2000;
 
+struct AdminTransitionRequestPayload {
+    std::string action = "reload";
+    std::optional<int> target_revision_id;
+};
+
 struct InferRequestPayload {
     std::string input_type = "json";
     std::string payload;
@@ -222,6 +227,60 @@ std::string ResolveDevice(const InferRequestPayload& request, const CapabilityCa
         return "cpu";
     }
     return gpu_available ? "gpu" : "cpu";
+}
+
+nlohmann::json SerializeRevisionRecord(const RuntimeRevisionRecord& record) {
+    nlohmann::json payload = {
+        {"revision_id", record.id},
+        {"revision_token", record.revision_token},
+        {"action", record.action},
+        {"status", record.status},
+        {"license_valid", record.license_valid},
+        {"capability_names", record.capability_names},
+        {"source_summary", record.source_summary},
+        {"detail", record.detail},
+        {"created_at", record.created_at.empty() ? nullptr : nlohmann::json(record.created_at)},
+    };
+    if (record.rollback_of_revision_id.has_value()) {
+        payload["rollback_of_revision_id"] = *record.rollback_of_revision_id;
+    } else {
+        payload["rollback_of_revision_id"] = nullptr;
+    }
+    return payload;
+}
+
+bool ParseAdminTransitionRequest(
+    const std::string& body,
+    bool rollback_route,
+    AdminTransitionRequestPayload* payload,
+    std::string* error_message) {
+    try {
+        const auto parsed = nlohmann::json::parse(body.empty() ? "{}" : body);
+        if (!parsed.is_object()) {
+            *error_message = "请求体必须是 JSON 对象。";
+            return false;
+        }
+        payload->action = rollback_route ? "rollback" : parsed.value("action", "reload");
+        if (payload->action != "reload" && payload->action != "rollback") {
+            *error_message = "仅支持 reload/rollback。";
+            return false;
+        }
+        if (parsed.contains("target_revision_id") && !parsed["target_revision_id"].is_null()) {
+            if (!parsed["target_revision_id"].is_number_integer() || parsed["target_revision_id"].get<int>() < 1) {
+                *error_message = "target_revision_id 必须是正整数。";
+                return false;
+            }
+            payload->target_revision_id = parsed["target_revision_id"].get<int>();
+        }
+        if (payload->action == "rollback" && !payload->target_revision_id.has_value()) {
+            *error_message = "rollback 需要 target_revision_id。";
+            return false;
+        }
+        return true;
+    } catch (const std::exception&) {
+        *error_message = "请求体不是合法 JSON。";
+        return false;
+    }
 }
 
 }
@@ -539,23 +598,191 @@ void AiProdHttpServer::HandleInferRequest(
     response.set_content(payload.dump(), kDefaultJsonContentType);
 }
 
+std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
+    const std::string& action,
+    std::optional<int> target_revision_id,
+    std::string* error_message) {
+    const auto scan_result = RuntimeResourceScanner::ResolveSources(
+        config.host_root,
+        config.image_resource_root,
+        RuntimeResourceScanner::DetectPlatformTarget());
+    std::map<std::string, RuntimeCapabilityRecord> selected_capabilities = scan_result.capabilities;
+
+    RevisionStore revision_store(config.database_path);
+    if (!revision_store.EnsureSchema(error_message)) {
+        return std::nullopt;
+    }
+
+    std::optional<int> rollback_of_revision_id;
+    if (action == "rollback") {
+        const auto source_revision = revision_store.GetRevision(*target_revision_id, error_message);
+        if (!source_revision.has_value()) {
+            *error_message = "目标 revision 不存在。";
+            return std::nullopt;
+        }
+        rollback_of_revision_id = source_revision->id;
+        std::map<std::string, RuntimeCapabilityRecord> filtered_capabilities;
+        for (const auto& capability_item : source_revision->capability_names) {
+            if (!capability_item.is_string()) {
+                continue;
+            }
+            const auto capability_it = scan_result.capabilities.find(capability_item.get<std::string>());
+            if (capability_it != scan_result.capabilities.end()) {
+                filtered_capabilities.emplace(capability_it->first, capability_it->second);
+            }
+        }
+        selected_capabilities = std::move(filtered_capabilities);
+    }
+
+    const auto current_license_status = licenseManager.GetStatus();
+    if (!current_license_status.valid) {
+        *error_message = "license 未授权或已失效，无法执行运行时切换。";
+        return std::nullopt;
+    }
+
+    for (const auto& capability_entry : selected_capabilities) {
+        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
+            AppendAuditLog(
+                config,
+                action + "_license_rejected",
+                "capability",
+                capability_entry.first,
+                {
+                    {"reason", "当前 license 未授权该能力或版本。"},
+                    {"model_version", capability_entry.second.model_version},
+                });
+            *error_message = "当前 license 未覆盖目标能力或版本。";
+            return std::nullopt;
+        }
+    }
+
+    nlohmann::json capability_names = nlohmann::json::array();
+    nlohmann::json snapshot_capabilities = nlohmann::json::array();
+    for (const auto& capability_entry : selected_capabilities) {
+        capability_names.push_back(capability_entry.first);
+    }
+
+    const nlohmann::json license_status = {
+        {"valid", current_license_status.valid},
+        {"reason", current_license_status.reason},
+        {"checked_at_cst", current_license_status.checked_at_cst},
+        {"customer_code", current_license_status.customer_code},
+        {"capability_scope", current_license_status.capability_scope},
+        {"version_constraints", current_license_status.version_constraints},
+        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
+    };
+
+    nlohmann::json detail = {
+        {"license_status", license_status},
+    };
+    if (rollback_of_revision_id.has_value()) {
+        detail["rollback_to"] = *rollback_of_revision_id;
+    }
+
+    const auto revision = revision_store.CreateRevision(
+        GenerateRequestId(),
+        action,
+        "active",
+        scan_result.source_summary,
+        capability_names,
+        true,
+        detail,
+        rollback_of_revision_id,
+        error_message);
+    if (!revision.has_value()) {
+        return std::nullopt;
+    }
+
+    for (const auto& capability_entry : selected_capabilities) {
+        snapshot_capabilities.push_back(
+            {
+                {"capability_name", capability_entry.first},
+                {"plugin_target", capability_entry.second.plugin_target},
+                {"model_version", capability_entry.second.model_version},
+                {"backend_type", capability_entry.second.backend_type},
+                {"active_source", capability_entry.second.active_source},
+                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
+                {"pool_size", config.pool_size},
+                {"revision_id", revision->id},
+            });
+    }
+
+    nlohmann::json snapshot_payload = {
+        {"snapshot_version", 1},
+        {"updated_at_utc", CurrentCstIsoString()},
+        {"revision_id", revision->id},
+        {"revision_token", revision->revision_token},
+        {"capability_names", capability_names},
+        {"capability_count", static_cast<int>(selected_capabilities.size())},
+        {"capabilities", snapshot_capabilities},
+        {"source_summary", scan_result.source_summary},
+        {"license_status", {
+            {"valid", current_license_status.valid},
+            {"reason", current_license_status.reason},
+            {"checked_at_cst", current_license_status.checked_at_cst},
+            {"customer_code", current_license_status.customer_code},
+            {"capability_scope", current_license_status.capability_scope},
+            {"version_constraints", current_license_status.version_constraints},
+            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
+            {"runtime_revision_id", revision->id},
+        }},
+        {"service_name", "ai-prod"},
+        {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
+        {"company_domain", "agilestar.cn"},
+    };
+    if (!snapshotManager.WriteSnapshot(snapshot_payload)) {
+        *error_message = "runtime snapshot 写入失败。";
+        return std::nullopt;
+    }
+
+    AppendJsonLine(
+        config.runtime_log_path,
+        {
+            {"event", action},
+            {"revision_id", revision->id},
+            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+        });
+    AppendAuditLog(
+        config,
+        action,
+        "runtime_revision",
+        std::to_string(revision->id),
+        {
+            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+        });
+
+    const auto operation = revision_store.CreateOperation(
+        action,
+        "completed",
+        {
+            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+        },
+        revision->id,
+        error_message);
+    if (!operation.has_value()) {
+        return std::nullopt;
+    }
+
+    return nlohmann::json{
+        {"operation_id", operation->id},
+        {"revision", SerializeRevisionRecord(*revision)},
+        {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+    };
+}
+
 void AiProdHttpServer::HandleAdminTransitionRequest(
     const httplib::Request& request,
     httplib::Response& response,
     bool rollback) {
-    const auto content_type = request.get_header_value("Content-Type");
-    auto headers = BuildForwardHeaders(request);
-
-    if (!licenseManager.GetStatus().valid) {
-        ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
+    AdminTransitionRequestPayload transition_request;
+    std::string parse_error;
+    if (!ParseAdminTransitionRequest(request.body, rollback, &transition_request, &parse_error)) {
+        ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
 
-    if (!RefreshCatalogAndPools()) {
-        const auto backend_response = rollback
-            ? backendClient.ForwardRollback(request.body, content_type, headers)
-            : backendClient.ForwardPost(request.path, request.body, content_type, headers);
-        ApplyBackendResponse(backend_response, response);
+    if (!licenseManager.GetStatus().valid) {
+        ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
         return;
     }
 
@@ -574,21 +801,28 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
         return;
     }
 
-    const auto backend_response = rollback
-        ? backendClient.ForwardRollback(request.body, content_type, headers)
-        : backendClient.ForwardPost(request.path, request.body, content_type, headers);
-    if (backend_response.status >= 200 && backend_response.status < 300) {
-        if (!RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true)) {
-            EndDrainOnPools(pools);
-            ApplyJsonErrorResponse(502, "运行时切换已提交，但 C++ 侧目录刷新失败。", response);
-            return;
-        }
-        ApplyBackendResponse(backend_response, response);
+    std::string transition_error;
+    const auto transition_result = ExecuteRuntimeTransition(
+        transition_request.action,
+        transition_request.target_revision_id,
+        &transition_error);
+    if (!transition_result.has_value()) {
+        EndDrainOnPools(pools);
+        const int status_code =
+            transition_error.find("license") != std::string::npos || transition_error.find("未覆盖") != std::string::npos
+                ? 403
+                : 400;
+        ApplyJsonErrorResponse(status_code, transition_error.empty() ? "运行时切换失败。" : transition_error, response);
         return;
     }
 
-    EndDrainOnPools(pools);
-    ApplyBackendResponse(backend_response, response);
+    if (!RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true)) {
+        EndDrainOnPools(pools);
+        ApplyJsonErrorResponse(502, "运行时切换已完成，但 C++ 侧目录刷新失败。", response);
+        return;
+    }
+    response.status = 200;
+    response.set_content(transition_result->dump(), kDefaultJsonContentType);
 }
 
 void AiProdHttpServer::HandleLicenseStatusRequest(

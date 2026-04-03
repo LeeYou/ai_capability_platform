@@ -21,6 +21,7 @@ public:
     SnapshotResponse BuildHealthResponse();
     SnapshotResponse BuildCapabilitiesResponse();
     SnapshotResponse BuildLicenseStatusResponse();
+    bool WriteSnapshot(const nlohmann::json& payload);
 
 private:
     bool EnsureSnapshotLoaded();

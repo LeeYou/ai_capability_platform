@@ -6,6 +6,8 @@
 #include "instance_pool.h"
 #include "license_manager.h"
 #include "proxy_config.h"
+#include "revision_store.h"
+#include "runtime_resource_scanner.h"
 #include "runtime_snapshot_manager.h"
 
 #include <cpp-httplib/httplib.h>
@@ -41,6 +43,7 @@ private:
         bool rollback);
     void HandleLicenseStatusRequest(const httplib::Request& request, httplib::Response& response) const;
     void HandleLicenseReloadRequest(const httplib::Request& request, httplib::Response& response);
+    std::optional<nlohmann::json> ExecuteRuntimeTransition(const std::string& action, std::optional<int> target_revision_id, std::string* error_message);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;
     static void BeginDrainOnPools(const std::vector<std::shared_ptr<InstancePool>>& pools);
