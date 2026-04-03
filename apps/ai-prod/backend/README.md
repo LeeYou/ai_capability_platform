@@ -44,7 +44,7 @@ ctest --test-dir build --output-on-failure
 默认行为：
 
 1. C++ 服务在独立运行时默认监听 `0.0.0.0:26005`；生产镜像/compose 默认改为对外 `26004`
-2. `/api/v1/health`、`/api/v1/capabilities` 优先读取 runtime snapshot 直接响应
+2. `/api/v1/health`、`/api/v1/capabilities` 优先读取 runtime snapshot 直接响应；当 snapshot 缺失或不可用时，C++ 启动阶段会先尝试完成自举装载
 3. `/api/v1/license/status` 由 C++ 直接读取标准 license 文件返回当前状态
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
@@ -55,8 +55,9 @@ ctest --test-dir build --output-on-failure
 10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
 11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
 12. runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，供 C++ infer 侧直接装载并调用插件
-13. 作为后续继续替换 bootstrap 与完整运行时生命周期的过渡实现
-14. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
+13. 启动阶段已支持在 runtime snapshot 缺失时由 C++ 直接完成资源扫描、license 校验、bootstrap revision 持久化与 snapshot 初始写入
+14. 作为后续继续替换完整插件生命周期与运行时状态机的过渡实现
+15. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

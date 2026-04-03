@@ -74,6 +74,32 @@ if(AI_PROD_CPP_BUILD_TESTS)
 
     add_test(NAME ai_prod_cpp_test_http_server COMMAND test_http_server)
 
+    add_executable(test_bootstrap_startup
+        src/capability_catalog.cpp
+        tests/test_bootstrap_startup.cpp
+        src/backend_client.cpp
+        src/http_server.cpp
+        src/instance_pool.cpp
+        src/license_manager.cpp
+        src/plugin_executor.cpp
+        src/proxy_config.cpp
+        src/revision_store.cpp
+        src/runtime_resource_scanner.cpp
+        src/runtime_snapshot_manager.cpp
+    )
+
+    target_include_directories(test_bootstrap_startup PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_INCLUDE_DIR}
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    target_link_libraries(test_bootstrap_startup PRIVATE OpenSSL::Crypto SQLite::SQLite3 ${CMAKE_DL_LIBS})
+
+    add_dependencies(test_bootstrap_startup test_mock_ai_plugin)
+
+    add_test(NAME ai_prod_cpp_test_bootstrap_startup COMMAND test_bootstrap_startup)
+
     add_executable(test_runtime_components
         tests/test_runtime_components.cpp
         src/capability_catalog.cpp

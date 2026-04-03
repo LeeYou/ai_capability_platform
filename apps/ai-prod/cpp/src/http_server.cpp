@@ -119,6 +119,19 @@ std::string CurrentCstIsoString() {
     return output.str();
 }
 
+std::string CurrentUtcIsoString() {
+    const auto now = std::time(nullptr);
+    std::tm utc_time{};
+#ifdef _WIN32
+    gmtime_s(&utc_time, &now);
+#else
+    gmtime_r(&now, &utc_time);
+#endif
+    std::ostringstream output;
+    output << std::put_time(&utc_time, "%Y-%m-%dT%H:%M:%S") << "Z";
+    return output.str();
+}
+
 void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
     const std::filesystem::path log_path(path);
     if (!log_path.parent_path().empty()) {
@@ -297,7 +310,7 @@ AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
       server(std::make_unique<httplib::Server>()) {
     licenseManager.Initialize();
     licenseManager.StartAutoReloadMonitor();
-    RefreshCatalogAndPools();
+    EnsureRuntimeReady();
     RegisterRoutes();
 }
 
@@ -307,6 +320,33 @@ bool AiProdHttpServer::Start() {
 
 void AiProdHttpServer::Stop() {
     server->stop();
+}
+
+bool AiProdHttpServer::EnsureRuntimeReady() {
+    if (RefreshCatalogAndPools()) {
+        return true;
+    }
+
+    std::string bootstrap_error;
+    if (!BootstrapRuntime(&bootstrap_error)) {
+        AppendJsonLine(
+            config.runtime_log_path,
+            {
+                {"event", "bootstrap_failed"},
+                {"message", bootstrap_error},
+            });
+        AppendAuditLog(
+            config,
+            "bootstrap_failed",
+            "runtime_revision",
+            "bootstrap",
+            {
+                {"reason", bootstrap_error},
+            });
+        return false;
+    }
+
+    return RefreshCatalogAndPoolsWithRetry(kRefreshRetryAttempts, kRefreshRetryInterval, true);
 }
 
 httplib::Headers AiProdHttpServer::BuildForwardHeaders(const httplib::Request& request) {
@@ -731,7 +771,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
 
     nlohmann::json snapshot_payload = {
         {"snapshot_version", 1},
-        {"updated_at_utc", CurrentCstIsoString()},
+        {"updated_at_utc", CurrentUtcIsoString()},
         {"revision_id", revision->id},
         {"revision_token", revision->revision_token},
         {"capability_names", capability_names},
@@ -879,6 +919,160 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
             {"license_status", BuildLicenseStatusPayload(failure_status)},
         }.dump(),
         kDefaultJsonContentType);
+}
+
+bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
+    auto set_error = [&](const std::string& message) {
+        if (error_message != nullptr) {
+            *error_message = message;
+        }
+    };
+    const auto scan_result = RuntimeResourceScanner::ResolveSources(
+        config.host_root,
+        config.image_resource_root,
+        RuntimeResourceScanner::DetectPlatformTarget());
+    const auto& selected_capabilities = scan_result.capabilities;
+    if (selected_capabilities.empty()) {
+        set_error("未发现可用能力资源，无法完成启动自举。");
+        return false;
+    }
+
+    const auto current_license_status = licenseManager.GetStatus();
+    if (!current_license_status.valid) {
+        set_error("license 未授权或已失效，无法完成启动自举。");
+        return false;
+    }
+
+    for (const auto& capability_entry : selected_capabilities) {
+        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
+            AppendAuditLog(
+                config,
+                "bootstrap_license_rejected",
+                "capability",
+                capability_entry.first,
+                {
+                    {"reason", "当前 license 未授权该能力或版本。"},
+                    {"model_version", capability_entry.second.model_version},
+                });
+            set_error("当前 license 未覆盖启动阶段目标能力或版本。");
+            return false;
+        }
+    }
+
+    RevisionStore revision_store(config.database_path);
+    if (!revision_store.EnsureSchema(error_message)) {
+        return false;
+    }
+
+    nlohmann::json capability_names = nlohmann::json::array();
+    nlohmann::json snapshot_capabilities = nlohmann::json::array();
+    for (const auto& capability_entry : selected_capabilities) {
+        capability_names.push_back(capability_entry.first);
+    }
+
+    const nlohmann::json license_status = {
+        {"valid", current_license_status.valid},
+        {"reason", current_license_status.reason},
+        {"checked_at_cst", current_license_status.checked_at_cst},
+        {"customer_code", current_license_status.customer_code},
+        {"capability_scope", current_license_status.capability_scope},
+        {"version_constraints", current_license_status.version_constraints},
+        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
+        {"validated_capability_names", capability_names},
+        {"validation_action", "bootstrap"},
+        {"validation_entity_id", "bootstrap"},
+    };
+
+    const auto revision = revision_store.CreateRevision(
+        GenerateRequestId(),
+        "bootstrap",
+        "active",
+        scan_result.source_summary,
+        capability_names,
+        true,
+        {
+            {"license_status", license_status},
+        },
+        std::nullopt,
+        error_message);
+    if (!revision.has_value()) {
+        return false;
+    }
+
+    for (const auto& capability_entry : selected_capabilities) {
+        snapshot_capabilities.push_back(
+            {
+                {"capability_name", capability_entry.first},
+                {"plugin_target", capability_entry.second.plugin_target},
+                {"model_version", capability_entry.second.model_version},
+                {"backend_type", capability_entry.second.backend_type},
+                {"active_source", capability_entry.second.active_source},
+                {"model_root", capability_entry.second.model_root},
+                {"binary_path", capability_entry.second.binary_path},
+                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
+                {"pool_size", config.pool_size},
+                {"revision_id", revision->id},
+            });
+    }
+
+    nlohmann::json snapshot_payload = {
+        {"snapshot_version", 1},
+        {"updated_at_utc", CurrentUtcIsoString()},
+        {"revision_id", revision->id},
+        {"revision_token", revision->revision_token},
+        {"capability_names", capability_names},
+        {"capability_count", static_cast<int>(selected_capabilities.size())},
+        {"capabilities", snapshot_capabilities},
+        {"source_summary", scan_result.source_summary},
+        {"license_status", {
+            {"valid", current_license_status.valid},
+            {"reason", current_license_status.reason},
+            {"checked_at_cst", current_license_status.checked_at_cst},
+            {"customer_code", current_license_status.customer_code},
+            {"capability_scope", current_license_status.capability_scope},
+            {"version_constraints", current_license_status.version_constraints},
+            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
+            {"validated_capability_names", capability_names},
+            {"validation_action", "bootstrap"},
+            {"validation_entity_id", "bootstrap"},
+            {"runtime_revision_id", revision->id},
+        }},
+        {"service_name", "ai-prod"},
+        {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
+        {"company_domain", "agilestar.cn"},
+    };
+    if (!snapshotManager.WriteSnapshot(snapshot_payload)) {
+        set_error("runtime snapshot 启动写入失败。");
+        return false;
+    }
+
+    AppendJsonLine(
+        config.runtime_log_path,
+        {
+            {"event", "bootstrap"},
+            {"revision_id", revision->id},
+            {"capability_count", static_cast<int>(selected_capabilities.size())},
+            {"license_valid", current_license_status.valid},
+        });
+    AppendAuditLog(
+        config,
+        "bootstrap",
+        "runtime_revision",
+        std::to_string(revision->id),
+        {
+            {"capability_count", static_cast<int>(selected_capabilities.size())},
+            {"license_valid", current_license_status.valid},
+        });
+
+    const auto operation = revision_store.CreateOperation(
+        "bootstrap",
+        "completed",
+        {
+            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+        },
+        revision->id,
+        error_message);
+    return operation.has_value();
 }
 
 void AiProdHttpServer::RegisterRoutes() {

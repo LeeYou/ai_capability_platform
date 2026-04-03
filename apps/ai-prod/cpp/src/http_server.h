@@ -44,6 +44,8 @@ private:
         bool rollback);
     void HandleLicenseStatusRequest(const httplib::Request& request, httplib::Response& response) const;
     void HandleLicenseReloadRequest(const httplib::Request& request, httplib::Response& response);
+    bool EnsureRuntimeReady();
+    bool BootstrapRuntime(std::string* error_message);
     std::optional<nlohmann::json> ExecuteRuntimeTransition(const std::string& action, std::optional<int> target_revision_id, std::string* error_message);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;

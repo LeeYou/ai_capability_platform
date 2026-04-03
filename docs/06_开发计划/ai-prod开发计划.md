@@ -24,6 +24,7 @@
 | P14 | 首轮将 infer 主链路收敛为 C++ 直接执行闭环 | 已完成 |
 | P15 | 将 reload/rollback、revision/operation 持久化收敛为 C++ 直接执行闭环 | 已完成 |
 | P16 | 将真实插件动态加载与执行收敛为 C++ infer 主链路 | 已完成 |
+| P17 | 将启动阶段 bootstrap 首次装载收敛为 C++ 直接执行闭环 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -56,11 +57,12 @@
 13. 当前已完成 P14：在 runtime snapshot 可用时，`/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、结果生成与基础日志审计，仅在 snapshot 不可用时回退到 Python backend。
 14. 当前已完成 P15：`/api/v1/admin/reload` 与 `/api/v1/admin/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写与 catalog/pool 刷新，仅保留 Python 作为内部测试验收外壳与兼容壳层。
 15. 当前已完成 P16：C++ infer 主链路已接入真实插件动态加载、按实例槽位初始化与执行，runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，默认由 C++ 直接调用插件返回结果，仅在 snapshot 不可用时回退 Python backend。
+16. 当前已完成 P17：当 runtime snapshot 缺失或不可用时，C++ 服务在启动阶段已可直接完成资源扫描、license quick check、bootstrap revision/operation SQLite 持久化与 runtime snapshot 初始写入，并在首启后立即刷新 catalog/pool 进入可服务状态。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、插件动态执行与 reload/rollback 管理闭环，但 bootstrap 首次装载、插件生命周期管理深化、以及更完整的运行时版本切换仍未完全替换 Python runtime，真实 C++ Runtime 的最终收口仍未完成。
+1. C++ 已完成 infer、启动 bootstrap 与 reload/rollback 管理闭环，但插件生命周期管理深化、以及更完整的运行时版本切换仍未完全替换 Python runtime，真实 C++ Runtime 的最终收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P16：在已完成 P12/P13/P14/P15 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且 infer 热路径已进一步收敛为“C++ 直接完成请求解析、license quick check、设备选择、实例池借还、真实插件动态加载与执行、结果生成与基础日志审计”，reload/rollback 也已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写与 catalog/pool 刷新。当前后续重点继续转向 bootstrap 首次装载、插件生命周期深化与最终 C++ Runtime 替换。
+ai-prod 当前已完成 P9-P17：在已完成 P12/P13/P14/P15/P16 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径已收敛为 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、真实插件动态加载与执行、结果生成与基础日志审计，启动阶段的 bootstrap 首次装载也已由 C++ 直接完成资源扫描、license 校验、bootstrap revision/operation SQLite 持久化、runtime snapshot 初始写入与 catalog/pool 刷新。当前后续重点继续转向插件生命周期深化与最终 C++ Runtime 替换。
