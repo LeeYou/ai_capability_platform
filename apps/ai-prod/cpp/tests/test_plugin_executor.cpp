@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
                 "{\"image\":\"demo\"}",
                 nlohmann::json::object(),
                 "cpu",
+                "req-cpu-1",
                 &result,
                 &error_message),
             error_message.c_str())) {
@@ -87,6 +88,7 @@ int main(int argc, char** argv) {
                 "binary",
                 nlohmann::json::object(),
                 "gpu",
+                "req-gpu-1",
                 &result,
                 &error_message),
             error_message.c_str())) {

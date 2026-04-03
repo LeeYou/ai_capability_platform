@@ -98,6 +98,7 @@ bool PluginExecutor::Execute(
     const std::string& payload,
     const nlohmann::json& options,
     const std::string& device,
+    const std::string& request_id,
     PluginExecutionResult* result,
     std::string* error_message) {
     std::lock_guard<std::mutex> guard(mutex);
@@ -124,12 +125,18 @@ bool PluginExecutor::Execute(
     input.params_json = params_json.c_str();
 
     AiPluginOutput output{};
+    binding->total_execute_count += 1;
+    binding->last_request_id = request_id;
+    binding->last_error_message.clear();
     const int rc = binding->infer(binding->plugin_handles[slot_index], &input, &output);
     if (rc != 0) {
-        if (error_message != nullptr) {
-            *error_message = output.error_message != nullptr && *output.error_message != '\0'
+        binding->failed_execute_count += 1;
+        binding->last_error_message =
+            output.error_message != nullptr && *output.error_message != '\0'
                 ? output.error_message
                 : "插件推理执行失败。";
+        if (error_message != nullptr) {
+            *error_message = binding->last_error_message;
         }
         if (binding->free_result != nullptr) {
             binding->free_result(&output);

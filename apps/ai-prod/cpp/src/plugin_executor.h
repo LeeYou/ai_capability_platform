@@ -30,6 +30,7 @@ public:
         const std::string& payload,
         const nlohmann::json& options,
         const std::string& device,
+        const std::string& request_id,
         PluginExecutionResult* result,
         std::string* error_message);
 
@@ -47,6 +48,10 @@ private:
         fn_ai_plugin_free_result free_result = nullptr;
         fn_ai_plugin_get_info get_info = nullptr;
         std::vector<AiPluginHandle> plugin_handles;
+        int total_execute_count = 0;
+        int failed_execute_count = 0;
+        std::string last_request_id;
+        std::string last_error_message;
     };
 
     bool EnsureBindingLoaded(

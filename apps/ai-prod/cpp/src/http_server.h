@@ -7,6 +7,7 @@
 #include "license_manager.h"
 #include "plugin_executor.h"
 #include "proxy_config.h"
+#include "request_tracker.h"
 #include "revision_store.h"
 #include "runtime_resource_scanner.h"
 #include "runtime_state_machine.h"
@@ -64,6 +65,7 @@ private:
     std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
     LicenseManager licenseManager;
     PluginExecutor pluginExecutor;
+    std::shared_ptr<InFlightRequestTracker> requestTracker;
     RuntimeSnapshotManager snapshotManager;
     mutable std::mutex runtimeStateMutex;
     std::mutex runtimeTransitionMutex;

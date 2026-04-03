@@ -1,4 +1,5 @@
 #include "http_server.h"
+#include "request_lease.h"
 
 #include <algorithm>
 #include <cctype>
@@ -306,6 +307,7 @@ AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
           config_value.license_root,
           config_value.hardware_features,
           config_value.license_auto_reload_interval_seconds),
+      requestTracker(std::make_shared<InFlightRequestTracker>()),
       snapshotManager(config_value),
       server(std::make_unique<httplib::Server>()) {
     licenseManager.Initialize();
@@ -470,6 +472,22 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         }
     }
 
+    nlohmann::json active_requests = nlohmann::json::array();
+    for (const auto& active_request : requestTracker->Snapshot()) {
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - active_request.started_at);
+        active_requests.push_back(
+            {
+                {"request_id", active_request.request_id},
+                {"capability_name", active_request.capability_name},
+                {"instance_id", active_request.instance_id},
+                {"slot_index", active_request.slot_index},
+                {"device", active_request.device},
+                {"status", active_request.status},
+                {"elapsed_ms", elapsed_ms.count()},
+            });
+    }
+
     return {
         {"service", "ai-prod-cpp-http"},
         {"snapshot_ready", snapshot_ready},
@@ -478,6 +496,8 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                                     ? nlohmann::json(nullptr)
                                     : nlohmann::json(runtimeStateMachine.GetLastError())},
         {"draining", draining},
+        {"active_request_count", requestTracker->GetActiveCount()},
+        {"active_requests", active_requests},
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
         {"items", items},
     };
@@ -594,16 +614,19 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
+    const std::string request_id = GenerateRequestId();
+    RequestLease request_lease(pool, *lease, requestTracker, capability_name, request_id);
+
     InferRequestPayload infer_request;
     std::string parse_error;
     if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
-        pool->Release(lease->slot_index);
+        request_lease.MarkFailed(parse_error);
         ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
 
     const std::string device = ResolveDevice(infer_request, *catalog_entry);
-    const std::string request_id = GenerateRequestId();
+    request_lease.MarkExecuting(device);
     if (infer_request.simulate_delay_ms > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
     }
@@ -617,14 +640,15 @@ void AiProdHttpServer::HandleInferRequest(
         infer_request.payload,
         infer_request.options,
         device,
+        request_id,
         &plugin_result,
         &plugin_error);
-    const bool released = pool->Release(lease->slot_index);
-    (void)released;
     if (!plugin_ok) {
+        request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
         ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
         return;
     }
+    request_lease.MarkCompleted();
 
     const std::string digest = Sha256Hex(
         capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
@@ -645,7 +669,7 @@ void AiProdHttpServer::HandleInferRequest(
             {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
             {"input_type", infer_request.input_type},
             {"payload_size", infer_request.payload.size()},
-            {"instance_id", lease->instance_id},
+            {"instance_id", request_lease.Item().instance_id},
             {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
             {"infer_time_ms", plugin_result.infer_time_ms},
             {"plugin_result", plugin_result.plugin_result},
@@ -667,10 +691,10 @@ void AiProdHttpServer::HandleInferRequest(
         "capability",
         capability_name,
         {
-            {"request_id", request_id},
-            {"device", device},
-            {"instance_id", lease->instance_id},
-        });
+                {"request_id", request_id},
+                {"device", device},
+                {"instance_id", request_lease.Item().instance_id},
+            });
 
     response.status = 200;
     response.set_content(payload.dump(), kDefaultJsonContentType);
@@ -889,6 +913,12 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     }
     const auto pools = ListInstancePools();
     BeginDrainOnPools(pools);
+    if (!requestTracker->WaitForEmpty(std::chrono::duration_cast<std::chrono::milliseconds>(kDrainTimeout))) {
+        EndDrainOnPools(pools);
+        runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
+        ApplyJsonErrorResponse(503, "当前仍有推理请求执行中，暂时无法切换运行时。", response);
+        return;
+    }
     if (!WaitForPoolsIdle(pools, std::chrono::duration_cast<std::chrono::milliseconds>(kDrainTimeout))) {
         EndDrainOnPools(pools);
         runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);

@@ -267,6 +267,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"].size() == 1, "catalog route should expose one capability")) {
         return 1;
     }
+    if (!Expect(catalog_payload["active_request_count"] == 0, "catalog should start with zero active requests")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
         return 1;
     }
@@ -335,6 +338,22 @@ int main(int argc, char** argv) {
         infer_thread.join();
         return 1;
     }
+    if (!Expect(busy_catalog_payload["active_request_count"] == 1, "catalog should expose one active request during infer")) {
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(busy_catalog_payload["active_requests"].size() == 1, "catalog should list active request during infer")) {
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(busy_catalog_payload["active_requests"][0]["capability_name"] == "face_detect", "active request should expose capability name")) {
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(busy_catalog_payload["active_requests"][0]["status"] == "executing", "active request should expose executing status")) {
+        infer_thread.join();
+        return 1;
+    }
 
     std::optional<int> reload_status;
     std::string reload_body;
@@ -390,6 +409,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(draining_catalog_payload["runtime_state"] == "draining", "catalog route should expose draining runtime state")) {
+        reload_thread.join();
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(draining_catalog_payload["active_request_count"] == 1, "catalog should keep active request count during drain")) {
         reload_thread.join();
         infer_thread.join();
         return 1;
@@ -467,6 +491,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["runtime_state"] == "ready", "catalog should return to ready runtime state after reload")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["active_request_count"] == 0, "catalog should clear active requests after reload")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["pool_size"] == 2, "reload should rebuild pool size from new snapshot")) {

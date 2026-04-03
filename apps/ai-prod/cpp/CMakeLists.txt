@@ -22,6 +22,8 @@ add_executable(ai_prod_cpp_proxy
     src/main.cpp
     src/plugin_executor.cpp
     src/proxy_config.cpp
+    src/request_lease.cpp
+    src/request_tracker.cpp
     src/revision_store.cpp
     src/runtime_resource_scanner.cpp
     src/runtime_state_machine.cpp
@@ -60,6 +62,8 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/license_manager.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
+        src/request_lease.cpp
+        src/request_tracker.cpp
         src/revision_store.cpp
         src/runtime_resource_scanner.cpp
         src/runtime_state_machine.cpp
@@ -85,6 +89,8 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/license_manager.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
+        src/request_lease.cpp
+        src/request_tracker.cpp
         src/revision_store.cpp
         src/runtime_resource_scanner.cpp
         src/runtime_state_machine.cpp
@@ -160,6 +166,19 @@ if(AI_PROD_CPP_BUILD_TESTS)
     add_dependencies(test_plugin_executor test_mock_ai_plugin)
 
     add_test(NAME ai_prod_cpp_test_plugin_executor COMMAND test_plugin_executor)
+
+    add_executable(test_request_tracker
+        tests/test_request_tracker.cpp
+        src/request_tracker.cpp
+    )
+
+    target_include_directories(test_request_tracker PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_INCLUDE_DIR}
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    add_test(NAME ai_prod_cpp_test_request_tracker COMMAND test_request_tracker)
 
     add_executable(test_license_manager
         tests/test_license_manager.cpp

@@ -26,6 +26,7 @@
 | P16 | 将真实插件动态加载与执行收敛为 C++ infer 主链路 | 已完成 |
 | P17 | 将启动阶段 bootstrap 首次装载收敛为 C++ 直接执行闭环 | 已完成 |
 | P18 | 引入 C++ runtime 显式状态机与切换互斥保护 | 已完成 |
+| P19 | 补齐请求级跟踪、RAII 租约与 drain 等待收口 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -60,11 +61,12 @@
 15. 当前已完成 P16：C++ infer 主链路已接入真实插件动态加载、按实例槽位初始化与执行，runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，默认由 C++ 直接调用插件返回结果，仅在 snapshot 不可用时回退 Python backend。
 16. 当前已完成 P17：当 runtime snapshot 缺失或不可用时，C++ 服务在启动阶段已可直接完成资源扫描、license quick check、bootstrap revision/operation SQLite 持久化与 runtime snapshot 初始写入，并在首启后立即刷新 catalog/pool 进入可服务状态。
 17. 当前已完成 P18：C++ 侧已新增 runtime 显式状态机，覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并为 reload/rollback 增加切换互斥保护；`/api/v1/admin/catalog` 现可输出运行时状态与错误信息，避免并发管理操作造成状态竞争。
+18. 当前已完成 P19：C++ infer 主链路已新增请求级 in-flight 跟踪与 RAII 请求租约，`/api/v1/admin/catalog` 可输出 active request 详情，reload/rollback drain 阶段会等待活动请求清空后再切换，进一步收口请求生命周期与切换安全。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机与 reload/rollback 管理闭环，但插件生命周期管理深化、以及更完整的运行时版本切换仍未完全替换 Python runtime，真实 C++ Runtime 的最终收口仍未完成。
+1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪与 reload/rollback 管理闭环，但插件生命周期管理深化、以及更完整的运行时版本切换仍未完全替换 Python runtime，真实 C++ Runtime 的最终收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P18：在已完成 P12/P13/P14/P15/P16/P17 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态与错误信息。当前后续重点继续转向插件生命周期深化与最终 C++ Runtime 替换。
+ai-prod 当前已完成 P9-P19：在已完成 P12/P13/P14/P15/P16/P17/P18 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态、错误信息与 active request 详情。当前后续重点继续转向插件生命周期深化与最终 C++ Runtime 替换。
