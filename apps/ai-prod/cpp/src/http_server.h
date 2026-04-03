@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,7 @@ private:
         double max_latency_ms = 0.0;
         std::string last_error_at_utc;
         std::deque<int> recent_latency_ms;
+        std::multiset<int> recent_latency_sorted;
         std::map<int, int> status_code_counts;
     };
 

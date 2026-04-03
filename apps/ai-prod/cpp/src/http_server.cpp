@@ -145,18 +145,18 @@ std::string CurrentUtcIsoString() {
     return output.str();
 }
 
-double PercentileFromSamples(const std::deque<int>& samples, double ratio) {
+double PercentileFromSamples(const std::multiset<int>& samples, double ratio) {
     if (samples.empty()) {
         return 0.0;
     }
-    std::vector<int> sorted(samples.begin(), samples.end());
-    std::sort(sorted.begin(), sorted.end());
     const auto index = static_cast<std::size_t>(
         std::clamp(
-            static_cast<int>(std::ceil(static_cast<double>(sorted.size()) * ratio)) - 1,
+            static_cast<int>(std::ceil(static_cast<double>(samples.size()) * ratio)) - 1,
             0,
-            static_cast<int>(sorted.size()) - 1));
-    return static_cast<double>(sorted[index]);
+            static_cast<int>(samples.size()) - 1));
+    auto it = samples.begin();
+    std::advance(it, static_cast<long>(index));
+    return static_cast<double>(*it);
 }
 
 void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
@@ -454,8 +454,14 @@ void AiProdHttpServer::RecordEndpointMetric(
     }
     metrics.status_code_counts[status_code] += 1;
     metrics.recent_latency_ms.push_back(latency_ms);
+    metrics.recent_latency_sorted.insert(latency_ms);
     while (metrics.recent_latency_ms.size() > kRecentLatencySampleLimit) {
+        const int evicted_latency = metrics.recent_latency_ms.front();
         metrics.recent_latency_ms.pop_front();
+        const auto sorted_it = metrics.recent_latency_sorted.find(evicted_latency);
+        if (sorted_it != metrics.recent_latency_sorted.end()) {
+            metrics.recent_latency_sorted.erase(sorted_it);
+        }
     }
 }
 
@@ -628,9 +634,9 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                                    ? metrics.total_latency_ms / static_cast<double>(metrics.total_requests)
                                    : 0.0},
             {"min_latency_ms", metrics.total_requests > 0 ? metrics.min_latency_ms : 0.0},
-            {"p50_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.50)},
-            {"p95_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.95)},
-            {"p99_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.99)},
+            {"p50_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.50)},
+            {"p95_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.95)},
+            {"p99_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.99)},
             {"max_latency_ms", metrics.total_requests > 0 ? metrics.max_latency_ms : 0.0},
             {"recent_sample_count", metrics.recent_latency_ms.size()},
             {"last_status_code", metrics.last_status_code == 0 ? nlohmann::json(nullptr) : nlohmann::json(metrics.last_status_code)},

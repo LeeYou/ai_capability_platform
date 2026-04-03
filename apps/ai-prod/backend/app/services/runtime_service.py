@@ -253,10 +253,10 @@ def _restore_runtime_capability_records(detail: dict[str, Any]) -> dict[str, dic
     restored: dict[str, dict[str, Any]] = {}
     for item in capability_records:
         if not isinstance(item, dict):
-            raise ValueError("revision capability_records 中的每一项都必须是对象。")
+            raise ValueError("revision capability_records 每一项都必须是对象。")
         capability_name = str(item.get("capability_name", "")).strip()
         if not capability_name:
-            raise ValueError("revision capability_records 缺少 capability_name。")
+            raise ValueError("revision capability_records 缺少必需字段 capability_name。")
         restored[capability_name] = {
             "capability_name": capability_name,
             "model_root": str(item.get("model_root", "")),
