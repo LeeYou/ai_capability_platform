@@ -17,7 +17,7 @@ bool ReadRequiredString(
     std::string* error_message) {
     if (!payload.contains(key) || !payload[key].is_string()) {
         if (error_message != nullptr) {
-            *error_message = std::string("capability record 缺少字段：") + key;
+            *error_message = std::string("capability record 缺失字段：") + key;
         }
         return false;
     }

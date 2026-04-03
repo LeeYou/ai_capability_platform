@@ -289,7 +289,7 @@ std::optional<std::map<std::string, RuntimeCapabilityRecord>> LoadCapabilityReco
     const auto& capability_records = revision.detail["capability_records"];
     if (!capability_records.is_array()) {
         if (error_message != nullptr) {
-            *error_message = "revision capability_records 格式不正确。";
+            *error_message = "revision capability_records 必须是数组。";
         }
         return std::nullopt;
     }
