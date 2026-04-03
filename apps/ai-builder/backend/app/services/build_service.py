@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -61,6 +62,17 @@ DELIVERY_PACKAGE_SDK_DIRS = {
     "windows_x86": "sdk_windows_x86",
     "windows_x86_64": "sdk_windows_x86_64",
 }
+
+REPO_ROOT = Path(__file__).resolve().parents[5]
+AI_PROD_DOCKER_SOURCES = (
+    "apps/ai-prod/Dockerfile",
+    "apps/ai-prod/backend",
+    "apps/ai-prod/config",
+    "apps/ai-prod/cpp",
+    "apps/ai-prod/frontend",
+    "apps/ai-prod/scripts",
+    "ai_platform/third_party",
+)
 
 
 class BuildTaskNotFoundError(ValueError):
@@ -353,6 +365,303 @@ def _write_delivery_placeholder(directory: Path, title: str, lines: list[str]) -
     _write_text(directory / "README.md", content)
 
 
+def _copy_file(source_path: Path, destination_path: Path) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination_path)
+
+
+def _create_docker_bundle(
+    docker_dir: Path,
+    *,
+    capability_name: str,
+    model_version: str,
+) -> dict[str, object]:
+    docker_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = docker_dir / "ai-prod_image_build_context.tar.gz"
+    root_prefix = Path("ai-prod_image_build_context")
+    excluded_parts = {"build", "node_modules", "dist", "__pycache__", ".pytest_cache"}
+
+    def _tar_filter(tar_info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        if any(part in excluded_parts for part in Path(tar_info.name).parts):
+            return None
+        return tar_info
+
+    included_sources: list[str] = []
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for relative_path in AI_PROD_DOCKER_SOURCES:
+            source_path = REPO_ROOT / relative_path
+            if not source_path.exists():
+                continue
+            included_sources.append(relative_path)
+            tar.add(
+                source_path,
+                arcname=str(root_prefix / relative_path),
+                recursive=True,
+                filter=_tar_filter,
+            )
+
+    manifest = {
+        "archive_path": str(archive_path.resolve()),
+        "included_sources": included_sources,
+        "recommended_build_steps": [
+            "docker build -f Dockerfile.base.cuda118 -t ai-capability-platform/base:cuda118 .",
+            "tar -xzf ai-prod_image_build_context.tar.gz",
+            "cd ai-prod_image_build_context",
+            "docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-prod/Dockerfile -t ai-capability-platform/ai-prod:delivery .",
+        ],
+        "capability_name": capability_name,
+        "model_version": model_version,
+    }
+    _write_text(docker_dir / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
+    _write_text(
+        docker_dir / "README.md",
+        "\n".join(
+            [
+                "# docker",
+                "",
+                "本目录提供 ai-prod 生产镜像交付所需的构建上下文 tarball。",
+                "",
+                f"- 目标能力：{capability_name}",
+                f"- 模型版本：{model_version}",
+                f"- 归档文件：{archive_path.name}",
+                "",
+                "推荐构建流程：",
+                "1. 在仓库根目录构建基础镜像 `ai-capability-platform/base:cuda118`。",
+                "2. 解压 `ai-prod_image_build_context.tar.gz`。",
+                "3. 进入解压目录后执行 `docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-prod/Dockerfile -t ai-capability-platform/ai-prod:delivery .`。",
+                "",
+            ]
+        ),
+    )
+    return manifest
+
+
+def _create_mount_template(
+    mount_template_dir: Path,
+    *,
+    capability_name: str,
+    model_version: str,
+) -> dict[str, object]:
+    mount_template_dir.mkdir(parents=True, exist_ok=True)
+    template_directories = ("data", "datasets", "models", "license", "libs", "configs", "logs", "exports")
+    for directory_name in template_directories:
+        template_dir = mount_template_dir / directory_name
+        template_dir.mkdir(parents=True, exist_ok=True)
+        _write_text(
+            template_dir / "README.md",
+            "\n".join(
+                [
+                    f"# {directory_name}",
+                    "",
+                    f"该目录为 ai-prod 交付挂载模板的一部分，用于能力 `{capability_name}` / 版本 `{model_version}` 的标准部署。",
+                    "",
+                ]
+            ),
+        )
+
+    scripts_dir = mount_template_dir / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    _copy_file(REPO_ROOT / "scripts/docker/init_host_root.sh", scripts_dir / "init_host_root.sh")
+    _copy_file(REPO_ROOT / "apps/ai-prod/scripts/run_prod_stack.sh", scripts_dir / "run_prod_stack.sh")
+    _copy_file(REPO_ROOT / "apps/ai-prod/config/prod_defaults.env", mount_template_dir / "configs" / "prod_defaults.env")
+    _write_text(
+        mount_template_dir / "configs" / "platform.env.example",
+        "\n".join(
+            [
+                "AI_CAP_HOST_ROOT=/data/ai_capability_platform",
+                f"AI_DELIVERY_CAPABILITY={capability_name}",
+                f"AI_DELIVERY_MODEL_VERSION={model_version}",
+                "AI_PROD_CPP_BIND_PORT=26004",
+                "AI_PROD_PY_BACKEND_PORT=26014",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        mount_template_dir / "README.md",
+        "\n".join(
+            [
+                "# mount_template",
+                "",
+                "本目录提供 ai-prod 客户交付时的宿主机目录模板、默认环境模板与启动脚本副本。",
+                "",
+                "建议流程：",
+                "1. 先执行 `scripts/init_host_root.sh` 初始化宿主机根目录。",
+                "2. 按需修改 `configs/prod_defaults.env` 与 `configs/platform.env.example`。",
+                "3. 将交付包中的 models / libs / license 放入对应目录。",
+                "4. 通过 docker 目录中的镜像构建上下文构建并启动交付镜像。",
+                "",
+            ]
+        ),
+    )
+    return {
+        "template_directories": list(template_directories),
+        "scripts": ["scripts/init_host_root.sh", "scripts/run_prod_stack.sh"],
+        "config_files": ["configs/prod_defaults.env", "configs/platform.env.example"],
+    }
+
+
+def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    validation_dir = tools_dir / "validation"
+    ops_dir = tools_dir / "ops"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    ops_dir.mkdir(parents=True, exist_ok=True)
+
+    _copy_file(REPO_ROOT / "apps/ai-prod/scripts/acceptance_check.py", validation_dir / "acceptance_check.py")
+    _copy_file(REPO_ROOT / "apps/ai-prod/scripts/pressure_smoke.py", validation_dir / "pressure_smoke.py")
+    _copy_file(REPO_ROOT / "scripts/docker/health_check.sh", ops_dir / "health_check.sh")
+    _copy_file(REPO_ROOT / "scripts/docker/init_host_root.sh", ops_dir / "init_host_root.sh")
+    _write_text(
+        validation_dir / "verify_delivery_package.py",
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "from pathlib import Path",
+                "import sys",
+                "",
+                "",
+                "def main() -> int:",
+                "    parser = argparse.ArgumentParser(description='Verify ai-builder delivery package skeleton.')",
+                "    parser.add_argument('package_root')",
+                "    args = parser.parse_args()",
+                "    package_root = Path(args.package_root).resolve()",
+                "    required = [",
+                "        'docker',",
+                "        'mount_template',",
+                "        'tools',",
+                "        'docs',",
+                "        'licenses',",
+                "    ]",
+                "    missing = [item for item in required if not (package_root / item).exists()]",
+                "    if missing:",
+                "        print(f'missing paths: {missing}', file=sys.stderr)",
+                "        return 1",
+                "    print('delivery package verified')",
+                "    return 0",
+                "",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        tools_dir / "README.md",
+        "\n".join(
+            [
+                "# tools",
+                "",
+                "本目录汇总交付阶段常用的验收、压测、健康检查与宿主机初始化工具。",
+                "",
+                "- validation/acceptance_check.py：ai-prod 公共 API 验收脚本",
+                "- validation/pressure_smoke.py：基础并发压测脚本",
+                "- validation/verify_delivery_package.py：交付目录结构快速校验脚本",
+                "- ops/health_check.sh：平台级健康检查脚本",
+                "- ops/init_host_root.sh：宿主机根目录初始化脚本",
+                "",
+            ]
+        ),
+    )
+    return {
+        "validation_scripts": [
+            "validation/acceptance_check.py",
+            "validation/pressure_smoke.py",
+            "validation/verify_delivery_package.py",
+        ],
+        "ops_scripts": ["ops/health_check.sh", "ops/init_host_root.sh"],
+    }
+
+
+def _create_docs_bundle(
+    docs_dir: Path,
+    *,
+    capability_name: str,
+    model_version: str,
+    issue_record_id: int,
+) -> dict[str, object]:
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    _copy_file(REPO_ROOT / "docs/07_部署运维/ai-prod运行规范.md", docs_dir / "AI_PROD_RUNTIME.md")
+    _write_text(
+        docs_dir / "DEPLOYMENT.md",
+        "\n".join(
+            [
+                "# DEPLOYMENT",
+                "",
+                f"- 交付能力：{capability_name}",
+                f"- 模型版本：{model_version}",
+                f"- 授权记录：issue_{issue_record_id}",
+                "",
+                "部署步骤：",
+                "1. 解压 delivery_package 并确认 docker / mount_template / tools / docs / sdk_* / licenses 目录齐全。",
+                "2. 参考 `mount_template/` 初始化宿主机目录，并将交付物放入对应挂载位置。",
+                "3. 参考 `docker/README.md` 构建 ai-prod 交付镜像。",
+                "4. 使用 `tools/validation/acceptance_check.py` 与 `tools/validation/pressure_smoke.py` 完成交付验收。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        docs_dir / "OPERATIONS.md",
+        "\n".join(
+            [
+                "# OPERATIONS",
+                "",
+                "推荐运维动作：",
+                "- 启动前先执行宿主机目录初始化与环境变量模板核对。",
+                "- 定期检查 `${AI_CAP_HOST_ROOT}/logs` 与 runtime snapshot。",
+                "- 变更 license 后执行 admin license reload 或重新启动服务。",
+                "- 使用交付包附带的 health_check / acceptance_check / pressure_smoke 进行巡检。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        docs_dir / "TROUBLESHOOTING.md",
+        "\n".join(
+            [
+                "# TROUBLESHOOTING",
+                "",
+                "常见排查项：",
+                "1. `license.bin` 与 `pubkey.pem` 是否与当前 capability / model_version 匹配。",
+                "2. `libs/` 与 `models/` 是否按 manifest 约定放置。",
+                "3. 对外仅暴露 26004，26014 仅用于容器内 Python backend 壳层。",
+                "4. 如验收脚本失败，优先查看 `${AI_CAP_HOST_ROOT}/logs/ai_prod_runtime.log`。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        docs_dir / "DELIVERY_CONTENTS.md",
+        "\n".join(
+            [
+                "# DELIVERY_CONTENTS",
+                "",
+                "本次交付包包含以下物料：",
+                "- docker：ai-prod 生产镜像构建上下文 tarball 与构建说明",
+                "- mount_template：宿主机目录模板、默认配置与启动脚本副本",
+                "- tools：验收、压测、健康检查与宿主机初始化工具",
+                "- docs：部署、运维、排障文档",
+                "- sdk_*：各平台 SDK / 插件产物",
+                "- licenses：授权文件与公钥",
+                "",
+            ]
+        ),
+    )
+    return {
+        "documents": [
+            "AI_PROD_RUNTIME.md",
+            "DEPLOYMENT.md",
+            "OPERATIONS.md",
+            "TROUBLESHOOTING.md",
+            "DELIVERY_CONTENTS.md",
+        ]
+    }
+
+
 def _create_delivery_package(
     *,
     build_task: BuildTaskModel,
@@ -406,38 +715,22 @@ def _create_delivery_package(
         ),
     )
 
-    _write_delivery_placeholder(
+    docker_manifest = _create_docker_bundle(
         package_root / "docker",
-        "docker",
-        [
-            "当前阶段已完成标准 delivery_package 目录输出。",
-            "生产镜像 tarball 将在 B10 阶段补齐到该目录。",
-        ],
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
     )
-    _write_delivery_placeholder(
+    mount_template_manifest = _create_mount_template(
         package_root / "mount_template",
-        "mount_template",
-        [
-            "当前阶段预留统一挂载模板目录。",
-            "实际宿主机模板与默认配置将在 B10 阶段补齐。",
-        ],
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
     )
-    _write_delivery_placeholder(
+    tools_manifest = _create_tools_bundle(package_root / "tools")
+    docs_manifest = _create_docs_bundle(
         package_root / "docs",
-        "docs",
-        [
-            f"能力：{safe_capability_name}",
-            f"模型版本：{safe_model_version}",
-            "当前阶段已输出标准交付目录骨架，文档材料将在 B10 阶段补齐。",
-        ],
-    )
-    _write_delivery_placeholder(
-        package_root / "tools",
-        "tools",
-        [
-            "当前阶段预留 tools 目录。",
-            "授权工具、验收工具与运维工具将在 B10/B11 阶段继续补齐。",
-        ],
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        issue_record_id=issue_record_id,
     )
     _write_text(
         package_root / "README.md",
@@ -448,7 +741,7 @@ def _create_delivery_package(
                 f"- task_id: {build_task.id}",
                 f"- capability_name: {safe_capability_name}",
                 f"- model_version: {safe_model_version}",
-                "- 当前阶段完成统一标准目录输出，SDK 与 licenses 已按交付目录组织。",
+                "- 当前阶段已完成标准 `delivery_package/` 目录、ai-prod 生产镜像构建上下文 tarball、mount_template、tools 与 docs 打包。",
                 "",
             ]
         ),
@@ -472,9 +765,13 @@ def _create_delivery_package(
                 ],
                 "stage_status": {
                     "B9": "completed",
-                    "B10": "pending",
+                    "B10": "completed",
                     "B11": "pending",
                 },
+                "docker": docker_manifest,
+                "mount_template": mount_template_manifest,
+                "tools": tools_manifest,
+                "docs": docs_manifest,
             },
             ensure_ascii=False,
             indent=2,

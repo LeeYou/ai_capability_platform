@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -154,6 +155,15 @@ class BuildServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "sdk_windows_x86_64" / "manifest" / "manifest.json").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "licenses" / "issue_1" / "license.bin").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "docker" / "README.md").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "docker" / "ai-prod_image_build_context.tar.gz").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "mount_template" / "configs" / "prod_defaults.env").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "mount_template" / "scripts" / "init_host_root.sh").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "validation" / "acceptance_check.py").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "validation" / "verify_delivery_package.py").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "docs" / "DEPLOYMENT.md").is_file())
+        manifest_payload = json.loads((Path(task_detail["delivery_package_dir"]) / "package_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_payload["stage_status"]["B10"], "completed")
+        self.assertIn("ai-prod_image_build_context.tar.gz", manifest_payload["docker"]["archive_path"])
         self.assertTrue((self.host_root / "libs" / "linux_x86_64" / "face_detect" / "include" / "face_detect.h").is_file())
         self.assertTrue((self.host_root / "libs" / "linux_x86_64" / "face_detect" / "license" / "license.bin").is_file())
         self.assertIsNotNone(task_detail["manifest"])

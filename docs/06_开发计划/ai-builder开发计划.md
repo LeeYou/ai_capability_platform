@@ -17,7 +17,7 @@
 | B7 | 实现产物打包与目录组织 | 已完成 |
 | B8 | 首期联调与验收 | 已完成 |
 | B9 | 输出标准 `delivery_package/` 目录 | 已完成 |
-| B10 | 输出生产镜像 tarball、mount_template、tools、docs | 未开始 |
+| B10 | 输出生产镜像 tarball、mount_template、tools、docs | 已完成 |
 | B11 | 输出验收清单、版本清单与交付摘要 | 未开始 |
 
 ## 3. 进度维护要求
@@ -35,12 +35,12 @@
 
 1. 当前阶段已明确 ai-builder 后续重点是成为真正的最终交付包生成中心。
 2. 当前已完成 B9：构建任务结束后会自动输出标准 `delivery_package/` 目录骨架，并提供归档下载入口。
+3. 当前已完成 B10：delivery_package 已补齐 ai-prod 生产镜像构建上下文 tarball、mount_template、tools 与 docs 交付物料。
 
 ### 4.3 未完成
 
-1. 镜像 tarball、挂载模板、授权工具与交付文档的一体化打包尚未完成。
-2. 验收清单、版本清单、交付摘要等交付物料仍需统一生成。
+1. 验收清单、版本清单、交付摘要等交付物料仍需统一生成。
 
 ### 4.4 阶段小结
 
-ai-builder 当前已完成 B9：在既有多平台构建与归档能力之上，新增了统一 `delivery_package/` 目录输出，将 SDK 与 license 物料按稳定交付结构重组，并提供整包归档下载入口。后续重点转向 B10/B11，继续补齐 docker tarball、mount_template、tools、docs 以及验收/版本摘要等最终交付物料。
+ai-builder 当前已完成 B9/B10：在既有多平台构建与归档能力之上，新增了统一 `delivery_package/` 目录输出，并补齐 ai-prod 生产镜像构建上下文 tarball、宿主机挂载模板、验收/运维工具与部署文档，使交付包已经具备更完整的客户落地材料。后续重点转向 B11，继续统一生成验收清单、版本清单与交付摘要等最终收口物料。
