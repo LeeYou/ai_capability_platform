@@ -1,24 +1,18 @@
 # ai-prod backend
 
-ai-prod 后端首期工程，提供统一生产 REST 服务、宿主机资源扫描、license 双层校验、运行时实例池、reload/rollback 与内部测试验收外壳所需接口。
-
-当前仓库已开始引入 `apps/ai-prod/cpp/` 下的 C++ HTTP 服务迭代实现，用于逐步把生产主链路从 Python 基础版收敛到 C++ HTTP + C++ Runtime。
+ai-prod backend 当前定位为**内部测试验收外壳与诊断查询服务**，不再承担客户生产运行主链路。生产侧公共 REST API 已完全收敛到 `apps/ai-prod/cpp/` 下的 C++ HTTP + C++ Runtime。
 
 ## 当前能力
 
-1. 健康检查、能力列表、license 状态接口
-2. 宿主机挂载优先、镜像基线回退的资源扫描与能力装载
-3. 标准 license 文件验签、时间窗口/能力范围/版本约束/硬件指纹校验
-4. runtime revision、实例池、GPU 优先/CPU 自动回退
-5. 统一推理接口与启动时/推理时双层 license 校验
-6. reload/rollback、结构化日志与审计日志
-7. 面向内部测试验收外壳的 `/internal/*` 查询接口
+1. 提供面向内部测试验收外壳的 `/internal/*` 诊断查询接口
+2. 共享 SQLite revision / operation / audit 日志等验收查询能力
+3. 保留 Python runtime service 逻辑用于内部单元测试与行为对照，不再通过公开 API 承担生产职责
 
 ## 本地运行
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 26004
+python -m uvicorn app.main:app --host 0.0.0.0 --port 26014
 ```
 
 默认宿主机根目录为 `/data/ai_capability_platform`，可通过 `AI_CAP_HOST_ROOT` 覆盖。
@@ -44,15 +38,15 @@ ctest --test-dir build --output-on-failure
 默认行为：
 
 1. C++ 服务在独立运行时默认监听 `0.0.0.0:26005`；生产镜像/compose 默认改为对外 `26004`
-2. `/api/v1/health`、`/api/v1/capabilities` 优先读取 runtime snapshot 直接响应；当 snapshot 缺失或不可用时，C++ 启动阶段会先尝试完成自举装载
+2. `/api/v1/health`、`/api/v1/capabilities` 由 C++ 直接读取 runtime snapshot 响应；当 snapshot 缺失或不可用时会返回运行时错误，不再回退 Python backend
 3. `/api/v1/license/status` 由 C++ 直接读取标准 license 文件返回当前状态
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
-6. snapshot 可用时，`/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、真实插件动态加载执行、结果生成与基础日志审计；snapshot 不可用时自动回退 Python backend
+6. `/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、真实插件动态加载执行、结果生成与基础日志审计；runtime snapshot 不可用时直接返回运行时错误
 7. `reload/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写，以及实例池 drain 编排与切换后 catalog/pool 刷新
 8. `license/status` 已改为由 C++ 直接读取标准 license 文件，`infer` 与 `reload/rollback` 已接入 license quick check
 9. 已新增 `/api/v1/admin/license-reload`，支持 C++ 侧 license 手动重载与自动监测刷新
-10. Python runtime 的 bootstrap / reload / rollback 也已补齐按能力范围与版本约束的二次 license 校验，并记录拒绝审计日志
+10. Python runtime 的 bootstrap / reload / rollback 逻辑仅保留用于内部单元测试与验收行为对照，不再通过公开 `/api/v1/*` 暴露
 11. `/internal/*` 查询接口仅保留在 Python 测试验收外壳侧，不再通过 C++ 生产主链路暴露
 12. runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，供 C++ infer 侧直接装载并调用插件
 13. 启动阶段已支持在 runtime snapshot 缺失时由 C++ 直接完成资源扫描、license 校验、bootstrap revision 持久化与 snapshot 初始写入
@@ -63,8 +57,7 @@ ctest --test-dir build --output-on-failure
 18. 当前已补齐可选 `warmup` / `health_check` 生命周期钩子，相关状态、时间戳与失败信息会并入 capability 级 `execution_metrics`
 19. 当前已新增统一输入 `payload codec`，`image / video / pdf` 请求会在 C++ 侧完成 base64 解码、格式校验，并将 `input_metadata` 回填到推理结果与审计日志
 20. 当前已补齐基于 revision 的能力资源快照持久化；rollback 会优先恢复目标 revision 的具体模型目录、插件目录、插件文件与 manifest 元数据，而不是仅按能力名重扫当前目录
-21. 作为后续继续替换完整插件生命周期与运行时编排的过渡实现
-22. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
+21. 当前生产镜像/compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路
 
 ## 交付验收与运行规范
 

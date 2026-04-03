@@ -2,7 +2,6 @@
 #define AI_CAPABILITY_PLATFORM_APPS_AI_PROD_CPP_HTTP_SERVER_H
 
 #include "capability_catalog.h"
-#include "backend_client.h"
 #include "instance_pool.h"
 #include "license_manager.h"
 #include "plugin_executor.h"
@@ -30,12 +29,6 @@ public:
     void Stop();
 
 private:
-    static httplib::Headers BuildForwardHeaders(const httplib::Request& request);
-    void ApplyBackendResponse(const BackendResponse& backend_response, httplib::Response& response) const;
-    void ApplySnapshotOrBackendResponse(
-        const SnapshotResponse& snapshot_response,
-        const httplib::Request& request,
-        httplib::Response& response) const;
     bool RefreshCatalogAndPools(bool force_rebuild = false);
     bool RefreshCatalogAndPoolsWithRetry(int attempts, std::chrono::milliseconds wait_interval, bool force_rebuild);
     nlohmann::json BuildCatalogPayload(bool snapshot_ready) const;
@@ -61,7 +54,6 @@ private:
 
     ProxyConfig config;
     CapabilityCatalog capabilityCatalog;
-    AiProdBackendClient backendClient;
     std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
     LicenseManager licenseManager;
     PluginExecutor pluginExecutor;

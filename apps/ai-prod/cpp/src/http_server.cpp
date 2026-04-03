@@ -41,24 +41,6 @@ struct InferRequestPayload {
     int simulate_delay_ms = 0;
 };
 
-std::string ToLowerCopy(const std::string& value) {
-    std::string lowered = value;
-    std::transform(
-        lowered.begin(),
-        lowered.end(),
-        lowered.begin(),
-        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return lowered;
-}
-
-bool ShouldForwardHeader(const std::string& key) {
-    const std::string lowered = ToLowerCopy(key);
-    return lowered != "host" &&
-           lowered != "content-length" &&
-           lowered != "transfer-encoding" &&
-           lowered != "connection";
-}
-
 std::string EscapeJson(const std::string& value) {
     std::string escaped;
     escaped.reserve(value.size());
@@ -382,7 +364,6 @@ bool ParseAdminTransitionRequest(
 AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
     : config(config_value),
       capabilityCatalog(config_value.runtime_snapshot_path),
-      backendClient(config_value),
       licenseManager(
           config_value.license_root,
           config_value.hardware_features,
@@ -443,37 +424,6 @@ bool AiProdHttpServer::EnsureRuntimeReady() {
     }
     runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
     return true;
-}
-
-httplib::Headers AiProdHttpServer::BuildForwardHeaders(const httplib::Request& request) {
-    httplib::Headers headers;
-    for (const auto& header : request.headers) {
-        if (ShouldForwardHeader(header.first)) {
-            headers.emplace(header.first, header.second);
-        }
-    }
-    return headers;
-}
-
-void AiProdHttpServer::ApplyBackendResponse(
-    const BackendResponse& backend_response,
-    httplib::Response& response) const {
-    response.status = backend_response.status;
-    response.set_content(
-        backend_response.body,
-        backend_response.content_type.empty() ? kDefaultJsonContentType : backend_response.content_type.c_str());
-}
-
-void AiProdHttpServer::ApplySnapshotOrBackendResponse(
-    const SnapshotResponse& snapshot_response,
-    const httplib::Request& request,
-    httplib::Response& response) const {
-    if (snapshot_response.ok) {
-        response.status = 200;
-        response.set_content(snapshot_response.body, kDefaultJsonContentType);
-        return;
-    }
-    ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
 }
 
 bool AiProdHttpServer::RefreshCatalogAndPools(bool force_rebuild) {
@@ -647,11 +597,7 @@ void AiProdHttpServer::HandleInferRequest(
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
     if (!RefreshCatalogAndPools()) {
-        const auto content_type = request.get_header_value("Content-Type");
-        auto headers = BuildForwardHeaders(request);
-        ApplyBackendResponse(
-            backendClient.ForwardPost(request.path, request.body, content_type, headers),
-            response);
+        ApplyJsonErrorResponse(503, "运行时目录不可用，请先完成启动自举或 reload。", response);
         return;
     }
 
@@ -1226,18 +1172,30 @@ void AiProdHttpServer::RegisterRoutes() {
         std::ostringstream payload;
         payload << "{"
                 << "\"service\":\"ai-prod-cpp-http\","
-                << "\"mode\":\"proxy\","
-                << "\"backend\":\"" << EscapeJson(build_backend_base_url(config)) << "\","
+                << "\"mode\":\"runtime\","
+                << "\"internal_shell\":\"" << EscapeJson(build_backend_base_url(config)) << "\","
                 << "\"bind\":\"" << EscapeJson(config.bind_host + ":" + std::to_string(config.bind_port)) << "\""
                 << "}";
         response.set_content(payload.str(), kDefaultJsonContentType);
     });
 
-    server->Get("/api/v1/health", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplySnapshotOrBackendResponse(snapshotManager.BuildHealthResponse(), request, response);
+    server->Get("/api/v1/health", [&](const httplib::Request&, httplib::Response& response) {
+        const auto snapshot_response = snapshotManager.BuildHealthResponse();
+        if (!snapshot_response.ok) {
+            ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
+            return;
+        }
+        response.status = 200;
+        response.set_content(snapshot_response.body, kDefaultJsonContentType);
     });
-    server->Get("/api/v1/capabilities", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplySnapshotOrBackendResponse(snapshotManager.BuildCapabilitiesResponse(), request, response);
+    server->Get("/api/v1/capabilities", [&](const httplib::Request&, httplib::Response& response) {
+        const auto snapshot_response = snapshotManager.BuildCapabilitiesResponse();
+        if (!snapshot_response.ok) {
+            ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
+            return;
+        }
+        response.status = 200;
+        response.set_content(snapshot_response.body, kDefaultJsonContentType);
     });
     server->Get("/api/v1/license/status", [&](const httplib::Request& request, httplib::Response& response) {
         HandleLicenseStatusRequest(request, response);

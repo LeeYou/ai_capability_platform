@@ -6,30 +6,12 @@ from fastapi import FastAPI
 
 from app.api.routes import router
 from app.config import get_settings
-from app.db.database import get_session_factory
-from app.services.runtime_service import bootstrap_runtime, initialize_database
+from app.services.runtime_service import initialize_database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
-    settings = get_settings()
-    with get_session_factory()() as session:
-        bootstrap_runtime(
-            session,
-            runtime_snapshot_path=settings.runtime_snapshot_path,
-            runtime_log_path=settings.runtime_log_path,
-            audit_log_path=settings.audit_log_path,
-            host_root=settings.host_root,
-            image_resource_root=settings.image_resource_root,
-            license_root=settings.license_root,
-            hardware_features=settings.hardware_features,
-            pool_size=settings.pool_size,
-            gpu_available=settings.gpu_available,
-            service_name=settings.service_name,
-            company_name=settings.company_name,
-            company_domain=settings.company_domain,
-        )
     yield
 
 

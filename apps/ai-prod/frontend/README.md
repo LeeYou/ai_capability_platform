@@ -12,7 +12,7 @@ ai-prod 前端为 **内部测试 / 验收外壳**，基于 React + TypeScript + 
 ## 内外边界
 
 1. 生产主链路由 C++ HTTP 服务承载，对外暴露 `/api/v1/*`
-2. 本前端通过 `/internal/*` 查询内部 revision / operation / audit 等验收信息
+2. 本前端通过 `/api/v1/*` 直连 C++ runtime API，通过 `/internal/*` 查询 Python 壳层内部 revision / operation / audit 等验收信息
 3. 本前端仅供研发、QA、交付联调阶段使用
 
 ## 本地运行
@@ -23,7 +23,7 @@ npm install
 npm run dev -- --host 0.0.0.0 --port 26014
 ```
 
-开发模式默认将 `/api/v1/*` 与 `/internal/*` 代理到 `http://127.0.0.1:26004`，可通过 `VITE_DEV_BACKEND_ORIGIN` 覆盖。
+开发模式默认将 `/api/v1/*` 代理到 `http://127.0.0.1:26004`，将 `/internal/*` 代理到 `http://127.0.0.1:26014`，可通过 `VITE_DEV_RUNTIME_ORIGIN` 与 `VITE_DEV_INTERNAL_ORIGIN` 分别覆盖。
 
 ## 构建校验
 
@@ -33,4 +33,4 @@ npm run build
 npm run lint
 ```
 
-默认使用同源接口；运行时 API 走 `/api/v1/*`，内部验收查询走 `/internal/*`。如需显式指定后端地址，可通过 `VITE_API_BASE_URL` 覆盖。
+默认使用同源接口；运行时 API 走 `/api/v1/*`，内部验收查询走 `/internal/*`。如需显式指定地址，可通过 `VITE_RUNTIME_API_BASE_URL` 与 `VITE_INTERNAL_API_BASE_URL` 分别覆盖。

@@ -95,10 +95,11 @@ const roadmapItems = [
 
 const runtimeApiPrefix = '/api/v1'
 const internalApiPrefix = '/internal'
+const runtimeApiBaseUrl = import.meta.env.VITE_RUNTIME_API_BASE_URL ?? ''
+const internalApiBaseUrl = import.meta.env.VITE_INTERNAL_API_BASE_URL ?? ''
 
-async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+async function fetchJson<T>(baseUrl: string, path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(options?.headers ?? {}),
@@ -128,11 +129,11 @@ function App() {
       setLoading(true)
       setError(null)
       const [health, capabilities, licenseStatus, revisions, operations] = await Promise.all([
-        fetchJson<HealthResponse>(`${runtimeApiPrefix}/health`),
-        fetchJson<ListResponse<CapabilityItem>>(`${runtimeApiPrefix}/capabilities`),
-        fetchJson<LicenseStatus>(`${runtimeApiPrefix}/license/status`),
-        fetchJson<ListResponse<RuntimeRevisionItem>>(`${internalApiPrefix}/admin/revisions`),
-        fetchJson<ListResponse<RuntimeOperationItem>>(`${internalApiPrefix}/admin/operations`),
+        fetchJson<HealthResponse>(runtimeApiBaseUrl, `${runtimeApiPrefix}/health`),
+        fetchJson<ListResponse<CapabilityItem>>(runtimeApiBaseUrl, `${runtimeApiPrefix}/capabilities`),
+        fetchJson<LicenseStatus>(runtimeApiBaseUrl, `${runtimeApiPrefix}/license/status`),
+        fetchJson<ListResponse<RuntimeRevisionItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/revisions`),
+        fetchJson<ListResponse<RuntimeOperationItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/operations`),
       ])
       setDashboard({
         health,
@@ -189,7 +190,7 @@ function App() {
     }
     try {
       setActionMessage('正在执行推理...')
-      const result = await fetchJson<InferResponse>(`${runtimeApiPrefix}/infer/${selectedCapability}`, {
+      const result = await fetchJson<InferResponse>(runtimeApiBaseUrl, `${runtimeApiPrefix}/infer/${selectedCapability}`, {
         method: 'POST',
         body: JSON.stringify({
           input_type: inputType,
@@ -209,7 +210,7 @@ function App() {
   async function handleRuntimeAction(action: 'reload' | 'rollback', targetRevisionId?: number): Promise<void> {
     try {
       setActionMessage(`正在执行 ${action}...`)
-      await fetchJson(`${runtimeApiPrefix}/admin/reload`, {
+      await fetchJson(runtimeApiBaseUrl, `${runtimeApiPrefix}/admin/reload`, {
         method: 'POST',
         body: JSON.stringify({
           action,

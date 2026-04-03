@@ -55,7 +55,7 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 
 ### 4.3 生产镜像默认启动方式
 
-`apps/ai-prod/Dockerfile` 当前已切换为双进程入口：镜像启动后先在容器内拉起 Python backend（`127.0.0.1:26014`），待健康后再启动 C++ HTTP 主服务（`0.0.0.0:26004`）。
+`apps/ai-prod/Dockerfile` 当前已切换为双进程入口：镜像启动后先在容器内拉起 Python backend（`127.0.0.1:26014`）作为内部验收壳层，再启动 C++ HTTP 主服务（`0.0.0.0:26004`）作为唯一公开生产入口。Python backend 不再暴露公开 `/api/v1/*` 生产运行接口。
 
 ## 5. 交付验收基线
 
@@ -67,6 +67,7 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 4. `/api/v1/admin/catalog` 可返回 catalog / pool 诊断信息
 5. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
 6. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用
+7. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
 
 ### 5.2 验收命令
 
