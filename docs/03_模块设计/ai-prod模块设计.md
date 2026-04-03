@@ -40,6 +40,8 @@
 4. `/api/v1/infer/{capability_name}`
 5. `/api/v1/admin/reload`
 6. `/api/v1/admin/rollback`
+7. `/api/v1/admin/catalog`
+8. `/api/v1/admin/metrics`
 
 ## 6. 资源管理
 
@@ -55,8 +57,9 @@
 2. GPU 优先、CPU 自动回退
 3. 输入格式统一抽象，支持图片、视频、PDF 等
 4. 提供结构化日志和审计日志
-5. 支持 x86 与 arm
-6. Python 测试外壳不能成为客户生产调用主链路
+5. 提供统一运行时指标观测与交付验收基线输出
+6. 支持 x86 与 arm
+7. Python 测试外壳不能成为客户生产调用主链路
 
 ## 8. 设计决策
 

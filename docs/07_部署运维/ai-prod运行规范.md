@@ -65,9 +65,10 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 2. `/api/v1/capabilities` 可返回当前能力列表
 3. `/api/v1/license/status` 可返回标准 license 状态
 4. `/api/v1/admin/catalog` 可返回 catalog / pool 诊断信息
-5. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
-6. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用
-7. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
+5. `/api/v1/admin/metrics` 可返回 endpoint 请求量、延迟分位、实例池利用率与能力级执行汇总
+6. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
+7. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用
+8. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
 
 ### 5.2 验收命令
 
@@ -98,7 +99,8 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
   --path /api/v1/health \
   --requests 32 \
   --concurrency 8 \
-  --max-p95-ms 5000
+  --max-p95-ms 5000 \
+  --include-metrics
 ```
 
 ### 6.2 推理接口并发 smoke（需已装载能力）
@@ -112,14 +114,15 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
   --body-json '{"input_type":"json","payload":"{\"image\":\"demo\"}","prefer_device":"auto","options":{}}' \
   --requests 16 \
   --concurrency 4 \
-  --max-p95-ms 10000
+  --max-p95-ms 10000 \
+  --include-metrics
 ```
 
 ## 7. 推荐运行阈值
 
 1. 健康/能力/license/catalog 查询：单次请求建议在 `1000ms` 内返回
 2. 基础并发 smoke：成功率应为 `100%`
-3. 推理并发 smoke：现场可按模型能力、硬件与 pool 配置单独放宽，但必须记录本次交付的 `p95/p99`
+3. 推理并发 smoke：现场可按模型能力、硬件与 pool 配置单独放宽，但必须记录本次交付的 `p95/p99`，并留存 `/api/v1/admin/metrics` 输出
 4. reload / rollback 前应确认当前无长时间卡住的 infer 请求
 5. 如使用容器部署，对外交付面只允许暴露 `26004`，`26014` 必须保持容器内可达
 

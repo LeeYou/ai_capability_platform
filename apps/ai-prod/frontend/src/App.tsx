@@ -70,10 +70,37 @@ type HealthResponse = {
   license_valid: boolean
 }
 
+type RuntimeMetrics = {
+  uptime_seconds: number
+  active_request_count: number
+  runtime_revision_id: number | null
+  pool_summary: {
+    capability_count: number
+    total_pool_slots: number
+    busy_pool_slots: number
+    idle_pool_slots: number
+    utilization_ratio: number
+  }
+  request_summary: {
+    capability_total_requests: number
+    capability_failed_requests: number
+  }
+  endpoint_metrics: Record<
+    string,
+    {
+      total_requests: number
+      successful_requests: number
+      failed_requests: number
+      p95_latency_ms: number
+    }
+  >
+}
+
 type DashboardState = {
   health: HealthResponse | null
   capabilities: CapabilityItem[]
   licenseStatus: LicenseStatus | null
+  runtimeMetrics: RuntimeMetrics | null
   revisions: RuntimeRevisionItem[]
   operations: RuntimeOperationItem[]
 }
@@ -82,6 +109,7 @@ const initialState: DashboardState = {
   health: null,
   capabilities: [],
   licenseStatus: null,
+  runtimeMetrics: null,
   revisions: [],
   operations: [],
 }
@@ -128,10 +156,11 @@ function App() {
     try {
       setLoading(true)
       setError(null)
-      const [health, capabilities, licenseStatus, revisions, operations] = await Promise.all([
+      const [health, capabilities, licenseStatus, runtimeMetrics, revisions, operations] = await Promise.all([
         fetchJson<HealthResponse>(runtimeApiBaseUrl, `${runtimeApiPrefix}/health`),
         fetchJson<ListResponse<CapabilityItem>>(runtimeApiBaseUrl, `${runtimeApiPrefix}/capabilities`),
         fetchJson<LicenseStatus>(runtimeApiBaseUrl, `${runtimeApiPrefix}/license/status`),
+        fetchJson<RuntimeMetrics>(runtimeApiBaseUrl, `${runtimeApiPrefix}/admin/metrics`),
         fetchJson<ListResponse<RuntimeRevisionItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/revisions`),
         fetchJson<ListResponse<RuntimeOperationItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/operations`),
       ])
@@ -139,6 +168,7 @@ function App() {
         health,
         capabilities: capabilities.items,
         licenseStatus,
+        runtimeMetrics,
         revisions: revisions.items,
         operations: operations.items,
       })
@@ -178,6 +208,16 @@ function App() {
         title: '操作记录',
         count: dashboard.operations.length,
         description: '跟踪 reload / rollback 与运行时关键操作。',
+      },
+      {
+        title: '累计请求',
+        count: dashboard.runtimeMetrics?.request_summary.capability_total_requests ?? 0,
+        description: '按 capability 聚合的累计请求数。',
+      },
+      {
+        title: '池利用率',
+        count: `${Math.round((dashboard.runtimeMetrics?.pool_summary.utilization_ratio ?? 0) * 100)}%`,
+        description: '当前实例池 busy / total 槽位利用率。',
       },
     ],
     [dashboard],
@@ -318,6 +358,54 @@ function App() {
                 <li>能力范围：{dashboard.licenseStatus?.capability_scope.join(', ') || '全部'}</li>
                 <li>检查时间：{dashboard.licenseStatus?.checked_at_cst ?? '未检查'}</li>
               </ul>
+            </article>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="section-header">
+            <h2>运行时指标</h2>
+            <span className="badge badge-muted">/api/v1/admin/metrics</span>
+          </div>
+          <div className="table-grid">
+            <article className="sub-panel">
+              <h3>总体指标</h3>
+              <ul>
+                <li>运行时长：{dashboard.runtimeMetrics?.uptime_seconds ?? 0}s</li>
+                <li>活动请求：{dashboard.runtimeMetrics?.active_request_count ?? 0}</li>
+                <li>当前 revision：{dashboard.runtimeMetrics?.runtime_revision_id ?? '无'}</li>
+                <li>实例池总槽位：{dashboard.runtimeMetrics?.pool_summary.total_pool_slots ?? 0}</li>
+                <li>繁忙槽位：{dashboard.runtimeMetrics?.pool_summary.busy_pool_slots ?? 0}</li>
+                <li>失败请求：{dashboard.runtimeMetrics?.request_summary.capability_failed_requests ?? 0}</li>
+              </ul>
+            </article>
+            <article className="sub-panel">
+              <h3>接口延迟摘要</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>接口</th>
+                    <th>请求数</th>
+                    <th>失败数</th>
+                    <th>P95 延迟</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(dashboard.runtimeMetrics?.endpoint_metrics ?? {}).map(([endpoint, metrics]) => (
+                    <tr key={endpoint}>
+                      <td>{endpoint}</td>
+                      <td>{metrics.total_requests}</td>
+                      <td>{metrics.failed_requests}</td>
+                      <td>{metrics.p95_latency_ms} ms</td>
+                    </tr>
+                  ))}
+                  {Object.keys(dashboard.runtimeMetrics?.endpoint_metrics ?? {}).length === 0 && (
+                    <tr>
+                      <td colSpan={4}>暂无运行时指标</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </article>
           </div>
         </section>

@@ -6,10 +6,12 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 #include <openssl/sha.h>
 #include <random>
 #include <sstream>
@@ -26,6 +28,7 @@ constexpr auto kDrainTimeout = std::chrono::seconds(5);
 constexpr auto kRefreshRetryInterval = std::chrono::milliseconds(100);
 constexpr int kRefreshRetryAttempts = 10;
 constexpr int kMaxSimulateDelayMs = 2000;
+constexpr std::size_t kRecentLatencySampleLimit = 64;
 
 struct AdminTransitionRequestPayload {
     std::string action = "reload";
@@ -39,6 +42,31 @@ struct InferRequestPayload {
     std::string prefer_device = "auto";
     nlohmann::json options = nlohmann::json::object();
     int simulate_delay_ms = 0;
+};
+
+class ScopedEndpointMetricRecorder {
+public:
+    ScopedEndpointMetricRecorder(
+        AiProdHttpServer* owner_value,
+        std::string endpoint_value,
+        httplib::Response* response_value)
+        : owner(owner_value),
+          endpoint(std::move(endpoint_value)),
+          response(response_value),
+          started_at(std::chrono::steady_clock::now()) {
+    }
+
+    ~ScopedEndpointMetricRecorder() {
+        if (owner != nullptr && response != nullptr) {
+            owner->RecordEndpointMetric(endpoint, response->status, started_at);
+        }
+    }
+
+private:
+    AiProdHttpServer* owner = nullptr;
+    std::string endpoint;
+    httplib::Response* response = nullptr;
+    std::chrono::steady_clock::time_point started_at;
 };
 
 std::string EscapeJson(const std::string& value) {
@@ -115,6 +143,20 @@ std::string CurrentUtcIsoString() {
     std::ostringstream output;
     output << std::put_time(&utc_time, "%Y-%m-%dT%H:%M:%S") << "Z";
     return output.str();
+}
+
+double PercentileFromSamples(const std::deque<int>& samples, double ratio) {
+    if (samples.empty()) {
+        return 0.0;
+    }
+    std::vector<int> sorted(samples.begin(), samples.end());
+    std::sort(sorted.begin(), sorted.end());
+    const auto index = static_cast<std::size_t>(
+        std::clamp(
+            static_cast<int>(std::ceil(static_cast<double>(sorted.size()) * ratio)) - 1,
+            0,
+            static_cast<int>(sorted.size()) - 1));
+    return static_cast<double>(sorted[index]);
 }
 
 void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
@@ -370,6 +412,7 @@ AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
           config_value.license_auto_reload_interval_seconds),
       requestTracker(std::make_shared<InFlightRequestTracker>()),
       snapshotManager(config_value),
+      startedAt(std::chrono::steady_clock::now()),
       server(std::make_unique<httplib::Server>()) {
     licenseManager.Initialize();
     licenseManager.StartAutoReloadMonitor();
@@ -383,6 +426,37 @@ bool AiProdHttpServer::Start() {
 
 void AiProdHttpServer::Stop() {
     server->stop();
+}
+
+void AiProdHttpServer::RecordEndpointMetric(
+    const std::string& endpoint,
+    int status_code,
+    std::chrono::steady_clock::time_point started_at) {
+    const auto latency_ms = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count());
+    std::lock_guard<std::mutex> guard(metricsMutex);
+    auto& metrics = endpointMetrics[endpoint];
+    metrics.total_requests += 1;
+    if (status_code >= 200 && status_code < 400) {
+        metrics.successful_requests += 1;
+    } else {
+        metrics.failed_requests += 1;
+        metrics.last_error_at_utc = CurrentUtcIsoString();
+    }
+    metrics.last_status_code = status_code;
+    metrics.total_latency_ms += static_cast<double>(latency_ms);
+    if (metrics.total_requests == 1) {
+        metrics.min_latency_ms = static_cast<double>(latency_ms);
+        metrics.max_latency_ms = static_cast<double>(latency_ms);
+    } else {
+        metrics.min_latency_ms = std::min(metrics.min_latency_ms, static_cast<double>(latency_ms));
+        metrics.max_latency_ms = std::max(metrics.max_latency_ms, static_cast<double>(latency_ms));
+    }
+    metrics.status_code_counts[status_code] += 1;
+    metrics.recent_latency_ms.push_back(latency_ms);
+    while (metrics.recent_latency_ms.size() > kRecentLatencySampleLimit) {
+        metrics.recent_latency_ms.pop_front();
+    }
 }
 
 bool AiProdHttpServer::EnsureRuntimeReady() {
@@ -535,6 +609,108 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
     };
 }
 
+nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const {
+    std::lock_guard<std::mutex> runtime_guard(runtimeStateMutex);
+    std::lock_guard<std::mutex> metrics_guard(metricsMutex);
+
+    nlohmann::json endpoint_metrics = nlohmann::json::object();
+    for (const auto& entry : endpointMetrics) {
+        const auto& metrics = entry.second;
+        nlohmann::json status_counts = nlohmann::json::object();
+        for (const auto& status_entry : metrics.status_code_counts) {
+            status_counts[std::to_string(status_entry.first)] = status_entry.second;
+        }
+        endpoint_metrics[entry.first] = {
+            {"total_requests", metrics.total_requests},
+            {"successful_requests", metrics.successful_requests},
+            {"failed_requests", metrics.failed_requests},
+            {"avg_latency_ms", metrics.total_requests > 0
+                                   ? metrics.total_latency_ms / static_cast<double>(metrics.total_requests)
+                                   : 0.0},
+            {"min_latency_ms", metrics.total_requests > 0 ? metrics.min_latency_ms : 0.0},
+            {"p50_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.50)},
+            {"p95_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.95)},
+            {"p99_latency_ms", PercentileFromSamples(metrics.recent_latency_ms, 0.99)},
+            {"max_latency_ms", metrics.total_requests > 0 ? metrics.max_latency_ms : 0.0},
+            {"recent_sample_count", metrics.recent_latency_ms.size()},
+            {"last_status_code", metrics.last_status_code == 0 ? nlohmann::json(nullptr) : nlohmann::json(metrics.last_status_code)},
+            {"last_error_at_utc", metrics.last_error_at_utc.empty()
+                                      ? nlohmann::json(nullptr)
+                                      : nlohmann::json(metrics.last_error_at_utc)},
+            {"status_code_counts", status_counts},
+        };
+    }
+
+    nlohmann::json pool_metrics = nlohmann::json::array();
+    nlohmann::json capability_metrics = nlohmann::json::array();
+    int total_pool_slots = 0;
+    int total_busy_slots = 0;
+    int total_capability_requests = 0;
+    int total_capability_failures = 0;
+    for (const auto& entry : capabilityCatalog.ListEntries()) {
+        int busy_count = 0;
+        int total_size = entry.pool_size;
+        bool draining = false;
+        const auto pool_it = instancePools.find(entry.capability_name);
+        if (pool_it != instancePools.end() && pool_it->second) {
+            busy_count = pool_it->second->GetBusyCount();
+            total_size = pool_it->second->GetTotalSize();
+            draining = pool_it->second->IsDraining();
+        }
+        total_pool_slots += total_size;
+        total_busy_slots += busy_count;
+        pool_metrics.push_back(
+            {
+                {"capability_name", entry.capability_name},
+                {"pool_size", total_size},
+                {"busy_count", busy_count},
+                {"idle_count", std::max(0, total_size - busy_count)},
+                {"utilization_ratio", total_size > 0 ? static_cast<double>(busy_count) / static_cast<double>(total_size) : 0.0},
+                {"draining", draining},
+                {"device_mode", entry.device_mode},
+            });
+
+        const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
+        if (execution_metrics.has_value()) {
+            total_capability_requests += execution_metrics->value("total_requests", 0);
+            total_capability_failures += execution_metrics->value("failed_requests", 0);
+        }
+        capability_metrics.push_back(
+            {
+                {"capability_name", entry.capability_name},
+                {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
+            });
+    }
+
+    const auto uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - startedAt);
+    return {
+        {"service", "ai-prod-cpp-http"},
+        {"snapshot_ready", snapshot_ready},
+        {"runtime_state", runtimeStateMachine.GetStateName()},
+        {"runtime_state_error", runtimeStateMachine.GetLastError().empty()
+                                    ? nlohmann::json(nullptr)
+                                    : nlohmann::json(runtimeStateMachine.GetLastError())},
+        {"uptime_seconds", uptime_seconds.count()},
+        {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
+        {"active_request_count", requestTracker->GetActiveCount()},
+        {"pool_summary", {
+             {"capability_count", capabilityCatalog.ListEntries().size()},
+             {"total_pool_slots", total_pool_slots},
+             {"busy_pool_slots", total_busy_slots},
+             {"idle_pool_slots", std::max(0, total_pool_slots - total_busy_slots)},
+             {"utilization_ratio", total_pool_slots > 0 ? static_cast<double>(total_busy_slots) / static_cast<double>(total_pool_slots) : 0.0},
+         }},
+        {"request_summary", {
+             {"capability_total_requests", total_capability_requests},
+             {"capability_failed_requests", total_capability_failures},
+         }},
+        {"endpoint_metrics", endpoint_metrics},
+        {"pool_metrics", pool_metrics},
+        {"capability_metrics", capability_metrics},
+    };
+}
+
 std::shared_ptr<InstancePool> AiProdHttpServer::GetInstancePool(const std::string& capability_name) const {
     std::lock_guard<std::mutex> guard(runtimeStateMutex);
     const auto it = instancePools.find(capability_name);
@@ -594,6 +770,7 @@ bool AiProdHttpServer::WaitForPoolsIdle(
 void AiProdHttpServer::HandleInferRequest(
     const httplib::Request& request,
     httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "infer", &response);
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
     if (!RefreshCatalogAndPools()) {
@@ -912,6 +1089,7 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     const httplib::Request& request,
     httplib::Response& response,
     bool rollback) {
+    ScopedEndpointMetricRecorder recorder(this, rollback ? "admin_rollback" : "admin_reload", &response);
     std::unique_lock<std::mutex> transition_guard(runtimeTransitionMutex, std::try_to_lock);
     if (!transition_guard.owns_lock()) {
         ApplyJsonErrorResponse(409, "已有运行时切换任务正在执行。", response);
@@ -992,7 +1170,8 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
 
 void AiProdHttpServer::HandleLicenseStatusRequest(
     const httplib::Request&,
-    httplib::Response& response) const {
+    httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "license_status", &response);
     response.status = 200;
     response.set_content(
         BuildLicenseStatusPayload(licenseManager.GetStatus()).dump(),
@@ -1002,6 +1181,7 @@ void AiProdHttpServer::HandleLicenseStatusRequest(
 void AiProdHttpServer::HandleLicenseReloadRequest(
     const httplib::Request&,
     httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "admin_license_reload", &response);
     if (licenseManager.Reload()) {
         response.status = 200;
         response.set_content(
@@ -1180,6 +1360,7 @@ void AiProdHttpServer::RegisterRoutes() {
     });
 
     server->Get("/api/v1/health", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "health", &response);
         const auto snapshot_response = snapshotManager.BuildHealthResponse();
         if (!snapshot_response.ok) {
             ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
@@ -1189,6 +1370,7 @@ void AiProdHttpServer::RegisterRoutes() {
         response.set_content(snapshot_response.body, kDefaultJsonContentType);
     });
     server->Get("/api/v1/capabilities", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "capabilities", &response);
         const auto snapshot_response = snapshotManager.BuildCapabilitiesResponse();
         if (!snapshot_response.ok) {
             ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
@@ -1201,9 +1383,16 @@ void AiProdHttpServer::RegisterRoutes() {
         HandleLicenseStatusRequest(request, response);
     });
     server->Get("/api/v1/admin/catalog", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "admin_catalog", &response);
         const bool snapshot_ready = RefreshCatalogAndPools();
         response.status = 200;
         response.set_content(BuildCatalogPayload(snapshot_ready).dump(), kDefaultJsonContentType);
+    });
+    server->Get("/api/v1/admin/metrics", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "admin_metrics", &response);
+        const bool snapshot_ready = RefreshCatalogAndPools();
+        response.status = 200;
+        response.set_content(BuildMetricsPayload(snapshot_ready).dump(), kDefaultJsonContentType);
     });
     server->Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
         HandleAdminTransitionRequest(request, response, false);

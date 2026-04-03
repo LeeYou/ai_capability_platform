@@ -8,11 +8,12 @@ ai-prod 前端为 **内部测试 / 验收外壳**，基于 React + TypeScript + 
 2. 能力列表、license 状态、revision 与操作记录查询
 3. reload / rollback 管理操作入口
 4. 内置在线推理测试页面
+5. 运行时指标摘要与 endpoint 延迟分位可视化
 
 ## 内外边界
 
 1. 生产主链路由 C++ HTTP 服务承载，对外暴露 `/api/v1/*`
-2. 本前端通过 `/api/v1/*` 直连 C++ runtime API，通过 `/internal/*` 查询 Python 壳层内部 revision / operation / audit 等验收信息
+2. 本前端通过 `/api/v1/*` 直连 C++ runtime API（含 `/api/v1/admin/metrics`），通过 `/internal/*` 查询 Python 壳层内部 revision / operation / audit 等验收信息
 3. 本前端仅供研发、QA、交付联调阶段使用
 
 ## 本地运行

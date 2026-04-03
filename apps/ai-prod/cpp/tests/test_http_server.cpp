@@ -285,6 +285,24 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const auto initial_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(initial_metrics_result && initial_metrics_result->status == 200, "metrics route should respond")) {
+        return 1;
+    }
+    const auto initial_metrics_payload = nlohmann::json::parse(initial_metrics_result->body);
+    if (!Expect(initial_metrics_payload["pool_summary"]["capability_count"] == 1, "metrics should expose capability count")) {
+        return 1;
+    }
+    if (!Expect(initial_metrics_payload["endpoint_metrics"]["health"]["total_requests"] >= 1, "metrics should count health requests")) {
+        return 1;
+    }
+    if (!Expect(initial_metrics_payload["endpoint_metrics"]["capabilities"]["total_requests"] >= 1, "metrics should count capabilities requests")) {
+        return 1;
+    }
+    if (!Expect(initial_metrics_payload["endpoint_metrics"]["admin_catalog"]["total_requests"] >= 1, "metrics should count catalog requests")) {
+        return 1;
+    }
+
     const auto license_status_result = proxy_client.Get("/api/v1/license/status");
     if (!Expect(license_status_result && license_status_result->status == 200, "license status route should respond")) {
         return 1;
@@ -588,6 +606,27 @@ int main(int argc, char** argv) {
         }
     }
     if (!Expect(found_ocr_metrics, "catalog should include ocr metrics entry")) {
+        return 1;
+    }
+
+    const auto runtime_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(runtime_metrics_result && runtime_metrics_result->status == 200, "metrics route should respond after infer")) {
+        return 1;
+    }
+    const auto runtime_metrics_payload = nlohmann::json::parse(runtime_metrics_result->body);
+    if (!Expect(runtime_metrics_payload["request_summary"]["capability_total_requests"] >= 2, "metrics should aggregate capability request totals")) {
+        return 1;
+    }
+    if (!Expect(runtime_metrics_payload["endpoint_metrics"]["infer"]["total_requests"] >= 6, "metrics should count infer attempts")) {
+        return 1;
+    }
+    if (!Expect(runtime_metrics_payload["endpoint_metrics"]["infer"]["failed_requests"] >= 3, "metrics should count failed infer attempts")) {
+        return 1;
+    }
+    if (!Expect(runtime_metrics_payload["pool_summary"]["total_pool_slots"] == 4, "metrics should expose total pool slots after reload")) {
+        return 1;
+    }
+    if (!Expect(runtime_metrics_payload["endpoint_metrics"]["admin_reload"]["successful_requests"] == 1, "metrics should count successful reload")) {
         return 1;
     }
 

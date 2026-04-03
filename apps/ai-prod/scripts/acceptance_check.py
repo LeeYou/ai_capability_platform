@@ -61,6 +61,7 @@ def main() -> int:
     parser.add_argument("--capabilities-max-ms", type=int, default=1000)
     parser.add_argument("--license-max-ms", type=int, default=1000)
     parser.add_argument("--catalog-max-ms", type=int, default=1000)
+    parser.add_argument("--metrics-max-ms", type=int, default=1000)
     parser.add_argument("--infer-max-ms", type=int, default=5000)
     parser.add_argument("--capability", default="")
     parser.add_argument("--infer-payload", default='{"image":"demo"}')
@@ -117,6 +118,21 @@ def main() -> int:
             max_latency_ms=args.catalog_max_ms,
             predicate=isinstance(catalog_payload, dict) and "items" in catalog_payload,
             detail=f"status={catalog_status}, payload={catalog_payload}",
+        )
+    )
+
+    metrics_status, metrics_payload, metrics_latency = request_json(args.base_url, "/api/v1/admin/metrics", timeout=args.timeout)
+    results.append(
+        run_check(
+            "metrics",
+            status_code=metrics_status,
+            latency_ms=metrics_latency,
+            max_latency_ms=args.metrics_max_ms,
+            predicate=isinstance(metrics_payload, dict)
+            and "endpoint_metrics" in metrics_payload
+            and "pool_summary" in metrics_payload
+            and "request_summary" in metrics_payload,
+            detail=f"status={metrics_status}, payload={metrics_payload}",
         )
     )
 

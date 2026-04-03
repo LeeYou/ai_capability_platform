@@ -32,6 +32,7 @@
 | P22 | 补齐统一输入 payload codec 与多格式编解码收口 | 已完成 |
 | P23 | 补齐基于 revision 的能力快照持久化与真实回滚恢复 | 已完成 |
 | P24 | 完成 Python 验收外壳内化与 C++ 生产主链路去回退收口 | 已完成 |
+| P25 | 补齐统一运行时指标聚合与生产验收基线输出 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -72,11 +73,12 @@
 21. 当前已完成 P22：C++ 侧已新增统一输入 `payload codec`，对 `image / video / pdf` 请求补齐 base64 解码与格式校验，并将解码后的统一 payload 直接送入插件执行链路；推理结果与审计日志同时补齐 `input_metadata`，进一步收口多格式输入的 C++ 运行时处理能力。
 22. 当前已完成 P23：reload / bootstrap 会把能力级模型目录、插件目录、插件文件、manifest 元数据持久化到 revision 明细；rollback 会优先恢复目标 revision 持久化的具体资源路径与版本，而不是仅按能力名重扫当前目录，Python 内部验收外壳也已对齐相同行为，并补齐“升级到新版本后回滚恢复旧版本”的 C++ / Python 测试覆盖。
 23. 当前已完成 P24：Python backend 生命周期不再执行 runtime bootstrap，也不再暴露公开 `/api/v1/*` 生产运行接口，仅保留 `/internal/*` 诊断查询能力；C++ 生产主链路对 health / capabilities / infer 不再回退 Python backend，当 runtime snapshot 不可用时直接返回生产态错误，前端开发代理与页面调用也已显式拆分 C++ runtime API 与 Python internal API。
+24. 当前已完成 P25：C++ 生产主链路已新增 `/api/v1/admin/metrics` 统一运行时指标接口，按 endpoint 聚合请求量、成功/失败数、状态码分布与近期延迟分位，同时输出实例池利用率、能力级执行汇总与 uptime；内部验收前端、验收脚本与压测脚本也已对齐接入该指标输出，进一步固化交付阶段的观测与基线留痕。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化与 reload/rollback 管理闭环，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
+1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化、统一运行时指标聚合与 reload/rollback 管理闭环，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P24：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec` 与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态、错误信息、active request 详情以及 capability 级 `execution_metrics` / `plugin_info` / lifecycle 状态；同时 revision 明细已持久化完整能力资源快照，rollback 会恢复目标 revision 的具体模型/插件路径与版本，不再只按能力名重扫当前目录，Python backend 生命周期也已不再执行 runtime bootstrap、公开 `/api/v1/*` 生产接口已完全内化为 `/internal/*` 诊断壳层，前端调用链路已显式区分 C++ runtime API 与 Python internal API。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。
+ai-prod 当前已完成 P9-P25：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并同时输出 endpoint 请求量/状态码/延迟分位、实例池利用率与能力级执行汇总；同时 revision 明细已持久化完整能力资源快照，rollback 会恢复目标 revision 的具体模型/插件路径与版本，不再只按能力名重扫当前目录，Python backend 生命周期也已不再执行 runtime bootstrap、公开 `/api/v1/*` 生产接口已完全内化为 `/internal/*` 诊断壳层，前端调用链路与验收/压测脚本也已显式对齐新的运行时指标输出。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。
