@@ -29,6 +29,7 @@
 | P19 | 补齐请求级跟踪、RAII 租约与 drain 等待收口 | 已完成 |
 | P20 | 深化插件生命周期观测并补齐能力级执行指标 | 已完成 |
 | P21 | 补齐插件 warmup/health_check 生命周期钩子与观测 | 已完成 |
+| P22 | 补齐统一输入 payload codec 与多格式编解码收口 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -66,11 +67,12 @@
 18. 当前已完成 P19：C++ infer 主链路已新增请求级 in-flight 跟踪与 RAII 请求租约，`/api/v1/admin/catalog` 可输出 active request 详情，reload/rollback drain 阶段会等待活动请求清空后再切换，进一步收口请求生命周期与切换安全。
 19. 当前已完成 P20：C++ 插件执行层已补齐能力级执行指标聚合与插件信息快照，`/api/v1/admin/catalog` 可输出 capability 级 `execution_metrics` 与 `plugin_info`，用于观测请求量、成功/失败次数、推理耗时及当前插件元数据。
 20. 当前已完成 P21：C++ 插件执行层已补齐可选 `warmup` / `health_check` 生命周期钩子装载与执行，生命周期状态、时间戳与失败信息会并入 capability 级 `execution_metrics`，并通过 `/api/v1/admin/catalog` 暴露，进一步收敛插件装载后的可观测性与自检能力。
+21. 当前已完成 P22：C++ 侧已新增统一输入 `payload codec`，对 `image / video / pdf` 请求补齐 base64 解码与格式校验，并将解码后的统一 payload 直接送入插件执行链路；推理结果与审计日志同时补齐 `input_metadata`，进一步收口多格式输入的 C++ 运行时处理能力。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook 收口与 reload/rollback 管理闭环，但更完整的运行时版本切换与最终 Python runtime 替换仍未完成，真实 C++ Runtime 的最终收口仍需继续推进。
+1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec 与 reload/rollback 管理闭环，但更完整的运行时版本切换与最终 Python runtime 替换仍未完成，真实 C++ Runtime 的最终收口仍需继续推进。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P21：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态、错误信息、active request 详情以及 capability 级 `execution_metrics` / `plugin_info` / lifecycle 状态。当前后续重点继续转向更完整的运行时版本切换与最终 C++ Runtime 替换。
+ai-prod 当前已完成 P9-P22：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec` 与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态、错误信息、active request 详情以及 capability 级 `execution_metrics` / `plugin_info` / lifecycle 状态；同时 `image / video / pdf` 输入已在 C++ 侧补齐 base64 解码、格式校验与输入元信息回填。当前后续重点继续转向更完整的运行时版本切换与最终 C++ Runtime 替换。
