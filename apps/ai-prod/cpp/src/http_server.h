@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 class AiProdHttpServer {
 public:
@@ -29,14 +30,17 @@ private:
         httplib::Response& response) const;
     bool RefreshCatalogAndPools();
     nlohmann::json BuildCatalogPayload(bool snapshot_ready) const;
+    void HandleInferRequest(const httplib::Request& request, httplib::Response& response);
+    std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     void RegisterRoutes();
 
     ProxyConfig config;
     CapabilityCatalog capabilityCatalog;
     AiProdBackendClient backendClient;
-    std::map<std::string, std::unique_ptr<InstancePool>> instancePools;
+    std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
     RuntimeSnapshotManager snapshotManager;
     mutable std::mutex runtimeStateMutex;
+    int activeCatalogRevisionId = 0;
     std::unique_ptr<httplib::Server> server;
 };
 

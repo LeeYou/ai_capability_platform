@@ -47,7 +47,8 @@ ctest --test-dir build --output-on-failure
 3. snapshot 不可用或过期时，自动降级转发到 Python 后端 `127.0.0.1:26004`
 4. 已补齐 `/api/v1/admin/rollback` 到 Python `/api/v1/admin/reload` 的兼容适配
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
-6. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
+6. snapshot 可用时，`/api/v1/infer/{capability_name}` 已接入 C++ 侧能力存在性校验、实例池借还与繁忙保护
+7. 作为后续替换为真实 C++ Runtime 主链路的过渡实现
 
 可选环境变量：
 

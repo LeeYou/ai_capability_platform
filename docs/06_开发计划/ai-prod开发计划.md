@@ -44,14 +44,15 @@
 4. 当前继续推进 P9 第二轮实施，已开始将 C++ 路由层拆分为独立服务类，并补齐设计文档要求的 rollback 管理路由适配。
 5. 当前继续推进 P9 第三轮实施，已为 health/capabilities/license 查询接口引入基于 runtime snapshot 的 C++ 直接响应，并保留自动降级转发。
 6. 当前已启动 P10 首轮实施，在 C++ 侧新增 capability catalog 与轻量实例池骨架，并提供 `/api/v1/admin/catalog` 诊断接口。
+7. 当前继续推进 P10 第二轮实施，已让 infer 路由接入 capability catalog 与轻量实例池借还流程，并补齐未知能力/池繁忙保护。
 
 ### 4.3 未完成
 
-1. C++ HTTP 主服务尚未完全替换当前仓库的 ai-prod 主链路，当前已进入 P10 首轮增强阶段，完成了服务类拆分、rollback 路由兼容适配、查询接口直读 snapshot 与 catalog/pool 骨架。
-2. C++ Runtime / 插件管理 / 实例池 / drain / rollback 机制尚未成为当前实际生产实现，现阶段仅完成 metadata catalog 与轻量实例池诊断能力。
+1. C++ HTTP 主服务尚未完全替换当前仓库的 ai-prod 主链路，当前已进入 P10 第二轮增强阶段，完成了服务类拆分、rollback 路由兼容适配、查询接口直读 snapshot、catalog/pool 骨架与 infer 前置借还控制。
+2. C++ Runtime / 插件管理 / 实例池 / drain / rollback 机制尚未成为当前实际生产实现，现阶段已完成 metadata catalog、轻量实例池诊断与 infer 级别的最小借还保护。
 3. Python 测试页尚未转型为仅服务内部人工验收的交互外壳。
 4. 面向客户交付的性能、稳定性、更新回滚规范尚未完全固化。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已进入 P10 首轮融合实施：在保持现有 Python runtime 可用的前提下，C++ 侧不仅承担查询接口 snapshot 直读，还新增了 capability catalog 与轻量实例池骨架，通过 `/api/v1/admin/catalog` 暴露目录与池状态，为后续真正接管 Runtime / drain / reload 奠定结构基础；当前已完成本地编译、单测与端到端验证，持续向真实可商业交付的 C++ 工业运行底座收敛。
+ai-prod 当前已进入 P10 第二轮融合实施：在保持现有 Python runtime 可用的前提下，C++ 侧不仅承担查询接口 snapshot 直读，还进一步把 infer 路由接入 capability catalog 与轻量实例池借还流程，能够前置拒绝未知能力和池繁忙请求，并通过 `/api/v1/admin/catalog` 持续暴露目录与池状态，为后续真正接管 Runtime / drain / reload 奠定更直接的运行控制基础；当前已完成本地编译、单测与端到端验证，持续向真实可商业交付的 C++ 工业运行底座收敛。

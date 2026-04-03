@@ -9,6 +9,9 @@
 namespace {
 
 constexpr char kDefaultJsonContentType[] = "application/json; charset=utf-8";
+constexpr char kInstanceIdHeader[] = "X-AI-Prod-Instance-Id";
+constexpr char kPreferredDeviceHeader[] = "X-AI-Prod-Preferred-Device";
+constexpr char kRuntimeRevisionIdHeader[] = "X-AI-Prod-Runtime-Revision-Id";
 
 std::string ToLowerCopy(const std::string& value) {
     std::string lowered = value;
@@ -54,6 +57,16 @@ std::string EscapeJson(const std::string& value) {
         }
     }
     return escaped;
+}
+
+void ApplyJsonErrorResponse(
+    int status,
+    const std::string& message,
+    httplib::Response& response) {
+    response.status = status;
+    response.set_content(
+        "{\"status\":\"error\",\"message\":\"" + EscapeJson(message) + "\"}",
+        kDefaultJsonContentType);
 }
 
 }
@@ -114,9 +127,14 @@ bool AiProdHttpServer::RefreshCatalogAndPools() {
         return false;
     }
 
-    std::map<std::string, std::unique_ptr<InstancePool>> next_pools;
+    const int revision_id = capabilityCatalog.GetRevisionId();
+    if (revision_id == activeCatalogRevisionId && !instancePools.empty()) {
+        return true;
+    }
+
+    std::map<std::string, std::shared_ptr<InstancePool>> next_pools;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
-        auto pool = std::make_unique<InstancePool>();
+        auto pool = std::make_shared<InstancePool>();
         pool->Reset(
             entry.capability_name,
             entry.pool_size > 0 ? entry.pool_size : config.pool_size,
@@ -124,6 +142,7 @@ bool AiProdHttpServer::RefreshCatalogAndPools() {
         next_pools.emplace(entry.capability_name, std::move(pool));
     }
     instancePools = std::move(next_pools);
+    activeCatalogRevisionId = revision_id;
     return true;
 }
 
@@ -158,6 +177,57 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
         {"items", items},
     };
+}
+
+std::shared_ptr<InstancePool> AiProdHttpServer::GetInstancePool(const std::string& capability_name) const {
+    std::lock_guard<std::mutex> guard(runtimeStateMutex);
+    const auto it = instancePools.find(capability_name);
+    if (it == instancePools.end()) {
+        return {};
+    }
+    return it->second;
+}
+
+void AiProdHttpServer::HandleInferRequest(
+    const httplib::Request& request,
+    httplib::Response& response) {
+    const std::string capability_name =
+        request.matches.size() > 1 ? request.matches[1].str() : std::string();
+    const auto content_type = request.get_header_value("Content-Type");
+    auto headers = BuildForwardHeaders(request);
+
+    if (!RefreshCatalogAndPools()) {
+        ApplyBackendResponse(
+            backendClient.ForwardPost(request.path, request.body, content_type, headers),
+            response);
+        return;
+    }
+
+    const auto catalog_entry = capabilityCatalog.GetEntry(capability_name);
+    if (!catalog_entry.has_value()) {
+        ApplyJsonErrorResponse(404, "能力不存在或未装载。", response);
+        return;
+    }
+
+    const auto pool = GetInstancePool(capability_name);
+    if (!pool) {
+        ApplyJsonErrorResponse(503, "能力实例池不可用。", response);
+        return;
+    }
+
+    const auto lease = pool->Acquire();
+    if (!lease.has_value()) {
+        ApplyJsonErrorResponse(503, "能力实例池繁忙，请稍后重试。", response);
+        return;
+    }
+
+    headers.emplace(kInstanceIdHeader, lease->instance_id);
+    headers.emplace(kPreferredDeviceHeader, lease->preferred_device);
+    headers.emplace(kRuntimeRevisionIdHeader, std::to_string(catalog_entry->revision_id));
+
+    const auto backend_response = backendClient.ForwardPost(request.path, request.body, content_type, headers);
+    pool->Release(lease->slot_index);
+    ApplyBackendResponse(backend_response, response);
 }
 
 void AiProdHttpServer::RegisterRoutes() {
@@ -205,9 +275,6 @@ void AiProdHttpServer::RegisterRoutes() {
             response);
     });
     server->Post(R"(/api/v1/infer/([^/]+))", [&](const httplib::Request& request, httplib::Response& response) {
-        const auto content_type = request.get_header_value("Content-Type");
-        ApplyBackendResponse(
-            backendClient.ForwardPost(request.path, request.body, content_type, BuildForwardHeaders(request)),
-            response);
+        HandleInferRequest(request, response);
     });
 }
