@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -125,7 +125,7 @@ class AcceptanceTaskModel(Base):
     infer_payload: Mapped[str] = mapped_column(Text)
     prefer_device: Mapped[str] = mapped_column(String(32), default="auto")
     acceptance_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
-    run_admin_checks: Mapped[str] = mapped_column(String(8), default="false")
+    run_admin_checks: Mapped[bool] = mapped_column(Boolean, default=False)
     pressure_requests: Mapped[int] = mapped_column(Integer, default=32)
     pressure_concurrency: Mapped[int] = mapped_column(Integer, default=8)
     pressure_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import traceback
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -36,7 +37,11 @@ class AcceptanceTaskCreatePayload:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[5]
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / ".git").exists() or (parent / "docs" / "06_开发计划" / "总体开发计划.md").is_file():
+            return parent
+    raise ValueError("无法定位仓库根目录。")
 
 
 def _script_path(script_name: str) -> Path:
@@ -193,7 +198,7 @@ def create_acceptance_task(
         infer_payload=payload.infer_payload,
         prefer_device=payload.prefer_device,
         acceptance_timeout_seconds=payload.acceptance_timeout_seconds,
-        run_admin_checks="true" if payload.run_admin_checks else "false",
+        run_admin_checks=payload.run_admin_checks,
         pressure_requests=payload.pressure_requests,
         pressure_concurrency=payload.pressure_concurrency,
         pressure_timeout_seconds=payload.pressure_timeout_seconds,
@@ -245,7 +250,7 @@ def create_acceptance_task(
             raw_output=acceptance_output,
             error_message=None if acceptance_passed else "acceptance_check 验收失败。",
         )
-    except Exception as exc:  # noqa: BLE001
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError) as exc:
         _store_script_result(
             session,
             task=task,
@@ -253,7 +258,7 @@ def create_acceptance_task(
             status="failed",
             duration_ms=0,
             actual_output="failed",
-            raw_output={"error": str(exc), "script": "acceptance_check"},
+            raw_output={"error": str(exc), "traceback": traceback.format_exc(), "script": "acceptance_check"},
             error_message=str(exc),
         )
 
@@ -314,7 +319,7 @@ def create_acceptance_task(
             raw_output=pressure_output,
             error_message=None if pressure_passed else "pressure_smoke 验收失败。",
         )
-    except Exception as exc:  # noqa: BLE001
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, ValueError) as exc:
         _store_script_result(
             session,
             task=task,
@@ -322,7 +327,7 @@ def create_acceptance_task(
             status="failed",
             duration_ms=0,
             actual_output="failed",
-            raw_output={"error": str(exc), "script": "pressure_smoke"},
+            raw_output={"error": str(exc), "traceback": traceback.format_exc(), "script": "pressure_smoke"},
             error_message=str(exc),
         )
 
