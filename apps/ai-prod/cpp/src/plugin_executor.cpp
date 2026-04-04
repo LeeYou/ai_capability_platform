@@ -157,6 +157,9 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     std::string last_warmup_at_utc;
     std::string last_health_check_at_utc;
     std::string lifecycle_error_message;
+    int fallback_count = 0;
+    std::string last_fallback_at_utc;
+    std::string last_fallback_reason;
 
     for (const auto& item : bindings) {
         const auto& binding = item.second;
@@ -189,11 +192,18 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
                                            : nlohmann::json(binding.last_warmup_at_utc)},
                 {"health_check_status", binding.health_check_status},
                 {"last_health_check_at_utc", binding.last_health_check_at_utc.empty()
-                                                 ? nlohmann::json(nullptr)
-                                                 : nlohmann::json(binding.last_health_check_at_utc)},
+                                                  ? nlohmann::json(nullptr)
+                                                  : nlohmann::json(binding.last_health_check_at_utc)},
                 {"lifecycle_error_message", binding.lifecycle_error_message.empty()
-                                                ? nlohmann::json(nullptr)
-                                                : nlohmann::json(binding.lifecycle_error_message)},
+                                                 ? nlohmann::json(nullptr)
+                                                 : nlohmann::json(binding.lifecycle_error_message)},
+                {"fallback_count", binding.fallback_count},
+                {"last_fallback_at_utc", binding.last_fallback_at_utc.empty()
+                                             ? nlohmann::json(nullptr)
+                                             : nlohmann::json(binding.last_fallback_at_utc)},
+                {"last_fallback_reason", binding.last_fallback_reason.empty()
+                                              ? nlohmann::json(nullptr)
+                                              : nlohmann::json(binding.last_fallback_reason)},
                 {"plugin_info", binding.plugin_info_loaded ? SerializePluginInfo(binding.plugin_info) : nlohmann::json(nullptr)},
             });
 
@@ -222,6 +232,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         if (!binding.lifecycle_error_message.empty()) {
             lifecycle_error_message = binding.lifecycle_error_message;
         }
+        fallback_count += binding.fallback_count;
+        if (binding.last_fallback_at_utc >= last_fallback_at_utc) {
+            last_fallback_at_utc = binding.last_fallback_at_utc;
+            last_fallback_reason = binding.last_fallback_reason;
+        }
     }
 
     if (bindings_payload.empty()) {
@@ -244,8 +259,33 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         {"health_check_status", health_check_status == "unknown" ? "not_supported" : health_check_status},
         {"last_health_check_at_utc", last_health_check_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_health_check_at_utc)},
         {"lifecycle_error_message", lifecycle_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(lifecycle_error_message)},
+        {"fallback_count", fallback_count},
+        {"last_fallback_at_utc", last_fallback_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_fallback_at_utc)},
+        {"last_fallback_reason", last_fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_fallback_reason)},
         {"bindings", bindings_payload},
     };
+}
+
+void PluginExecutor::RecordFallback(const std::string& capability_name, const std::string& device, const std::string& reason) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* target_binding = nullptr;
+    const auto cache_it = bindings.find(BuildCacheKey(capability_name, device));
+    if (cache_it != bindings.end()) {
+        target_binding = &cache_it->second;
+    } else {
+        for (auto& item : bindings) {
+            if (item.second.capability_name == capability_name) {
+                target_binding = &item.second;
+                break;
+            }
+        }
+    }
+    if (target_binding == nullptr) {
+        return;
+    }
+    target_binding->fallback_count += 1;
+    target_binding->last_fallback_at_utc = CurrentUtcIsoString();
+    target_binding->last_fallback_reason = reason;
 }
 
 bool PluginExecutor::Execute(
@@ -257,15 +297,29 @@ bool PluginExecutor::Execute(
     const std::string& device,
     const std::string& request_id,
     PluginExecutionResult* result,
-    std::string* error_message) {
+    std::string* error_message,
+    PluginFailureKind* failure_kind) {
+    if (failure_kind != nullptr) {
+        *failure_kind = PluginFailureKind::kNone;
+    }
     std::lock_guard<std::mutex> guard(mutex);
     PluginBinding* binding = nullptr;
     if (!EnsureBindingLoaded(entry, device, &binding, error_message)) {
+        if (failure_kind != nullptr) {
+            const std::string error = error_message != nullptr ? *error_message : std::string();
+            *failure_kind =
+                error == "能力插件预热失败。" || error == "能力插件健康检查失败。"
+                    ? PluginFailureKind::kLifecycleFailure
+                    : PluginFailureKind::kBindingLoadFailure;
+        }
         return false;
     }
     if (binding == nullptr || slot_index >= binding->plugin_handles.size()) {
         if (error_message != nullptr) {
             *error_message = "插件实例槽位不可用。";
+        }
+        if (failure_kind != nullptr) {
+            *failure_kind = PluginFailureKind::kSlotUnavailable;
         }
         return false;
     }
@@ -295,6 +349,9 @@ bool PluginExecutor::Execute(
                 : "插件推理执行失败。";
         if (error_message != nullptr) {
             *error_message = binding->last_error_message;
+        }
+        if (failure_kind != nullptr) {
+            *failure_kind = PluginFailureKind::kInferFailure;
         }
         if (binding->free_result != nullptr) {
             binding->free_result(&output);

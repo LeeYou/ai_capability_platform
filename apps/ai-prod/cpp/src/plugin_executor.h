@@ -18,6 +18,14 @@ struct PluginExecutionResult {
     double infer_time_ms = 0.0;
 };
 
+enum class PluginFailureKind {
+    kNone = 0,
+    kBindingLoadFailure,
+    kLifecycleFailure,
+    kInferFailure,
+    kSlotUnavailable,
+};
+
 class PluginExecutor {
 public:
     PluginExecutor();
@@ -25,6 +33,7 @@ public:
 
     void SyncEntries(const std::vector<CapabilityCatalogEntry>& entries);
     std::optional<nlohmann::json> GetCapabilityMetrics(const std::string& capability_name) const;
+    void RecordFallback(const std::string& capability_name, const std::string& device, const std::string& reason);
     bool Execute(
         const CapabilityCatalogEntry& entry,
         std::size_t slot_index,
@@ -34,7 +43,8 @@ public:
         const std::string& device,
         const std::string& request_id,
         PluginExecutionResult* result,
-        std::string* error_message);
+        std::string* error_message,
+        PluginFailureKind* failure_kind = nullptr);
 
 private:
     struct PluginBinding {
@@ -67,6 +77,9 @@ private:
         std::string health_check_status = "not_supported";
         std::string last_health_check_at_utc;
         std::string lifecycle_error_message;
+        int fallback_count = 0;
+        std::string last_fallback_at_utc;
+        std::string last_fallback_reason;
         AiPluginInfo plugin_info{};
         bool plugin_info_loaded = false;
     };

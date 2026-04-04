@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
 
     PluginExecutionResult result;
     std::string error_message;
+    PluginFailureKind failure_kind = PluginFailureKind::kNone;
     if (!Expect(
             executor.Execute(
                 entry,
@@ -67,7 +68,8 @@ int main(int argc, char** argv) {
                 "cpu",
                 "req-cpu-1",
                 &result,
-                &error_message),
+                &error_message,
+                &failure_kind),
             error_message.c_str())) {
         return 1;
     }
@@ -90,7 +92,8 @@ int main(int argc, char** argv) {
                 "cpu",
                 "req-cpu-2",
                 &result,
-                &error_message),
+                &error_message,
+                &failure_kind),
             error_message.c_str())) {
         return 1;
     }
@@ -146,7 +149,8 @@ int main(int argc, char** argv) {
                 "gpu",
                 "req-gpu-1",
                 &result,
-                &error_message),
+                &error_message,
+                &failure_kind),
             error_message.c_str())) {
         return 1;
     }
@@ -187,11 +191,15 @@ int main(int argc, char** argv) {
                 "cpu",
                 "req-warmup-fail",
                 &result,
-                &error_message),
+                &error_message,
+                &failure_kind),
             "warmup failure should reject plugin load")) {
         return 1;
     }
     if (!Expect(error_message == "能力插件预热失败。", "warmup failure should return lifecycle error")) {
+        return 1;
+    }
+    if (!Expect(failure_kind == PluginFailureKind::kLifecycleFailure, "warmup failure should classify as lifecycle failure")) {
         return 1;
     }
 
@@ -208,11 +216,64 @@ int main(int argc, char** argv) {
                 "cpu",
                 "req-health-fail",
                 &result,
-                &error_message),
+                &error_message,
+                &failure_kind),
             "health check failure should reject plugin load")) {
         return 1;
     }
     if (!Expect(error_message == "能力插件健康检查失败。", "health failure should return lifecycle error")) {
+        return 1;
+    }
+
+    entry.capability_name = "gpu_fallback";
+    entry.model_root = (temp_root / "models" / "gpucheckfail" / "v1_0_0").string();
+    entry.max_batch_size = 2;
+    WriteText(std::filesystem::path(entry.model_root) / "manifest.json", R"({"capability_name":"gpu_fallback","model_version":"v1_0_0"})");
+    if (!Expect(
+            !executor.Execute(
+                entry,
+                0,
+                "json",
+                "{\"image\":\"demo\"}",
+                nlohmann::json::object(),
+                "gpu",
+                "req-gpu-fail",
+                &result,
+                &error_message,
+                &failure_kind),
+            "gpu health failure should reject gpu binding")) {
+        return 1;
+    }
+    if (!Expect(failure_kind == PluginFailureKind::kLifecycleFailure, "gpu health failure should classify as lifecycle failure")) {
+        return 1;
+    }
+    if (!Expect(error_message == "能力插件健康检查失败。", "gpu health failure should surface lifecycle error")) {
+        return 1;
+    }
+    if (!Expect(
+            executor.Execute(
+                entry,
+                0,
+                "json",
+                "{\"image\":\"demo\"}",
+                nlohmann::json::object(),
+                "cpu",
+                "req-cpu-fallback",
+                &result,
+                &error_message,
+                &failure_kind),
+            error_message.c_str())) {
+        return 1;
+    }
+    executor.RecordFallback("gpu_fallback", "cpu", "能力插件健康检查失败。");
+    const auto fallback_metrics = executor.GetCapabilityMetrics("gpu_fallback");
+    if (!Expect(fallback_metrics.has_value(), "fallback metrics should exist after cpu execution")) {
+        return 1;
+    }
+    if (!Expect((*fallback_metrics)["fallback_count"] == 1, "fallback metrics should count recorded fallback")) {
+        return 1;
+    }
+    if (!Expect((*fallback_metrics)["last_fallback_reason"] == "能力插件健康检查失败。", "fallback metrics should expose last fallback reason")) {
         return 1;
     }
 

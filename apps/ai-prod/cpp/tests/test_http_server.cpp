@@ -168,6 +168,17 @@ int main(int argc, char** argv) {
         built_plugin_path,
         image_root / "libs" / "linux_x86_64" / "ocr" / "lib" / "libocr.so",
         std::filesystem::copy_options::overwrite_existing);
+    WriteTextFile(
+        image_root / "models" / "pose_estimate" / "gpucheckfail_v1_0_0" / "manifest.json",
+        R"({"capability_name":"pose_estimate","model_version":"gpucheckfail_v1_0_0","backend_type":"onnxruntime","max_batch_size":2})");
+    WriteTextFile(
+        image_root / "libs" / "linux_x86_64" / "pose_estimate" / "manifest" / "manifest.json",
+        R"({"capability_name":"pose_estimate","target_name":"linux_x86_64","build_mode":"template","instance_count":2})");
+    std::filesystem::create_directories(image_root / "libs" / "linux_x86_64" / "pose_estimate" / "lib");
+    std::filesystem::copy_file(
+        built_plugin_path,
+        image_root / "libs" / "linux_x86_64" / "pose_estimate" / "lib" / "libpose_estimate.so",
+        std::filesystem::copy_options::overwrite_existing);
     WriteSnapshot(
         snapshot_path,
         9,
@@ -183,7 +194,7 @@ int main(int argc, char** argv) {
     };
     nlohmann::json license_payload = {
         {"customer_code", "cust_prod"},
-        {"capability_scope", nlohmann::json::array({"face_detect", "ocr"})},
+        {"capability_scope", nlohmann::json::array({"face_detect", "ocr", "pose_estimate"})},
         {"hardware_fingerprint", test_license_helpers::BuildHardwareFingerprint(hardware_features)},
         {"start_at_cst", NowCstWithOffset(-1)},
         {"expire_at_cst", NowCstWithOffset(30)},
@@ -334,7 +345,7 @@ int main(int argc, char** argv) {
     if (!Expect(license_status_payload["valid"] == true, "license status should be valid")) {
         return 1;
     }
-    if (!Expect(license_status_payload["capability_scope"].size() == 2, "license status should expose capability scope")) {
+    if (!Expect(license_status_payload["capability_scope"].size() == 3, "license status should expose capability scope")) {
         return 1;
     }
 
@@ -657,7 +668,7 @@ int main(int argc, char** argv) {
     if (!Expect(reloaded_catalog_payload["draining"] == false, "catalog should leave draining state after reload")) {
         return 1;
     }
-    if (!Expect(reloaded_catalog_payload["items"].size() == 2, "reload should publish merged capabilities")) {
+    if (!Expect(reloaded_catalog_payload["items"].size() == 3, "reload should publish merged capabilities")) {
         return 1;
     }
     const auto ocr_infer_result = proxy_client.Post(
@@ -693,6 +704,29 @@ int main(int argc, char** argv) {
     }
     const auto pdf_infer_payload = nlohmann::json::parse(pdf_infer_result->body);
     if (!Expect(pdf_infer_payload["result"]["input_metadata"]["detected_format"] == "pdf", "pdf infer should expose decoded format metadata")) {
+        return 1;
+    }
+    const auto fallback_infer_result = proxy_client.Post(
+        "/api/v1/infer/pose_estimate",
+        "{\"input_type\":\"json\",\"payload\":\"demo-fallback\",\"prefer_device\":\"gpu\"}",
+        "application/json");
+    if (!Expect(fallback_infer_result && fallback_infer_result->status == 200, "gpu lifecycle failure should fallback to cpu")) {
+        return 1;
+    }
+    const auto fallback_infer_payload = nlohmann::json::parse(fallback_infer_result->body);
+    if (!Expect(fallback_infer_payload["requested_device"] == "gpu", "fallback infer should preserve requested device")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["device"] == "cpu", "fallback infer should execute on cpu")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["result"]["fallback_applied"] == true, "fallback infer should mark fallback applied")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["result"]["plugin_result"]["device"] == "cpu", "fallback infer should use cpu plugin binding")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["result"]["fallback_reason"] == "能力插件健康检查失败。", "fallback infer should expose lifecycle fallback reason")) {
         return 1;
     }
     const auto metrics_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
@@ -737,13 +771,29 @@ int main(int argc, char** argv) {
     if (!Expect(found_ocr_metrics, "catalog should include ocr metrics entry")) {
         return 1;
     }
+    bool found_fallback_metrics = false;
+    for (const auto& item : metrics_catalog_payload["items"]) {
+        if (item["capability_name"] != "pose_estimate") {
+            continue;
+        }
+        found_fallback_metrics = true;
+        if (!Expect(item["execution_metrics"]["fallback_count"] == 1, "catalog metrics should count gpu to cpu fallback")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["last_fallback_reason"] == "能力插件健康检查失败。", "catalog metrics should expose last fallback reason")) {
+            return 1;
+        }
+    }
+    if (!Expect(found_fallback_metrics, "catalog should include fallback metrics entry")) {
+        return 1;
+    }
 
     const auto runtime_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
     if (!Expect(runtime_metrics_result && runtime_metrics_result->status == 200, "metrics route should respond after infer")) {
         return 1;
     }
     const auto runtime_metrics_payload = nlohmann::json::parse(runtime_metrics_result->body);
-    if (!Expect(runtime_metrics_payload["request_summary"]["capability_total_requests"] >= 2, "metrics should aggregate capability request totals")) {
+    if (!Expect(runtime_metrics_payload["request_summary"]["capability_total_requests"] >= 3, "metrics should aggregate capability request totals")) {
         return 1;
     }
     if (!Expect(runtime_metrics_payload["endpoint_metrics"]["infer"]["total_requests"] >= 6, "metrics should count infer attempts")) {
@@ -752,10 +802,23 @@ int main(int argc, char** argv) {
     if (!Expect(runtime_metrics_payload["endpoint_metrics"]["infer"]["failed_requests"] >= 3, "metrics should count failed infer attempts")) {
         return 1;
     }
-    if (!Expect(runtime_metrics_payload["pool_summary"]["total_pool_slots"] == 4, "metrics should expose total pool slots after reload")) {
+    if (!Expect(runtime_metrics_payload["pool_summary"]["total_pool_slots"] == 6, "metrics should expose total pool slots after reload")) {
         return 1;
     }
     if (!Expect(runtime_metrics_payload["endpoint_metrics"]["admin_reload"]["successful_requests"] == 1, "metrics should count successful reload")) {
+        return 1;
+    }
+    bool found_fallback_capability_metrics = false;
+    for (const auto& item : runtime_metrics_payload["capability_metrics"]) {
+        if (item["capability_name"] != "pose_estimate") {
+            continue;
+        }
+        found_fallback_capability_metrics = true;
+        if (!Expect(item["execution_metrics"]["fallback_count"] == 1, "runtime metrics should expose fallback count")) {
+            return 1;
+        }
+    }
+    if (!Expect(found_fallback_capability_metrics, "runtime metrics should include fallback capability")) {
         return 1;
     }
 
@@ -782,7 +845,7 @@ int main(int argc, char** argv) {
     if (!Expect(denied_reload_result && denied_reload_result->status == 403, "reload route should reject invalid license status")) {
         return 1;
     }
-    license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "ocr"});
+    license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "ocr", "pose_estimate"});
     test_license_helpers::WriteLicenseBundle(license_root, license_payload);
     const auto restore_license_result = proxy_client.Post(
         "/api/v1/admin/license-reload",

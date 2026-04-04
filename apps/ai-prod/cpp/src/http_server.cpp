@@ -270,6 +270,16 @@ std::string ResolveDevice(const InferRequestPayload& request, const CapabilityCa
     return gpu_available ? "gpu" : "cpu";
 }
 
+bool CanFallbackToCpu(const CapabilityCatalogEntry& entry, const std::string& requested_device, PluginFailureKind failure_kind) {
+    if (requested_device != "gpu") {
+        return false;
+    }
+    if (entry.device_mode == "cpu") {
+        return false;
+    }
+    return failure_kind == PluginFailureKind::kBindingLoadFailure || failure_kind == PluginFailureKind::kLifecycleFailure;
+}
+
 nlohmann::json BuildSnapshotCapabilityPayload(
     const RuntimeCapabilityRecord& capability_record,
     int revision_id,
@@ -924,24 +934,49 @@ void AiProdHttpServer::HandleInferRequest(
     const std::string request_id = GenerateRequestId();
     RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id);
 
-    const std::string device = ResolveDevice(infer_request, *catalog_entry);
-    request_lease.MarkExecuting(device);
+    const std::string requested_device = ResolveDevice(infer_request, *catalog_entry);
+    std::string executed_device = requested_device;
+    request_lease.MarkExecuting(executed_device);
     if (infer_request.simulate_delay_ms > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
     }
 
     PluginExecutionResult plugin_result;
     std::string plugin_error;
-    const bool plugin_ok = pluginExecutor.Execute(
+    PluginFailureKind plugin_failure_kind = PluginFailureKind::kNone;
+    bool plugin_ok = pluginExecutor.Execute(
         *catalog_entry,
         static_cast<std::size_t>(acquire_result.item->slot_index),
         infer_request.input_type,
         infer_request.decoded_payload.normalized_payload,
         infer_request.options,
-        device,
+        executed_device,
         request_id,
         &plugin_result,
-        &plugin_error);
+        &plugin_error,
+        &plugin_failure_kind);
+    std::string fallback_reason;
+    if (!plugin_ok && CanFallbackToCpu(*catalog_entry, requested_device, plugin_failure_kind)) {
+        fallback_reason = plugin_error.empty() ? "GPU 插件装载失败，已自动回退 CPU。" : plugin_error;
+        executed_device = "cpu";
+        request_lease.MarkExecuting(executed_device);
+        plugin_error.clear();
+        plugin_failure_kind = PluginFailureKind::kNone;
+        plugin_ok = pluginExecutor.Execute(
+            *catalog_entry,
+            static_cast<std::size_t>(acquire_result.item->slot_index),
+            infer_request.input_type,
+            infer_request.decoded_payload.normalized_payload,
+            infer_request.options,
+            executed_device,
+            request_id,
+            &plugin_result,
+            &plugin_error,
+            &plugin_failure_kind);
+        if (plugin_ok) {
+            pluginExecutor.RecordFallback(capability_name, executed_device, fallback_reason);
+        }
+    }
     if (!plugin_ok) {
         request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
         ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
@@ -959,7 +994,8 @@ void AiProdHttpServer::HandleInferRequest(
         {"model_version", catalog_entry->model_version},
         {"backend_type", catalog_entry->backend_type},
         {"plugin_target", catalog_entry->plugin_target},
-        {"device", device},
+        {"device", executed_device},
+        {"requested_device", requested_device},
         {"runtime_revision_id", catalog_entry->revision_id},
         {"license_valid", true},
         {"result", {
@@ -970,7 +1006,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"payload_size", infer_request.decoded_payload.normalized_payload.size()},
             {"input_metadata", infer_request.decoded_payload.metadata},
             {"instance_id", request_lease.Item().instance_id},
-            {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
+            {"fallback_applied", requested_device != executed_device},
+            {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
             {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
@@ -985,7 +1022,10 @@ void AiProdHttpServer::HandleInferRequest(
             {"event", "infer"},
             {"request_id", request_id},
             {"capability_name", capability_name},
-            {"device", device},
+            {"requested_device", requested_device},
+            {"executed_device", executed_device},
+            {"fallback_applied", requested_device != executed_device},
+            {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
             {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
@@ -998,7 +1038,10 @@ void AiProdHttpServer::HandleInferRequest(
         capability_name,
         {
                 {"request_id", request_id},
-                {"device", device},
+                {"requested_device", requested_device},
+                {"executed_device", executed_device},
+                {"fallback_applied", requested_device != executed_device},
+                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
                 {"instance_id", request_lease.Item().instance_id},
                 {"input_type", infer_request.input_type},
                 {"input_metadata", infer_request.decoded_payload.metadata},
