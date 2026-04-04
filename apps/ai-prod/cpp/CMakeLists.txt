@@ -14,6 +14,7 @@ find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)
 
 add_executable(ai_prod_cpp_proxy
+    src/audit_logger.cpp
     src/capability_catalog.cpp
     src/backend_client.cpp
     src/http_server.cpp
@@ -54,7 +55,20 @@ if(AI_PROD_CPP_BUILD_TESTS)
 
     add_test(NAME ai_prod_cpp_test_proxy_config COMMAND test_proxy_config)
 
+    add_executable(test_audit_logger
+        tests/test_audit_logger.cpp
+        src/audit_logger.cpp
+    )
+
+    target_include_directories(test_audit_logger PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    add_test(NAME ai_prod_cpp_test_audit_logger COMMAND test_audit_logger)
+
     add_executable(test_http_server
+        src/audit_logger.cpp
         src/capability_catalog.cpp
         tests/test_http_server.cpp
         src/backend_client.cpp
@@ -83,6 +97,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
     add_test(NAME ai_prod_cpp_test_http_server COMMAND test_http_server)
 
     add_executable(test_bootstrap_startup
+        src/audit_logger.cpp
         src/capability_catalog.cpp
         tests/test_bootstrap_startup.cpp
         src/backend_client.cpp
@@ -114,6 +129,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
 
     add_executable(test_runtime_components
         tests/test_runtime_components.cpp
+        src/audit_logger.cpp
         src/capability_catalog.cpp
         src/instance_pool.cpp
         src/runtime_state_machine.cpp

@@ -1,6 +1,7 @@
 #ifndef AI_CAPABILITY_PLATFORM_APPS_AI_PROD_CPP_HTTP_SERVER_H
 #define AI_CAPABILITY_PLATFORM_APPS_AI_PROD_CPP_HTTP_SERVER_H
 
+#include "audit_logger.h"
 #include "capability_catalog.h"
 #include "instance_pool.h"
 #include "license_manager.h"
@@ -61,8 +62,12 @@ private:
     void HandleLicenseStatusRequest(const httplib::Request& request, httplib::Response& response);
     void HandleLicenseReloadRequest(const httplib::Request& request, httplib::Response& response);
     bool EnsureRuntimeReady();
-    bool BootstrapRuntime(std::string* error_message);
-    std::optional<nlohmann::json> ExecuteRuntimeTransition(const std::string& action, std::optional<int> target_revision_id, std::string* error_message);
+    bool BootstrapRuntime(const std::string& request_id, std::string* error_message);
+    std::optional<nlohmann::json> ExecuteRuntimeTransition(
+        const std::string& action,
+        std::optional<int> target_revision_id,
+        const std::string& request_id,
+        std::string* error_message);
     void MarkRuntimeError(const std::string& error_message);
     std::shared_ptr<InstancePool> GetInstancePool(const std::string& capability_name) const;
     std::vector<std::shared_ptr<InstancePool>> ListInstancePools() const;
@@ -81,6 +86,7 @@ private:
     PluginExecutor pluginExecutor;
     std::shared_ptr<InFlightRequestTracker> requestTracker;
     RuntimeSnapshotManager snapshotManager;
+    std::unique_ptr<AuditLogger> auditLogger;
     mutable std::mutex runtimeStateMutex;
     mutable std::mutex metricsMutex;
     std::mutex runtimeTransitionMutex;

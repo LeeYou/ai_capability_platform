@@ -173,23 +173,6 @@ void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
     output << payload.dump() << "\n";
 }
 
-void AppendAuditLog(
-    const ProxyConfig& config,
-    const std::string& action,
-    const std::string& entity_type,
-    const std::string& entity_id,
-    const nlohmann::json& detail) {
-    AppendJsonLine(
-        config.audit_log_path,
-        {
-            {"happened_at_cst", CurrentCstIsoString()},
-            {"action", action},
-            {"entity_type", entity_type},
-            {"entity_id", entity_id},
-            {"detail", detail},
-        });
-}
-
 bool ParseInferRequest(const std::string& body, InferRequestPayload* request, std::string* error_message) {
     try {
         const auto payload = nlohmann::json::parse(body.empty() ? "{}" : body);
@@ -252,6 +235,14 @@ std::string GenerateRequestId() {
     output << "-";
     for (int index = 0; index < 12; ++index) output << distribution(generator);
     return output.str();
+}
+
+std::string ResolveRequestId(const httplib::Request& request) {
+    const auto request_id = request.get_header_value("X-Request-ID");
+    if (!request_id.empty()) {
+        return request_id;
+    }
+    return GenerateRequestId();
 }
 
 std::string Sha256Hex(const std::string& value) {
@@ -439,6 +430,7 @@ AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
           config_value.license_auto_reload_interval_seconds),
       requestTracker(std::make_shared<InFlightRequestTracker>()),
       snapshotManager(config_value),
+      auditLogger(std::make_unique<AuditLogger>(config_value.audit_log_path)),
       startedAt(std::chrono::steady_clock::now()),
       server(std::make_unique<httplib::Server>()) {
     licenseManager.Initialize();
@@ -516,21 +508,29 @@ bool AiProdHttpServer::EnsureRuntimeReady() {
     }
 
     std::string bootstrap_error;
-    if (!BootstrapRuntime(&bootstrap_error)) {
+    const std::string bootstrap_request_id = GenerateRequestId();
+    if (!BootstrapRuntime(bootstrap_request_id, &bootstrap_error)) {
         MarkRuntimeError(bootstrap_error);
         AppendJsonLine(
             config.runtime_log_path,
             {
                 {"event", "bootstrap_failed"},
+                {"request_id", bootstrap_request_id},
                 {"message", bootstrap_error},
             });
-        AppendAuditLog(
-            config,
-            "bootstrap_failed",
-            "runtime_revision",
-            "bootstrap",
+        auditLogger->Append(
             {
-                {"reason", bootstrap_error},
+                "bootstrap_failed",
+                "runtime_revision",
+                "bootstrap",
+                "failure",
+                bootstrap_request_id,
+                bootstrap_request_id,
+                -1.0,
+                bootstrap_error,
+                {
+                    {"reason", bootstrap_error},
+                },
             });
         return false;
     }
@@ -900,6 +900,7 @@ void AiProdHttpServer::HandleInferRequest(
     httplib::Response& response) {
     ScopedEndpointMetricRecorder recorder(this, "infer", &response);
     const auto request_started_at = std::chrono::steady_clock::now();
+    const std::string request_id = ResolveRequestId(request);
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
     if (!RefreshCatalogAndPools()) {
@@ -914,14 +915,20 @@ void AiProdHttpServer::HandleInferRequest(
     }
 
     if (!licenseManager.QuickCheck(capability_name, catalog_entry->model_version)) {
-        AppendAuditLog(
-            config,
-            "infer_license_rejected",
-            "capability",
-            capability_name,
+        auditLogger->Append(
             {
-                {"reason", "当前 license 未授权该能力或版本。"},
-                {"model_version", catalog_entry->model_version},
+                "infer_license_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "当前 license 未授权该能力或版本。",
+                {
+                    {"reason", "当前 license 未授权该能力或版本。"},
+                    {"model_version", catalog_entry->model_version},
+                },
             });
         ApplyJsonErrorResponse(403, "当前 license 未授权该能力或版本。", response);
         return;
@@ -930,10 +937,34 @@ void AiProdHttpServer::HandleInferRequest(
     InferRequestPayload infer_request;
     std::string parse_error;
     if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
+        auditLogger->Append(
+            {
+                "infer_parse_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                parse_error,
+                {{"reason", parse_error}},
+            });
         ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
     if (infer_request.prefer_deadline_ms > config.infer_request_max_deadline_ms) {
+        auditLogger->Append(
+            {
+                "infer_deadline_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "prefer_deadline_ms 超出运行时允许上限。",
+                {{"deadline_ms", infer_request.prefer_deadline_ms}},
+            });
         ApplyJsonErrorResponse(400, "prefer_deadline_ms 超出运行时允许上限。", response);
         return;
     }
@@ -965,23 +996,76 @@ void AiProdHttpServer::HandleInferRequest(
         request_deadline);
     if (acquire_result.status != InstanceAcquireStatus::kAcquired || !acquire_result.item.has_value()) {
         if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
+            auditLogger->Append(
+                {
+                    "infer_pool_draining",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "能力正在切换，请稍后重试。",
+                    nlohmann::json::object(),
+                });
             ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
             return;
         }
         if (acquire_result.status == InstanceAcquireStatus::kQueueRejected) {
+            auditLogger->Append(
+                {
+                    "infer_queue_rejected",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "能力排队已满，请稍后重试。",
+                    {{"max_pending_request_count", max_pending_request_count}},
+                });
             ApplyJsonErrorResponse(503, "能力排队已满，请稍后重试。", response);
             return;
         }
         if (acquire_result.status == InstanceAcquireStatus::kDeadlineExceeded) {
             RecordSlaMetric("infer", true, true);
+            auditLogger->Append(
+                {
+                    "infer_deadline_exceeded",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    static_cast<double>(acquire_result.queue_wait_ms),
+                    "请求 SLA 截止时间已超出，未进入执行。",
+                    {
+                        {"deadline_ms", infer_request.prefer_deadline_ms},
+                        {"queue_wait_ms", acquire_result.queue_wait_ms},
+                    },
+                });
             ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
             return;
         }
+        auditLogger->Append(
+            {
+                "infer_queue_timeout",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                static_cast<double>(acquire_result.queue_wait_ms),
+                "能力实例池繁忙或排队超时，请稍后重试。",
+                {
+                    {"queue_wait_ms", acquire_result.queue_wait_ms},
+                    {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                },
+            });
         ApplyJsonErrorResponse(503, "能力实例池繁忙或排队超时，请稍后重试。", response);
         return;
     }
 
-    const std::string request_id = GenerateRequestId();
     RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id, infer_request.prefer_deadline_ms);
     request_lease.MarkSlaStatus(has_request_deadline ? "pending" : "not_requested");
 
@@ -1001,6 +1085,21 @@ void AiProdHttpServer::HandleInferRequest(
             request_lease.MarkFailed("请求 SLA 截止时间已超出，未进入执行。");
             pool->RecordDeadlineExceeded();
             RecordSlaMetric("infer", true, true);
+            auditLogger->Append(
+                {
+                    "infer_deadline_exceeded",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    static_cast<double>(pre_execute_elapsed_ms),
+                    "请求 SLA 截止时间已超出，未进入执行。",
+                    {
+                        {"deadline_ms", infer_request.prefer_deadline_ms},
+                        {"queue_wait_ms", acquire_result.queue_wait_ms},
+                    },
+                });
             ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
             return;
         }
@@ -1044,6 +1143,22 @@ void AiProdHttpServer::HandleInferRequest(
     }
     if (!plugin_ok) {
         request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
+        auditLogger->Append(
+            {
+                "infer_failed",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                plugin_error.empty() ? "能力插件执行失败。" : plugin_error,
+                {
+                    {"requested_device", requested_device},
+                    {"executed_device", executed_device},
+                    {"fallback_applied", requested_device != executed_device},
+                },
+            });
         ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
         return;
     }
@@ -1115,13 +1230,17 @@ void AiProdHttpServer::HandleInferRequest(
             {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             {"runtime_revision_id", catalog_entry->revision_id},
         });
-    AppendAuditLog(
-        config,
-        "infer",
-        "capability",
-        capability_name,
+    auditLogger->Append(
         {
-                {"request_id", request_id},
+            "infer",
+            "capability",
+            capability_name,
+            "success",
+            request_id,
+            request_id,
+            lifecycle_elapsed_ms,
+            "",
+            {
                 {"requested_device", requested_device},
                 {"executed_device", executed_device},
                 {"fallback_applied", requested_device != executed_device},
@@ -1135,7 +1254,8 @@ void AiProdHttpServer::HandleInferRequest(
                 {"deadline_ms", infer_request.prefer_deadline_ms},
                 {"sla_status", sla_status},
                 {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
-            });
+            },
+        });
 
     response.status = 200;
     response.set_content(payload.dump(), kDefaultJsonContentType);
@@ -1144,6 +1264,7 @@ void AiProdHttpServer::HandleInferRequest(
 std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     const std::string& action,
     std::optional<int> target_revision_id,
+    const std::string& request_id,
     std::string* error_message) {
     const auto scan_result = RuntimeResourceScanner::ResolveSources(
         config.host_root,
@@ -1195,14 +1316,20 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
 
     for (const auto& capability_entry : selected_capabilities) {
         if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
-            AppendAuditLog(
-                config,
-                action + "_license_rejected",
-                "capability",
-                capability_entry.first,
+            auditLogger->Append(
                 {
-                    {"reason", "当前 license 未授权该能力或版本。"},
-                    {"model_version", capability_entry.second.model_version},
+                    action + "_license_rejected",
+                    "capability",
+                    capability_entry.first,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "当前 license 未授权该能力或版本。",
+                    {
+                        {"reason", "当前 license 未授权该能力或版本。"},
+                        {"model_version", capability_entry.second.model_version},
+                    },
                 });
             *error_message = "当前 license 未覆盖目标能力或版本。";
             return std::nullopt;
@@ -1283,16 +1410,23 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         config.runtime_log_path,
         {
             {"event", action},
+            {"request_id", request_id},
             {"revision_id", revision->id},
             {"active_capability_count", static_cast<int>(selected_capabilities.size())},
         });
-    AppendAuditLog(
-        config,
-        action,
-        "runtime_revision",
-        std::to_string(revision->id),
+    auditLogger->Append(
         {
-            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+            action,
+            "runtime_revision",
+            std::to_string(revision->id),
+            "success",
+            request_id,
+            request_id,
+            -1.0,
+            "",
+            {
+                {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+            },
         });
 
     const auto operation = revision_store.CreateOperation(
@@ -1323,25 +1457,74 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     httplib::Response& response,
     bool rollback) {
     ScopedEndpointMetricRecorder recorder(this, rollback ? "admin_rollback" : "admin_reload", &response);
+    const std::string request_id = ResolveRequestId(request);
     std::unique_lock<std::mutex> transition_guard(runtimeTransitionMutex, std::try_to_lock);
     if (!transition_guard.owns_lock()) {
+        auditLogger->Append(
+            {
+                rollback ? "rollback_rejected" : "reload_rejected",
+                "runtime_revision",
+                rollback ? "rollback" : "reload",
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "已有运行时切换任务正在执行。",
+                {{"reason", "已有运行时切换任务正在执行。"}},
+            });
         ApplyJsonErrorResponse(409, "已有运行时切换任务正在执行。", response);
         return;
     }
     AdminTransitionRequestPayload transition_request;
     std::string parse_error;
     if (!ParseAdminTransitionRequest(request.body, rollback, &transition_request, &parse_error)) {
+        auditLogger->Append(
+            {
+                rollback ? "rollback_parse_rejected" : "reload_parse_rejected",
+                "runtime_revision",
+                rollback ? "rollback" : "reload",
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                parse_error,
+                {{"reason", parse_error}},
+            });
         ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
 
     if (!licenseManager.GetStatus().valid) {
+        auditLogger->Append(
+            {
+                transition_request.action + "_license_rejected",
+                "runtime_revision",
+                transition_request.action,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "license 未授权或已失效，无法执行运行时切换。",
+                {{"reason", "license 未授权或已失效，无法执行运行时切换。"}},
+            });
         ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
         return;
     }
 
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         if (!licenseManager.QuickCheck(entry.capability_name, entry.model_version)) {
+            auditLogger->Append(
+                {
+                    transition_request.action + "_license_rejected",
+                    "capability",
+                    entry.capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "当前 license 未覆盖已装载能力，无法执行运行时切换。",
+                    {{"model_version", entry.model_version}},
+                });
             ApplyJsonErrorResponse(403, "当前 license 未覆盖已装载能力，无法执行运行时切换。", response);
             return;
         }
@@ -1377,6 +1560,7 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     const auto transition_result = ExecuteRuntimeTransition(
         transition_request.action,
         transition_request.target_revision_id,
+        request_id,
         &transition_error);
     if (!transition_result.has_value()) {
         EndDrainOnPools(pools);
@@ -1412,10 +1596,32 @@ void AiProdHttpServer::HandleLicenseStatusRequest(
 }
 
 void AiProdHttpServer::HandleLicenseReloadRequest(
-    const httplib::Request&,
+    const httplib::Request& request,
     httplib::Response& response) {
     ScopedEndpointMetricRecorder recorder(this, "admin_license_reload", &response);
+    const std::string request_id = ResolveRequestId(request);
     if (licenseManager.Reload()) {
+        AppendJsonLine(
+            config.runtime_log_path,
+            {
+                {"event", "license_reload"},
+                {"request_id", request_id},
+                {"license_valid", licenseManager.GetStatus().valid},
+            });
+        auditLogger->Append(
+            {
+                "license_reload",
+                "license",
+                "active_license",
+                "success",
+                request_id,
+                request_id,
+                -1.0,
+                "",
+                {
+                    {"license_valid", licenseManager.GetStatus().valid},
+                },
+            });
         response.status = 200;
         response.set_content(
             nlohmann::json{
@@ -1427,6 +1633,28 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
     }
 
     const auto failure_status = licenseManager.GetLastReloadFailureStatus();
+    AppendJsonLine(
+        config.runtime_log_path,
+        {
+            {"event", "license_reload_failed"},
+            {"request_id", request_id},
+            {"reason", failure_status.reason},
+        });
+    auditLogger->Append(
+        {
+            "license_reload_failed",
+            "license",
+            "active_license",
+            "failure",
+            request_id,
+            request_id,
+            -1.0,
+            failure_status.reason,
+            {
+                {"reason", failure_status.reason},
+                {"license_valid", failure_status.valid},
+            },
+        });
     response.status = 400;
     response.set_content(
         nlohmann::json{
@@ -1437,7 +1665,7 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
         kDefaultJsonContentType);
 }
 
-bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
+bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::string* error_message) {
     auto set_error = [&](const std::string& message) {
         if (error_message != nullptr) {
             *error_message = message;
@@ -1461,14 +1689,20 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
 
     for (const auto& capability_entry : selected_capabilities) {
         if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
-            AppendAuditLog(
-                config,
-                "bootstrap_license_rejected",
-                "capability",
-                capability_entry.first,
+            auditLogger->Append(
                 {
-                    {"reason", "当前 license 未授权该能力或版本。"},
-                    {"model_version", capability_entry.second.model_version},
+                    "bootstrap_license_rejected",
+                    "capability",
+                    capability_entry.first,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "当前 license 未授权该能力或版本。",
+                    {
+                        {"reason", "当前 license 未授权该能力或版本。"},
+                        {"model_version", capability_entry.second.model_version},
+                    },
                 });
             set_error("当前 license 未覆盖启动阶段目标能力或版本。");
             return false;
@@ -1555,18 +1789,25 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         config.runtime_log_path,
         {
             {"event", "bootstrap"},
+            {"request_id", request_id},
             {"revision_id", revision->id},
             {"capability_count", static_cast<int>(selected_capabilities.size())},
             {"license_valid", current_license_status.valid},
         });
-    AppendAuditLog(
-        config,
-        "bootstrap",
-        "runtime_revision",
-        std::to_string(revision->id),
+    auditLogger->Append(
         {
-            {"capability_count", static_cast<int>(selected_capabilities.size())},
-            {"license_valid", current_license_status.valid},
+            "bootstrap",
+            "runtime_revision",
+            std::to_string(revision->id),
+            "success",
+            request_id,
+            request_id,
+            -1.0,
+            "",
+            {
+                {"capability_count", static_cast<int>(selected_capabilities.size())},
+                {"license_valid", current_license_status.valid},
+            },
         });
 
     const auto operation = revision_store.CreateOperation(

@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -124,6 +125,28 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& content
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path);
     output << content;
+}
+
+std::vector<nlohmann::json> ReadJsonLines(const std::filesystem::path& path) {
+    std::vector<nlohmann::json> items;
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        items.push_back(nlohmann::json::parse(line));
+    }
+    return items;
+}
+
+std::optional<nlohmann::json> FindLastAuditAction(const std::vector<nlohmann::json>& items, const std::string& action) {
+    for (auto it = items.rbegin(); it != items.rend(); ++it) {
+        if (it->value("action", "") == action) {
+            return *it;
+        }
+    }
+    return std::nullopt;
 }
 
 }
@@ -654,6 +677,29 @@ int main(int argc, char** argv) {
     if (!Expect(std::filesystem::exists(audit_log_path), "infer should append audit log")) {
         return 1;
     }
+    const auto infer_audit_entries = ReadJsonLines(audit_log_path);
+    if (!Expect(!infer_audit_entries.empty(), "audit log should contain infer entry")) {
+        return 1;
+    }
+    const auto infer_audit_entry = FindLastAuditAction(infer_audit_entries, "infer");
+    if (!Expect(infer_audit_entry.has_value(), "audit log should expose infer action")) {
+        return 1;
+    }
+    if (!Expect((*infer_audit_entry)["action"] == "infer", "audit entry should record infer action")) {
+        return 1;
+    }
+    if (!Expect((*infer_audit_entry)["detail"]["status"] == "success", "infer audit entry should record success status")) {
+        return 1;
+    }
+    if (!Expect((*infer_audit_entry)["detail"]["request_id"] == infer_payload["request_id"], "infer audit entry should preserve request id")) {
+        return 1;
+    }
+    if (!Expect((*infer_audit_entry)["detail"]["correlation_id"] == infer_payload["request_id"], "infer audit entry should preserve correlation id")) {
+        return 1;
+    }
+    if (!Expect((*infer_audit_entry)["detail"]["lifecycle_elapsed_ms"] == infer_payload["result"]["lifecycle_elapsed_ms"], "infer audit entry should preserve lifecycle timing")) {
+        return 1;
+    }
     const auto deadline_exceeded_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
         "{\"input_type\":\"json\",\"payload\":\"deadline-demo\",\"prefer_deadline_ms\":50,\"options\":{\"simulate_delay_ms\":80}}",
@@ -681,6 +727,17 @@ int main(int argc, char** argv) {
         break;
     }
     if (!Expect(found_deadline_pool_metric, "pool metrics should count deadline exceeded requests")) {
+        return 1;
+    }
+    const auto deadline_audit_entries = ReadJsonLines(audit_log_path);
+    const auto deadline_audit_entry = FindLastAuditAction(deadline_audit_entries, "infer_deadline_exceeded");
+    if (!Expect(deadline_audit_entry.has_value(), "audit log should record deadline exceeded infer")) {
+        return 1;
+    }
+    if (!Expect((*deadline_audit_entry)["detail"]["status"] == "failure", "deadline exceeded audit should record failure status")) {
+        return 1;
+    }
+    if (!Expect((*deadline_audit_entry)["detail"]["error_message"] == "请求 SLA 截止时间已超出，未进入执行。", "deadline exceeded audit should preserve error message")) {
         return 1;
     }
 
@@ -892,6 +949,14 @@ int main(int argc, char** argv) {
         "{}",
         "application/json");
     if (!Expect(license_reload_result && license_reload_result->status == 200, "license reload route should succeed")) {
+        return 1;
+    }
+    const auto license_reload_audit_entries = ReadJsonLines(audit_log_path);
+    const auto license_reload_audit_entry = FindLastAuditAction(license_reload_audit_entries, "license_reload");
+    if (!Expect(license_reload_audit_entry.has_value(), "audit log should record license reload")) {
+        return 1;
+    }
+    if (!Expect((*license_reload_audit_entry)["detail"]["status"] == "success", "license reload audit should record success status")) {
         return 1;
     }
     const auto denied_infer_result = proxy_client.Post(
