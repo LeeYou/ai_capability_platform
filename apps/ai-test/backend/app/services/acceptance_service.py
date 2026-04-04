@@ -40,7 +40,7 @@ class AcceptanceTaskCreatePayload:
 def _repo_root() -> Path:
     current = Path(__file__).resolve()
     for parent in current.parents:
-        if (parent / ".git").exists() or (parent / "docs" / "06_开发计划" / "总体开发计划.md").is_file():
+        if (parent / ".git").exists():
             return parent
     raise ValueError("无法定位仓库根目录。")
 
