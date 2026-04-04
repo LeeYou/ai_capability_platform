@@ -35,6 +35,7 @@
 | P25 | 补齐统一运行时指标聚合与生产验收基线输出 | 已完成 |
 | P26 | 补齐 capability 级批处理元数据透传与繁忙拒绝观测 | 已完成 |
 | P27 | 补齐基础请求排队、等待超时与调度观测 | 已完成 |
+| P28 | 补齐 capability 级排队策略元数据透传与调度配置收口 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -78,11 +79,12 @@
 24. 当前已完成 P25：C++ 生产主链路已新增 `/api/v1/admin/metrics` 统一运行时指标接口，按 endpoint 聚合请求量、成功/失败数、状态码分布与近期延迟分位，同时输出实例池利用率、能力级执行汇总与 uptime；内部验收前端、验收脚本与压测脚本也已对齐接入该指标输出，进一步固化交付阶段的观测与基线留痕。
 25. 当前已完成 P26：C++ / Python 资源扫描、revision 明细与 runtime snapshot 已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传，C++ 插件执行初始化会按能力配置传入真实 `max_batch_size`，实例池繁忙拒绝次数也已纳入 `/api/v1/admin/catalog` 与 `/api/v1/admin/metrics` 观测；内部验收页面与验收脚本同步暴露该类编排元数据，进一步向更完整的 Runtime 编排收口迈进。
 26. 当前已完成 P27：C++ 实例池已补齐基础请求排队等待、排队上限、等待超时与排队耗时统计；`/api/v1/infer/{capability_name}` 在实例槽位繁忙时会优先进入短时等待而非直接失败，并将 `queue_wait_ms`、`pending_request_count`、`queued_request_count`、`queue_timeout_count` 等调度观测同步输出到 `/api/v1/admin/catalog`、`/api/v1/admin/metrics`、验收脚本与内部验收页面，进一步收口面向工业运行时的基础调度能力。
+27. 当前已完成 P28：C++ / Python 资源扫描、revision 明细、runtime snapshot 与 capability catalog 已补齐 capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据透传；`/api/v1/infer/{capability_name}`、`/api/v1/admin/catalog`、`/api/v1/admin/metrics`、内部验收页面与验收脚本现可同步暴露能力级排队策略配置与运行态排队观测，进一步让运行时调度行为具备 capability 级精细化收口能力。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化、统一运行时指标聚合、capability 级批处理元数据透传与繁忙拒绝观测、基础请求排队等待与调度观测，以及 reload/rollback 管理闭环，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
+1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化、统一运行时指标聚合、capability 级批处理元数据透传与繁忙拒绝观测、基础请求排队等待与调度观测、capability 级排队策略元数据透传，以及 reload/rollback 管理闭环，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P27：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传后，本轮进一步为实例池引入基础请求排队等待、排队上限、等待超时与排队耗时统计，`/api/v1/infer/{capability_name}` 在槽位繁忙时可短时等待可用实例，并将 `queue_wait_ms`、`pending_request_count`、`queued_request_count`、`queue_timeout_count` 等调度观测同步输出到 catalog / metrics / 内部验收页面 / 验收脚本。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。
+ai-prod 当前已完成 P9-P28：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计之后，本轮进一步把 capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口到资源扫描、revision 明细、runtime snapshot、catalog、infer 结果、验收脚本与内部验收页面，形成按能力配置排队等待策略并保留运行态观测的更细粒度调度闭环。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。

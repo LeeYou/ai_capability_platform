@@ -37,6 +37,7 @@
 2. 当前已完成 B9：构建任务结束后会自动输出标准 `delivery_package/` 目录骨架，并提供归档下载入口。
 3. 当前已完成 B10：delivery_package 已补齐 ai-prod 生产镜像构建上下文 tarball、mount_template、tools 与 docs 交付物料。
 4. 当前已完成 B11：delivery_package 已补齐验收清单、版本清单与交付摘要，交付包元信息已具备最终收口能力。
+5. 对照总体计划核对后，R3“标准交付包与验收体系融合实现”在 ai-builder 侧已完成，后续残留工作主要转向跨模块 schema 与交付材料继续细化。
 
 ### 4.3 未完成
 

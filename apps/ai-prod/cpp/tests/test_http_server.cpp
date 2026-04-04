@@ -615,10 +615,10 @@ int main(int argc, char** argv) {
     if (!Expect(infer_payload["result"]["queue_wait_ms"] == 0, "direct infer should report zero queue wait")) {
         return 1;
     }
-    if (!Expect(infer_payload["result"]["queue_wait_timeout_ms"] == 220, "direct infer should expose refreshed queue wait timeout")) {
+    if (!Expect(infer_payload["result"]["queue_wait_timeout_ms"] == 180, "direct infer should expose snapshot queue wait timeout")) {
         return 1;
     }
-    if (!Expect(infer_payload["result"]["max_pending_request_count"] == 4, "direct infer should expose refreshed max pending configuration")) {
+    if (!Expect(infer_payload["result"]["max_pending_request_count"] == 3, "direct infer should expose snapshot max pending configuration")) {
         return 1;
     }
     if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {

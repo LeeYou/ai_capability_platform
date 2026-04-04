@@ -44,7 +44,7 @@ ctest --test-dir build --output-on-failure
 5. 已新增 `/api/v1/admin/catalog` 用于输出 C++ 侧能力目录与轻量实例池诊断信息
 6. 已新增 `/api/v1/admin/metrics` 用于输出 C++ 侧统一运行时指标、endpoint 延迟分位与实例池利用率
 7. runtime snapshot / revision 明细 / capability catalog 已补齐 capability 级 `max_batch_size`，实例池繁忙拒绝次数也会在 catalog / metrics 中暴露
-8. 当前实例池已支持基础请求排队等待、排队上限与等待超时，`/api/v1/admin/catalog`、`/api/v1/admin/metrics` 会输出 `pending_request_count`、`queued_request_count`、`queue_timeout_count`、`avg_queue_wait_ms`
+8. 当前实例池已支持基础请求排队等待、排队上限与等待超时，且 capability snapshot / catalog 已补齐 `queue_wait_timeout_ms`、`max_pending_request_count` 调度配置透传；`/api/v1/admin/catalog`、`/api/v1/admin/metrics` 会同步输出 `pending_request_count`、`queued_request_count`、`queue_timeout_count`、`avg_queue_wait_ms`
 9. `/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、真实插件动态加载执行、结果生成与基础日志审计；runtime snapshot 不可用时直接返回运行时错误
 10. `reload/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写，以及实例池 drain 编排与切换后 catalog/pool 刷新
 11. `license/status` 已改为由 C++ 直接读取标准 license 文件，`infer` 与 `reload/rollback` 已接入 license quick check
