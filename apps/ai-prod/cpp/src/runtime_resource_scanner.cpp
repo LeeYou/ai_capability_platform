@@ -39,6 +39,13 @@ int ReadNonNegativeIntOrDefault(const nlohmann::json& payload, const char* key, 
     return std::max(0, payload[key].get<int>());
 }
 
+bool ReadBooleanOrDefault(const nlohmann::json& payload, const char* key, bool fallback) {
+    if (!payload.contains(key) || !payload[key].is_boolean()) {
+        return fallback;
+    }
+    return payload[key].get<bool>();
+}
+
 int ExtractBatchSizeFromManifest(const nlohmann::json& manifest) {
     if (manifest.contains("max_batch_size") && manifest["max_batch_size"].is_number_integer()) {
         return std::max(1, manifest["max_batch_size"].get<int>());
@@ -85,11 +92,20 @@ struct ModelEntry {
     std::string model_root;
     std::string model_version;
     std::string backend_type;
+    std::string declared_device_mode = "auto";
+    int capability_priority = 100;
     int max_batch_size = 1;
+    int min_batch_size = 1;
     int batch_wait_timeout_ms = -1;
     int instance_count = 0;
     int queue_wait_timeout_ms = -1;
     int max_pending_request_count = -1;
+    int infer_timeout_ms = -1;
+    int estimated_avg_infer_time_ms = -1;
+    int p95_infer_time_ms = -1;
+    int max_concurrent_requests = -1;
+    bool supports_concurrent_infer = true;
+    bool allow_resource_sharing = false;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -98,11 +114,20 @@ struct PluginEntry {
     std::string plugin_target;
     std::string build_mode;
     std::string binary_path;
+    std::string declared_device_mode = "auto";
+    int capability_priority = 100;
     int max_batch_size = 1;
+    int min_batch_size = 1;
     int batch_wait_timeout_ms = -1;
     int instance_count = 0;
     int queue_wait_timeout_ms = -1;
     int max_pending_request_count = -1;
+    int infer_timeout_ms = -1;
+    int estimated_avg_infer_time_ms = -1;
+    int p95_infer_time_ms = -1;
+    int max_concurrent_requests = -1;
+    bool supports_concurrent_infer = true;
+    bool allow_resource_sharing = false;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -127,13 +152,24 @@ std::map<std::string, ModelEntry> ScanModels(const std::filesystem::path& root) 
                 selected_version_dir.lexically_normal().string(),
                 manifest.value("model_version", selected_version_dir.filename().string()),
                 manifest.value("backend_type", std::string("onnxruntime")),
+                manifest.value("device_mode", std::string("auto")),
+                manifest.contains("capability_priority") && manifest["capability_priority"].is_number_integer()
+                    ? manifest["capability_priority"].get<int>()
+                    : 100,
                 ExtractBatchSizeFromManifest(manifest),
+                ReadPositiveIntOrDefaultMinOne(manifest, "min_batch_size", 1),
                 ReadNonNegativeIntOrDefault(manifest, "batch_wait_timeout_ms", -1),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
                 ReadNonNegativeIntOrDefault(manifest, "queue_wait_timeout_ms", -1),
                 ReadNonNegativeIntOrDefault(manifest, "max_pending_request_count", -1),
+                ReadNonNegativeIntOrDefault(manifest, "infer_timeout_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "estimated_avg_infer_time_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "p95_infer_time_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "max_concurrent_requests", -1),
+                ReadBooleanOrDefault(manifest, "supports_concurrent_infer", true),
+                ReadBooleanOrDefault(manifest, "allow_resource_sharing", false),
                 manifest,
             });
     }
@@ -173,13 +209,24 @@ std::map<std::string, PluginEntry> ScanPlugins(const std::filesystem::path& root
                 target_name,
                 manifest.value("build_mode", std::string("template")),
                 binary_path,
+                manifest.value("device_mode", std::string("auto")),
+                manifest.contains("capability_priority") && manifest["capability_priority"].is_number_integer()
+                    ? manifest["capability_priority"].get<int>()
+                    : 100,
                 ReadPositiveIntOrDefaultMinOne(manifest, "max_batch_size", 1),
+                ReadPositiveIntOrDefaultMinOne(manifest, "min_batch_size", 1),
                 ReadNonNegativeIntOrDefault(manifest, "batch_wait_timeout_ms", -1),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
                 ReadNonNegativeIntOrDefault(manifest, "queue_wait_timeout_ms", -1),
                 ReadNonNegativeIntOrDefault(manifest, "max_pending_request_count", -1),
+                ReadNonNegativeIntOrDefault(manifest, "infer_timeout_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "estimated_avg_infer_time_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "p95_infer_time_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "max_concurrent_requests", -1),
+                ReadBooleanOrDefault(manifest, "supports_concurrent_infer", true),
+                ReadBooleanOrDefault(manifest, "allow_resource_sharing", false),
                 manifest,
             });
     }
@@ -238,11 +285,20 @@ RuntimeResourceScanResult RuntimeResourceScanner::ResolveSources(
                 plugin_entry.build_mode,
                 plugin_entry.binary_path,
                 host_model_it != host_models.end() && host_plugin_it != host_plugins.end() ? "host" : "image",
+                plugin_entry.declared_device_mode != "auto" ? plugin_entry.declared_device_mode : model_entry.declared_device_mode,
                 plugin_entry.max_batch_size > 1 ? plugin_entry.max_batch_size : model_entry.max_batch_size,
+                std::max(1, plugin_entry.min_batch_size > 1 ? plugin_entry.min_batch_size : model_entry.min_batch_size),
                 plugin_entry.batch_wait_timeout_ms >= 0 ? plugin_entry.batch_wait_timeout_ms : model_entry.batch_wait_timeout_ms,
                 plugin_entry.instance_count > 0 ? plugin_entry.instance_count : model_entry.instance_count,
                 plugin_entry.queue_wait_timeout_ms >= 0 ? plugin_entry.queue_wait_timeout_ms : model_entry.queue_wait_timeout_ms,
                 plugin_entry.max_pending_request_count >= 0 ? plugin_entry.max_pending_request_count : model_entry.max_pending_request_count,
+                std::max(plugin_entry.capability_priority, model_entry.capability_priority),
+                plugin_entry.infer_timeout_ms >= 0 ? plugin_entry.infer_timeout_ms : model_entry.infer_timeout_ms,
+                plugin_entry.estimated_avg_infer_time_ms >= 0 ? plugin_entry.estimated_avg_infer_time_ms : model_entry.estimated_avg_infer_time_ms,
+                plugin_entry.p95_infer_time_ms >= 0 ? plugin_entry.p95_infer_time_ms : model_entry.p95_infer_time_ms,
+                plugin_entry.max_concurrent_requests >= 0 ? plugin_entry.max_concurrent_requests : model_entry.max_concurrent_requests,
+                plugin_entry.supports_concurrent_infer && model_entry.supports_concurrent_infer,
+                plugin_entry.allow_resource_sharing || model_entry.allow_resource_sharing,
                 model_entry.manifest,
                 plugin_entry.manifest,
             });
@@ -273,11 +329,20 @@ nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& r
         {"build_mode", record.build_mode},
         {"binary_path", record.binary_path},
         {"active_source", record.active_source},
+        {"declared_device_mode", record.declared_device_mode},
+        {"capability_priority", record.capability_priority},
         {"max_batch_size", record.max_batch_size},
+        {"min_batch_size", record.min_batch_size},
         {"batch_wait_timeout_ms", record.batch_wait_timeout_ms},
         {"instance_count", record.instance_count},
         {"queue_wait_timeout_ms", record.queue_wait_timeout_ms},
         {"max_pending_request_count", record.max_pending_request_count},
+        {"infer_timeout_ms", record.infer_timeout_ms},
+        {"estimated_avg_infer_time_ms", record.estimated_avg_infer_time_ms},
+        {"p95_infer_time_ms", record.p95_infer_time_ms},
+        {"max_concurrent_requests", record.max_concurrent_requests},
+        {"supports_concurrent_infer", record.supports_concurrent_infer},
+        {"allow_resource_sharing", record.allow_resource_sharing},
         {"model_manifest", record.model_manifest},
         {"plugin_manifest", record.plugin_manifest},
     };
@@ -305,8 +370,16 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
         !ReadRequiredString(payload, "active_source", &record.active_source, error_message)) {
         return std::nullopt;
     }
+    record.declared_device_mode = payload.value("declared_device_mode", std::string("auto"));
+    record.capability_priority =
+        payload.contains("capability_priority") && payload["capability_priority"].is_number_integer()
+            ? payload["capability_priority"].get<int>()
+            : 100;
     record.max_batch_size = payload.contains("max_batch_size") && payload["max_batch_size"].is_number_integer()
                                 ? std::max(1, payload["max_batch_size"].get<int>())
+                                : 1;
+    record.min_batch_size = payload.contains("min_batch_size") && payload["min_batch_size"].is_number_integer()
+                                ? std::max(1, payload["min_batch_size"].get<int>())
                                 : 1;
     record.batch_wait_timeout_ms =
         payload.contains("batch_wait_timeout_ms") && payload["batch_wait_timeout_ms"].is_number_integer()
@@ -323,6 +396,24 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
         payload.contains("max_pending_request_count") && payload["max_pending_request_count"].is_number_integer()
             ? std::max(0, payload["max_pending_request_count"].get<int>())
             : -1;
+    record.infer_timeout_ms =
+        payload.contains("infer_timeout_ms") && payload["infer_timeout_ms"].is_number_integer()
+            ? std::max(0, payload["infer_timeout_ms"].get<int>())
+            : -1;
+    record.estimated_avg_infer_time_ms =
+        payload.contains("estimated_avg_infer_time_ms") && payload["estimated_avg_infer_time_ms"].is_number_integer()
+            ? std::max(0, payload["estimated_avg_infer_time_ms"].get<int>())
+            : -1;
+    record.p95_infer_time_ms =
+        payload.contains("p95_infer_time_ms") && payload["p95_infer_time_ms"].is_number_integer()
+            ? std::max(0, payload["p95_infer_time_ms"].get<int>())
+            : -1;
+    record.max_concurrent_requests =
+        payload.contains("max_concurrent_requests") && payload["max_concurrent_requests"].is_number_integer()
+            ? std::max(0, payload["max_concurrent_requests"].get<int>())
+            : -1;
+    record.supports_concurrent_infer = payload.value("supports_concurrent_infer", true);
+    record.allow_resource_sharing = payload.value("allow_resource_sharing", false);
 
     if (payload.contains("model_manifest")) {
         if (!payload["model_manifest"].is_object()) {

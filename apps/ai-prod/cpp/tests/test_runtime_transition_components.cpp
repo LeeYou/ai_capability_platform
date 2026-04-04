@@ -32,7 +32,7 @@ int main() {
 
     WriteText(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":8,"batch_wait_timeout_ms":35,"queue_wait_timeout_ms":260})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","device_mode":"gpu/cpu","capability_priority":120,"max_batch_size":8,"min_batch_size":2,"batch_wait_timeout_ms":35,"queue_wait_timeout_ms":260,"infer_timeout_ms":900,"estimated_avg_infer_time_ms":45,"p95_infer_time_ms":80,"max_concurrent_requests":3,"supports_concurrent_infer":true,"allow_resource_sharing":true})");
     WriteText(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
         R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3,"max_pending_request_count":6})");
@@ -68,6 +68,9 @@ int main() {
     if (!Expect(scan_result.capabilities.at("face_detect").batch_wait_timeout_ms == 35, "scanner should keep batch wait timeout")) {
         return 1;
     }
+    if (!Expect(scan_result.capabilities.at("face_detect").min_batch_size == 2, "scanner should keep min batch size")) {
+        return 1;
+    }
     if (!Expect(scan_result.capabilities.at("face_detect").instance_count == 3, "scanner should keep instance count")) {
         return 1;
     }
@@ -75,6 +78,12 @@ int main() {
         return 1;
     }
     if (!Expect(scan_result.capabilities.at("face_detect").max_pending_request_count == 6, "scanner should keep max pending request count")) {
+        return 1;
+    }
+    if (!Expect(scan_result.capabilities.at("face_detect").capability_priority == 120, "scanner should keep capability priority")) {
+        return 1;
+    }
+    if (!Expect(scan_result.capabilities.at("face_detect").allow_resource_sharing, "scanner should keep resource sharing")) {
         return 1;
     }
     const auto serialized_capability = SerializeRuntimeCapabilityRecord(scan_result.capabilities.at("face_detect"));
@@ -95,6 +104,9 @@ int main() {
     if (!Expect(deserialized_capability->batch_wait_timeout_ms == 35, "serialized capability should keep batch wait timeout")) {
         return 1;
     }
+    if (!Expect(deserialized_capability->min_batch_size == 2, "serialized capability should keep min batch size")) {
+        return 1;
+    }
     if (!Expect(deserialized_capability->instance_count == 3, "serialized capability should keep instance count")) {
         return 1;
     }
@@ -102,6 +114,9 @@ int main() {
         return 1;
     }
     if (!Expect(deserialized_capability->max_pending_request_count == 6, "serialized capability should keep max pending request count")) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->capability_priority == 120, "serialized capability should keep capability priority")) {
         return 1;
     }
 

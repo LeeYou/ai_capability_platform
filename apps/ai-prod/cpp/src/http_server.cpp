@@ -314,12 +314,22 @@ nlohmann::json BuildSnapshotCapabilityPayload(
         {"active_source", capability_record.active_source},
         {"model_root", capability_record.model_root},
         {"binary_path", capability_record.binary_path},
-        {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
+        {"device_mode", capability_record.declared_device_mode == "auto"
+                            ? (config.gpu_available ? "gpu/cpu" : "cpu")
+                            : capability_record.declared_device_mode},
+        {"capability_priority", capability_record.capability_priority},
         {"pool_size", pool_size},
         {"max_batch_size", capability_record.max_batch_size},
+        {"min_batch_size", capability_record.min_batch_size},
         {"batch_wait_timeout_ms", batch_wait_timeout_ms},
         {"queue_wait_timeout_ms", queue_wait_timeout_ms},
         {"max_pending_request_count", max_pending_request_count},
+        {"infer_timeout_ms", capability_record.infer_timeout_ms},
+        {"estimated_avg_infer_time_ms", capability_record.estimated_avg_infer_time_ms},
+        {"p95_infer_time_ms", capability_record.p95_infer_time_ms},
+        {"max_concurrent_requests", capability_record.max_concurrent_requests},
+        {"supports_concurrent_infer", capability_record.supports_concurrent_infer},
+        {"allow_resource_sharing", capability_record.allow_resource_sharing},
         {"revision_id", revision_id},
     };
 }
@@ -575,6 +585,35 @@ nlohmann::json AiProdHttpServer::BuildBatchCapabilityMetrics(
     return payload;
 }
 
+nlohmann::json AiProdHttpServer::BuildOrchestrationAssessment(
+    const CapabilityCatalogEntry& entry,
+    int pool_size,
+    int busy_count,
+    int pending_count,
+    int max_pending_count,
+    int queue_timeout_count,
+    int deadline_exceeded_count,
+    int queued_request_count,
+    double avg_queue_wait_ms,
+    int max_queue_wait_ms,
+    const nlohmann::json& batch_metrics,
+    const std::optional<nlohmann::json>& execution_metrics) const {
+    ResourceOrchestratorCapabilityState state;
+    state.entry = entry;
+    state.pool_size = pool_size;
+    state.busy_count = busy_count;
+    state.pending_request_count = pending_count;
+    state.max_pending_request_count = max_pending_count;
+    state.queue_timeout_count = queue_timeout_count;
+    state.deadline_exceeded_count = deadline_exceeded_count;
+    state.queued_request_count = queued_request_count;
+    state.avg_queue_wait_ms = avg_queue_wait_ms;
+    state.max_queue_wait_ms = max_queue_wait_ms;
+    state.batch_metrics = batch_metrics;
+    state.execution_metrics = execution_metrics.has_value() ? *execution_metrics : nlohmann::json::object();
+    return ResourceOrchestrator::EvaluateCapability(state);
+}
+
 bool AiProdHttpServer::EnsureRuntimeReady() {
     if (RefreshCatalogAndPools()) {
         std::string state_error;
@@ -667,6 +706,7 @@ bool AiProdHttpServer::RefreshCatalogAndPoolsWithRetry(
 nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const {
     std::lock_guard<std::mutex> guard(runtimeStateMutex);
     nlohmann::json items = nlohmann::json::array();
+    std::vector<nlohmann::json> orchestration_assessments;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
@@ -684,6 +724,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 ? entry.max_pending_request_count
                 : config.infer_queue_max_pending_requests;
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
+        const auto batch_metrics = BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms);
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
@@ -705,11 +746,19 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"device_mode", entry.device_mode},
                 {"model_root", entry.model_root},
                 {"binary_path", entry.binary_path},
+                {"capability_priority", entry.capability_priority},
                 {"pool_size", total_size},
                 {"max_batch_size", entry.max_batch_size},
+                {"min_batch_size", entry.min_batch_size},
                 {"batch_wait_timeout_ms", batch_wait_timeout_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"configured_max_pending_request_count", configured_max_pending_request_count},
+                {"infer_timeout_ms", entry.infer_timeout_ms},
+                {"estimated_avg_infer_time_ms", entry.estimated_avg_infer_time_ms},
+                {"p95_infer_time_ms", entry.p95_infer_time_ms},
+                {"max_concurrent_requests", entry.max_concurrent_requests},
+                {"supports_concurrent_infer", entry.supports_concurrent_infer},
+                {"allow_resource_sharing", entry.allow_resource_sharing},
                 {"busy_count", busy_count},
                 {"pending_request_count", pending_count},
                 {"max_pending_request_count", max_pending_count},
@@ -719,10 +768,36 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"avg_queue_wait_ms", avg_queue_wait_ms},
                 {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
-                {"batch_metrics", BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms)},
+                {"batch_metrics", batch_metrics},
+                {"orchestration", BuildOrchestrationAssessment(
+                    entry,
+                    total_size,
+                    busy_count,
+                    pending_count,
+                    max_pending_count,
+                    queue_timeout_count,
+                    deadline_exceeded_count,
+                    pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetQueuedRequestCount() : 0,
+                    avg_queue_wait_ms,
+                    max_queue_wait_ms,
+                    batch_metrics,
+                    execution_metrics)},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
                 {"revision_id", entry.revision_id},
             });
+        orchestration_assessments.push_back(BuildOrchestrationAssessment(
+            entry,
+            total_size,
+            busy_count,
+            pending_count,
+            max_pending_count,
+            queue_timeout_count,
+            deadline_exceeded_count,
+            pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetQueuedRequestCount() : 0,
+            avg_queue_wait_ms,
+            max_queue_wait_ms,
+            batch_metrics,
+            execution_metrics));
     }
 
     bool draining = false;
@@ -761,6 +836,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         {"active_request_count", requestTracker->GetActiveCount()},
         {"active_requests", active_requests},
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
+        {"orchestration_summary", ResourceOrchestrator::BuildSummary(orchestration_assessments)},
         {"items", items},
     };
 }
@@ -804,6 +880,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
 
     nlohmann::json pool_metrics = nlohmann::json::array();
     nlohmann::json capability_metrics = nlohmann::json::array();
+    std::vector<nlohmann::json> orchestration_assessments;
     int total_pool_slots = 0;
     int total_busy_slots = 0;
     int total_pending_requests = 0;
@@ -861,6 +938,21 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         total_queued_requests += queued_request_count;
         global_max_queue_wait_ms = std::max(global_max_queue_wait_ms, max_queue_wait_ms);
         const auto batch_metrics = BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms);
+        const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
+        const auto orchestration_assessment = BuildOrchestrationAssessment(
+            entry,
+            total_size,
+            busy_count,
+            pending_count,
+            pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetMaxPendingCount() : 0,
+            queue_timeout_count,
+            deadline_exceeded_count,
+            queued_request_count,
+            avg_queue_wait_ms,
+            max_queue_wait_ms,
+            batch_metrics,
+            execution_metrics);
+        orchestration_assessments.push_back(orchestration_assessment);
         total_formed_batches += batch_metrics.value("formed_batch_count", 0);
         total_timeout_batches += batch_metrics.value("timeout_flush_count", 0);
         total_full_batches += batch_metrics.value("full_flush_count", 0);
@@ -882,14 +974,22 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                 {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", draining},
                 {"device_mode", entry.device_mode},
+                {"capability_priority", entry.capability_priority},
                 {"max_batch_size", entry.max_batch_size},
+                {"min_batch_size", entry.min_batch_size},
                 {"batch_wait_timeout_ms", batch_wait_timeout_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"configured_max_pending_request_count", configured_max_pending_request_count},
+                {"infer_timeout_ms", entry.infer_timeout_ms},
+                {"estimated_avg_infer_time_ms", entry.estimated_avg_infer_time_ms},
+                {"p95_infer_time_ms", entry.p95_infer_time_ms},
+                {"max_concurrent_requests", entry.max_concurrent_requests},
+                {"supports_concurrent_infer", entry.supports_concurrent_infer},
+                {"allow_resource_sharing", entry.allow_resource_sharing},
                 {"batch_metrics", batch_metrics},
+                {"orchestration", orchestration_assessment},
             });
 
-        const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
         if (execution_metrics.has_value()) {
             total_capability_requests += execution_metrics->value("total_requests", 0);
             total_capability_failures += execution_metrics->value("failed_requests", 0);
@@ -897,6 +997,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         capability_metrics.push_back(
             {
                 {"capability_name", entry.capability_name},
+                {"orchestration", orchestration_assessment},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
             });
     }
@@ -935,7 +1036,8 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
              {"busy_reject_count", total_busy_reject_count},
              {"queue_timeout_count", total_queue_timeout_count},
              {"deadline_exceeded_request_count", total_deadline_exceeded_requests},
-          }},
+           }},
+        {"orchestration_summary", ResourceOrchestrator::BuildSummary(orchestration_assessments)},
         {"endpoint_metrics", endpoint_metrics},
         {"pool_metrics", pool_metrics},
         {"capability_metrics", capability_metrics},

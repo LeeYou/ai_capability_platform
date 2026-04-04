@@ -7,6 +7,7 @@
 #include "license_manager.h"
 #include "plugin_executor.h"
 #include "proxy_config.h"
+#include "resource_orchestrator.h"
 #include "request_batcher.h"
 #include "request_tracker.h"
 #include "revision_store.h"
@@ -72,6 +73,19 @@ private:
     nlohmann::json BuildBatchCapabilityMetrics(
         const CapabilityCatalogEntry& entry,
         int batch_wait_timeout_ms) const;
+    nlohmann::json BuildOrchestrationAssessment(
+        const CapabilityCatalogEntry& entry,
+        int pool_size,
+        int busy_count,
+        int pending_count,
+        int max_pending_count,
+        int queue_timeout_count,
+        int deadline_exceeded_count,
+        int queued_request_count,
+        double avg_queue_wait_ms,
+        int max_queue_wait_ms,
+        const nlohmann::json& batch_metrics,
+        const std::optional<nlohmann::json>& execution_metrics) const;
     bool EnsureRuntimeReady();
     bool BootstrapRuntime(const std::string& request_id, std::string* error_message);
     std::optional<nlohmann::json> ExecuteRuntimeTransition(

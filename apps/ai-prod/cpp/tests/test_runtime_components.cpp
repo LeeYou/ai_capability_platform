@@ -35,11 +35,19 @@ int main() {
             << "\"backend_type\":\"onnxruntime\","
             << "\"active_source\":\"host\","
             << "\"device_mode\":\"gpu/cpu\","
+            << "\"capability_priority\":150,"
             << "\"pool_size\":2,"
             << "\"max_batch_size\":8,"
+            << "\"min_batch_size\":2,"
             << "\"batch_wait_timeout_ms\":35,"
             << "\"queue_wait_timeout_ms\":260,"
             << "\"max_pending_request_count\":6,"
+            << "\"infer_timeout_ms\":900,"
+            << "\"estimated_avg_infer_time_ms\":45,"
+            << "\"p95_infer_time_ms\":80,"
+            << "\"max_concurrent_requests\":3,"
+            << "\"supports_concurrent_infer\":true,"
+            << "\"allow_resource_sharing\":true,"
             << "\"revision_id\":12"
             << "},"
             << "{"
@@ -78,6 +86,9 @@ int main() {
     if (!Expect(face_detect->max_batch_size == 8, "face_detect max batch size mismatch")) {
         return 1;
     }
+    if (!Expect(face_detect->min_batch_size == 2, "face_detect min batch size mismatch")) {
+        return 1;
+    }
     if (!Expect(face_detect->batch_wait_timeout_ms == 35, "face_detect batch wait timeout mismatch")) {
         return 1;
     }
@@ -85,6 +96,15 @@ int main() {
         return 1;
     }
     if (!Expect(face_detect->max_pending_request_count == 6, "face_detect max pending request count mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->capability_priority == 150, "face_detect capability priority mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->infer_timeout_ms == 900, "face_detect infer timeout mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->allow_resource_sharing, "face_detect resource sharing mismatch")) {
         return 1;
     }
 

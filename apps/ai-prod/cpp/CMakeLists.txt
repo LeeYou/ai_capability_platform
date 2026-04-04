@@ -24,6 +24,7 @@ add_executable(ai_prod_cpp_proxy
     src/payload_codec.cpp
     src/plugin_executor.cpp
     src/proxy_config.cpp
+    src/resource_orchestrator.cpp
     src/request_batcher.cpp
     src/request_lease.cpp
     src/request_tracker.cpp
@@ -79,6 +80,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/payload_codec.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
+        src/resource_orchestrator.cpp
         src/request_batcher.cpp
         src/request_lease.cpp
         src/request_tracker.cpp
@@ -109,6 +111,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/payload_codec.cpp
         src/plugin_executor.cpp
         src/proxy_config.cpp
+        src/resource_orchestrator.cpp
         src/request_batcher.cpp
         src/request_lease.cpp
         src/request_tracker.cpp
@@ -135,6 +138,7 @@ if(AI_PROD_CPP_BUILD_TESTS)
         src/audit_logger.cpp
         src/capability_catalog.cpp
         src/instance_pool.cpp
+        src/resource_orchestrator.cpp
         src/request_batcher.cpp
         src/runtime_state_machine.cpp
     )
@@ -229,6 +233,18 @@ if(AI_PROD_CPP_BUILD_TESTS)
     )
 
     add_test(NAME ai_prod_cpp_test_request_batcher COMMAND test_request_batcher)
+
+    add_executable(test_resource_orchestrator
+        tests/test_resource_orchestrator.cpp
+        src/resource_orchestrator.cpp
+    )
+
+    target_include_directories(test_resource_orchestrator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${AI_PLATFORM_THIRD_PARTY_DIR}
+    )
+
+    add_test(NAME ai_prod_cpp_test_resource_orchestrator COMMAND test_resource_orchestrator)
 
     add_executable(test_license_manager
         tests/test_license_manager.cpp

@@ -88,13 +88,21 @@ void WriteSnapshot(
         << "\"backend_type\":\"onnxruntime\","
         << "\"active_source\":\"host\","
         << "\"device_mode\":\"gpu/cpu\","
+        << "\"capability_priority\":150,"
         << "\"model_root\":\"" << model_root.string() << "\","
         << "\"binary_path\":\"" << binary_path.string() << "\","
         << "\"pool_size\":" << pool_size << ","
         << "\"max_batch_size\":" << max_batch_size << ","
+        << "\"min_batch_size\":2,"
         << "\"batch_wait_timeout_ms\":" << batch_wait_timeout_ms << ","
         << "\"queue_wait_timeout_ms\":" << queue_wait_timeout_ms << ","
         << "\"max_pending_request_count\":" << max_pending_request_count << ","
+        << "\"infer_timeout_ms\":900,"
+        << "\"estimated_avg_infer_time_ms\":45,"
+        << "\"p95_infer_time_ms\":80,"
+        << "\"max_concurrent_requests\":3,"
+        << "\"supports_concurrent_infer\":true,"
+        << "\"allow_resource_sharing\":true,"
         << "\"revision_id\":" << revision_id
         << "}],"
         << "\"license_status\":{"
@@ -173,10 +181,10 @@ int main(int argc, char** argv) {
     }
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5,"queue_wait_timeout_ms":220})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","device_mode":"gpu/cpu","capability_priority":120,"max_batch_size":5,"min_batch_size":2,"queue_wait_timeout_ms":220,"infer_timeout_ms":900,"estimated_avg_infer_time_ms":45,"p95_infer_time_ms":80,"max_concurrent_requests":3,"supports_concurrent_infer":true,"allow_resource_sharing":true})");
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2,"max_pending_request_count":4})");
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2,"max_pending_request_count":4,"capability_priority":140})");
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -336,6 +344,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"][0]["max_batch_size"] == 4, "catalog should expose max batch size from snapshot")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["min_batch_size"] == 2, "catalog should expose min batch size from snapshot")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"][0]["batch_wait_timeout_ms"] == 30, "catalog should expose snapshot batch wait timeout")) {
         return 1;
     }
@@ -346,6 +357,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(catalog_payload["items"][0]["pending_request_count"] == 0, "catalog should start with zero pending requests")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["orchestration"]["recommended_min_batch_size"] == 2, "catalog should expose orchestration recommendation")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["orchestration_summary"]["overall_state"] == "stable", "catalog should expose orchestration summary")) {
         return 1;
     }
 
@@ -367,6 +384,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(initial_metrics_payload["pool_metrics"][0]["batch_metrics"]["batch_wait_timeout_ms"] == 30, "metrics should expose batch wait timeout")) {
+        return 1;
+    }
+    if (!Expect(initial_metrics_payload["pool_metrics"][0]["orchestration"]["recommended_min_batch_size"] == 2, "metrics should expose orchestration output")) {
         return 1;
     }
 
@@ -523,6 +543,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(queue_catalog_payload["items"][0]["configured_max_pending_request_count"] == 3, "catalog should preserve configured max pending configuration")) {
+        return 1;
+    }
+    if (!Expect(queue_catalog_payload["items"][0]["orchestration"]["recommended_pool_size"].get<int>() >= 1, "catalog should surface orchestration output under queue pressure")) {
         return 1;
     }
 
@@ -837,6 +860,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["max_batch_size"] == 5, "reload should expose refreshed max batch size")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["items"][0]["capability_priority"] == 140, "reload should expose refreshed capability priority")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["queue_wait_timeout_ms"] == 220, "reload should expose refreshed queue wait timeout")) {
