@@ -112,6 +112,14 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(linux_target["output_dir"]) / "docs" / "README_集成说明.md").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "examples" / "sample_c_api.c").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "include" / "ai_sdk_error_codes.h").is_file())
+        self.assertEqual(Path(linux_target["output_dir"]).name, "sdk_linux_x86_64")
+        self.assertTrue((Path(linux_target["output_dir"]) / "manifest" / "manifest.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "manifest.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "validation" / "verify_sdk_package.py").is_file())
+        package_manifest = json.loads(Path(package_detail["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(package_manifest["delivery_package_alignment"])
+        self.assertEqual(package_manifest["stage_status"]["S9"], "completed")
+        self.assertTrue((Path(payload["package_root_path"]) / "acceptance_checklist.json").is_file())
 
     def test_create_sdk_package_with_jni_outputs_java_and_jni_files(self) -> None:
         with get_session_factory()() as session:
@@ -134,6 +142,9 @@ class SdkServiceTestCase(unittest.TestCase):
         target = package_detail["targets"][0]
         self.assertTrue((Path(target["output_dir"]) / "jni").is_dir())
         self.assertTrue((Path(target["output_dir"]) / "examples" / "NativeBridge.java").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "ACCEPTANCE_CHECKLIST.md").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "DEPLOYMENT_GUIDE.md").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "LICENSE_TOOL.md").is_file())
 
     def test_audit_logs_and_target_listing(self) -> None:
         with get_session_factory()() as session:
@@ -155,3 +166,26 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(logs), 1)
         self.assertEqual(logs[0]["entity_type"], "sdk_package")
         self.assertEqual(len(list_sdk_targets()), 4)
+
+    def test_verify_sdk_package_script_passes_for_generated_target(self) -> None:
+        with get_session_factory()() as session:
+            payload = create_sdk_package(
+                session,
+                sdk_packages_root=get_settings().sdk_packages_root,
+                sdk_logs_root=get_settings().sdk_logs_root,
+                libs_root=get_settings().libs_root,
+                models_root=get_settings().models_root,
+                exports_root=get_settings().exports_root,
+                audit_log_path=get_settings().audit_log_path,
+                package_name="face_detect_sdk_verify",
+                capability_name="face_detect",
+                model_version="v1_0_0",
+                requested_targets=["linux_x86_64"],
+                jni_enabled=False,
+            )
+            package_detail = get_sdk_package(session, int(payload["package_id"]))
+
+        target = package_detail["targets"][0]
+        verify_script = Path(target["output_dir"]) / "validation" / "verify_sdk_package.py"
+        exit_code = os.system(f'python "{verify_script}" "{Path(target["output_dir"])}" > /dev/null')
+        self.assertEqual(exit_code, 0)

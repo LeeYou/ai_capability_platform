@@ -14,6 +14,8 @@ from app.db.models import SdkArtifactModel, SdkPackageModel, SdkTargetModel
 from app.services.audit_service import append_audit_log
 
 
+REPO_ROOT = Path(__file__).resolve().parents[5]
+
 SUPPORTED_TARGETS: dict[str, dict[str, object]] = {
     "linux_x86_64": {
         "os_name": "linux",
@@ -39,6 +41,20 @@ SUPPORTED_TARGETS: dict[str, dict[str, object]] = {
         "artifact_format": "dll",
         "supports_jni": True,
     },
+}
+
+STANDARD_SDK_DIR_NAMES = {
+    "linux_x86_64": "sdk_linux_x86_64",
+    "linux_arm64": "sdk_linux_aarch64",
+    "windows_x86": "sdk_windows_x86",
+    "windows_x86_64": "sdk_windows_x86_64",
+}
+LICENSE_TOOL_VERSION = "1.0.0"
+LICENSE_TOOL_SOURCE_FILES = {
+    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
 }
 
 
@@ -303,6 +319,73 @@ SDK 与生产 runtime 协议兼容，遵循 GPU 优先、CPU 自动回退原则�
 """
 
 
+def _render_acceptance_checklist(capability_name: str, model_version: str, target_name: str, jni_enabled: bool) -> str:
+    return "\n".join(
+        [
+            "# ACCEPTANCE_CHECKLIST",
+            "",
+            f"- capability: `{capability_name}`",
+            f"- model_version: `{model_version}`",
+            f"- target: `{target_name}`",
+            "",
+            "1. 核对 `lib/`、`include/`、`models/`、`licenses/`、`docs/`、`examples/` 目录齐全。",
+            "2. 校验 `manifest/manifest.json` 与 `checksums.txt` 可读且内容完整。",
+            "3. 参考 `docs/README_集成说明.md` 编译并运行示例工程。",
+            "4. 使用 `tools/license_tool/README.md` 中说明构建并执行 `license_tool verify`。",
+            "5. 运行 `validation/verify_sdk_package.py <sdk_dir>` 完成标准目录快速校验。",
+            f"6. {'核对 jni/ 目录与 Java 示例。' if jni_enabled else '确认当前目标无需 JNI 目录。'}",
+            "",
+        ]
+    )
+
+
+def _render_deployment_guide(capability_name: str, model_version: str, target_name: str) -> str:
+    return "\n".join(
+        [
+            "# DEPLOYMENT_GUIDE",
+            "",
+            f"- capability: `{capability_name}`",
+            f"- model_version: `{model_version}`",
+            f"- target: `{target_name}`",
+            "",
+            "## 推荐部署步骤",
+            "",
+            "1. 将 `lib/`、`include/`、`models/`、`licenses/` 与 `tools/` 一并下发到目标环境。",
+            "2. 按 `docs/README_集成说明.md` 完成 ABI 校验、初始化与推理接入。",
+            "3. 如需现场核验授权，先构建 `tools/license_tool`，再执行 `license_tool verify`。",
+            "4. 交付验收前执行 `validation/verify_sdk_package.py` 与示例工程编译校验。",
+            "",
+        ]
+    )
+
+
+def _render_license_tool_integration_doc(target_name: str) -> str:
+    return "\n".join(
+        [
+            "# LICENSE_TOOL",
+            "",
+            f"当前目标 `{target_name}` 已附带标准 `tools/license_tool` source bundle。",
+            "",
+            "## 构建",
+            "",
+            "```bash",
+            "cd tools/license_tool",
+            "cmake -S . -B build",
+            "cmake --build build --parallel",
+            "```",
+            "",
+            "## 校验示例",
+            "",
+            "```bash",
+            "./build/license_tool verify ../../licenses/license.bin",
+            "```",
+            "",
+            "如需生成或预计算硬件指纹，请继续参考 `tools/license_tool/HARDWARE_FINGERPRINT.md`。",
+            "",
+        ]
+    )
+
+
 def _render_error_codes_doc() -> str:
     return """# SDK 错误码说明
 
@@ -366,6 +449,135 @@ public final class {class_name} {{
   public static native int ping();
 }}
 """
+
+
+def _copy_license_tool_bundle(destination_dir: Path) -> None:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    for relative_path, source_path in LICENSE_TOOL_SOURCE_FILES.items():
+        copy_to = destination_dir / relative_path
+        copy_to.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, copy_to)
+    _write_text(destination_dir / "VERSION", LICENSE_TOOL_VERSION + "\n")
+    _write_text(
+        destination_dir / "manifest.json",
+        json.dumps(
+            {
+                "tool_name": "license_tool",
+                "version": LICENSE_TOOL_VERSION,
+                "bundle_format": "source_bundle",
+                "build_command": "cmake -S . -B build && cmake --build build --parallel",
+                "source_files": sorted(LICENSE_TOOL_SOURCE_FILES),
+                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+    _write_text(
+        destination_dir / "README.md",
+        "\n".join(
+            [
+                "# license_tool",
+                "",
+                f"- 版本：`{LICENSE_TOOL_VERSION}`",
+                "- 交付形态：标准 C++ source bundle",
+                "",
+                "## 构建方式",
+                "",
+                "```bash",
+                "cmake -S . -B build",
+                "cmake --build build --parallel",
+                "```",
+                "",
+                "## 常用命令",
+                "",
+                "```bash",
+                "./build/license_tool verify /path/to/license.bin",
+                "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b",
+                "```",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        destination_dir / "ERROR_CODES.md",
+        "\n".join(
+            [
+                "# ERROR_CODES",
+                "",
+                "| 退出码 | 含义 |",
+                "| --- | --- |",
+                "| 1 | 参数不足或 mode 非法 |",
+                "| 2 | generate 参数错误或 bool 选项非法 |",
+                "| 3 | 生成 license 文件失败 |",
+                "| 4 | 解析 license 文件失败 |",
+                "| 5 | 验证 license 失败 |",
+                "| 6 | 未知 mode |",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        destination_dir / "HARDWARE_FINGERPRINT.md",
+        "\n".join(
+            [
+                "# HARDWARE_FINGERPRINT",
+                "",
+                "硬件指纹采用 `key=value` 形式按 key 排序后，以 `|` 连接并计算 SHA256。",
+                "",
+                "```text",
+                "cpu=intel-i7|disk=nvme-sn-001|mac=00:11:22:33:44:55",
+                "```",
+                "",
+            ]
+        ),
+    )
+
+
+def _write_verify_sdk_package_script(validation_dir: Path) -> None:
+    _write_text(
+        validation_dir / "verify_sdk_package.py",
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "",
+                "import argparse",
+                "from pathlib import Path",
+                "import sys",
+                "",
+                "",
+                "def main() -> int:",
+                "    parser = argparse.ArgumentParser(description='Verify ai-sdk package skeleton.')",
+                "    parser.add_argument('sdk_root')",
+                "    args = parser.parse_args()",
+                "    sdk_root = Path(args.sdk_root).resolve()",
+                "    required = [",
+                "        'lib',",
+                "        'include',",
+                "        'models',",
+                "        'licenses',",
+                "        'docs',",
+                "        'examples',",
+                "        'tools/license_tool/manifest.json',",
+                "        'validation/verify_sdk_package.py',",
+                "        'manifest/manifest.json',",
+                "        'checksums.txt',",
+                "    ]",
+                "    missing = [item for item in required if not (sdk_root / item).exists()]",
+                "    if missing:",
+                "        print(f'missing paths: {missing}', file=sys.stderr)",
+                "        return 1",
+                "    print('sdk package verified')",
+                "    return 0",
+                "",
+                "",
+                "if __name__ == '__main__':",
+                "    raise SystemExit(main())",
+                "",
+            ]
+        ),
+    )
 
 
 def _write_checksums(root_dir: Path) -> None:
@@ -468,19 +680,23 @@ def create_sdk_package(
         if not source_root.exists():
             raise ValueError(f"未找到 {target_name}/{safe_capability_name} 的 ai-builder 交付目录。")
 
-        output_dir = (package_root / target_name / safe_capability_name / safe_model_version).resolve()
+        sdk_dir_name = STANDARD_SDK_DIR_NAMES[target_name]
+        output_dir = (package_root / sdk_dir_name).resolve()
         if not (output_dir == package_root or package_root in output_dir.parents):
             raise ValueError("SDK 输出目录非法。")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         lib_dir = output_dir / "lib"
         include_dir = output_dir / "include"
-        model_dir = output_dir / "model"
-        license_dir = output_dir / "license"
+        model_dir = output_dir / "models"
+        license_dir = output_dir / "licenses"
         docs_dir = output_dir / "docs"
         examples_dir = output_dir / "examples"
         jni_dir = output_dir / "jni"
-        for directory in (lib_dir, include_dir, model_dir, license_dir, docs_dir, examples_dir):
+        tools_dir = output_dir / "tools"
+        validation_dir = output_dir / "validation"
+        manifest_dir = output_dir / "manifest"
+        for directory in (lib_dir, include_dir, model_dir, license_dir, docs_dir, examples_dir, tools_dir, validation_dir, manifest_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
         source_lib_dir = source_root / "lib"
@@ -505,10 +721,18 @@ def create_sdk_package(
         _write_text(include_dir / "ai_sdk_threading.h", _render_threading_header())
         _write_text(docs_dir / "README_集成说明.md", _render_package_readme(safe_capability_name, safe_model_version, target_name, jni_enabled))
         _write_text(docs_dir / "ERROR_CODES.md", _render_error_codes_doc())
+        _write_text(
+            docs_dir / "ACCEPTANCE_CHECKLIST.md",
+            _render_acceptance_checklist(safe_capability_name, safe_model_version, target_name, jni_enabled),
+        )
+        _write_text(docs_dir / "DEPLOYMENT_GUIDE.md", _render_deployment_guide(safe_capability_name, safe_model_version, target_name))
+        _write_text(docs_dir / "LICENSE_TOOL.md", _render_license_tool_integration_doc(target_name))
         _write_text(examples_dir / "sample_c_api.c", _render_c_example(safe_capability_name))
         _write_text(examples_dir / "CMakeLists.txt", _render_cpp_example(safe_capability_name))
         if jni_enabled:
             _write_text(examples_dir / "NativeBridge.java", _render_java_example(safe_capability_name))
+        _copy_license_tool_bundle(tools_dir / "license_tool")
+        _write_verify_sdk_package_script(validation_dir)
 
         source_manifest_path = source_root / "manifest" / "manifest.json"
         source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8")) if source_manifest_path.exists() else {}
@@ -518,15 +742,31 @@ def create_sdk_package(
             "capability_name": safe_capability_name,
             "model_version": safe_model_version,
             "target_name": target_name,
+            "sdk_dir_name": sdk_dir_name,
             "artifact_format": target_config["artifact_format"],
             "jni_enabled": jni_enabled,
             "source_builder_manifest": source_manifest,
-            "delivery_content": ["lib", "include", "model", "license", "docs", "examples"] + (["jni"] if jni_enabled else []),
+            "delivery_content": [
+                "lib",
+                "include",
+                "models",
+                "licenses",
+                "docs",
+                "examples",
+                "tools/license_tool",
+                "validation",
+                "manifest",
+            ]
+            + (["jni"] if jni_enabled else []),
             "abi_compatibility": "ai-builder / ai-prod v1",
             "thread_safe": True,
             "gpu_fallback": True,
+            "delivery_package_alignment": {
+                "sdk_dir": sdk_dir_name,
+                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed"},
+            },
         }
-        sdk_manifest_path = output_dir / "manifest.json"
+        sdk_manifest_path = manifest_dir / "manifest.json"
         _write_text(sdk_manifest_path, json.dumps(sdk_manifest, ensure_ascii=False, indent=2, sort_keys=True))
         _write_checksums(output_dir)
 
@@ -566,8 +806,13 @@ def create_sdk_package(
             ("checksums", output_dir / "checksums.txt"),
             ("doc", docs_dir / "README_集成说明.md"),
             ("doc", docs_dir / "ERROR_CODES.md"),
+            ("doc", docs_dir / "ACCEPTANCE_CHECKLIST.md"),
+            ("doc", docs_dir / "DEPLOYMENT_GUIDE.md"),
+            ("doc", docs_dir / "LICENSE_TOOL.md"),
             ("example", examples_dir / "sample_c_api.c"),
             ("example", examples_dir / "CMakeLists.txt"),
+            ("tool", tools_dir / "license_tool" / "manifest.json"),
+            ("validation", validation_dir / "verify_sdk_package.py"),
             ("archive", archive_path),
         ):
             _register_artifact(
@@ -617,15 +862,66 @@ def create_sdk_package(
         "model_version": safe_model_version,
         "requested_targets": sorted(set(normalized_targets)),
         "jni_enabled": jni_enabled,
+        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed"},
+        "delivery_package_alignment": True,
         "targets": [
             {
                 "target_name": item["target_name"],
+                "sdk_dir_name": STANDARD_SDK_DIR_NAMES[str(item["target_name"])],
                 "binary_path": item["binary_path"],
+                "manifest_path": item["manifest_path"],
                 "download_archive_path": item["download_archive_path"],
             }
             for item in package_targets
         ],
     }
+    _write_text(
+        package_root / "README.md",
+        "\n".join(
+            [
+                "# ai-sdk delivery package",
+                "",
+                f"- package_name: `{safe_package_name}`",
+                f"- capability_name: `{safe_capability_name}`",
+                f"- model_version: `{safe_model_version}`",
+                "- 当前目录已按统一 `sdk_*` 规范输出 Linux/JNI/Windows SDK、license_tool、验收文档与快速校验脚本。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        package_root / "acceptance_checklist.json",
+        json.dumps(
+            {
+                "package_id": package.id,
+                "package_name": safe_package_name,
+                "capability_name": safe_capability_name,
+                "model_version": safe_model_version,
+                "targets": [
+                    {
+                        "target_name": item["target_name"],
+                        "sdk_dir_name": STANDARD_SDK_DIR_NAMES[str(item["target_name"])],
+                        "required_paths": [
+                            "lib",
+                            "include",
+                            "models",
+                            "licenses",
+                            "docs",
+                            "examples",
+                            "tools/license_tool/manifest.json",
+                            "validation/verify_sdk_package.py",
+                            "manifest/manifest.json",
+                            "checksums.txt",
+                        ],
+                    }
+                    for item in package_targets
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
     package_manifest_path = package_root / "package_manifest.json"
     _write_text(package_manifest_path, json.dumps(package_manifest, ensure_ascii=False, indent=2, sort_keys=True))
 

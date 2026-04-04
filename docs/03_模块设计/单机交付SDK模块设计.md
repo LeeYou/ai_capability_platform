@@ -15,13 +15,14 @@
 
 ## 3. 交付内容
 
-1. `lib/` 或 `dll/`
+1. `sdk_linux_x86_64/`、`sdk_linux_aarch64/`、`sdk_windows_x86/`、`sdk_windows_x86_64/` 等标准 SDK 目录
 2. `include/` 头文件
 3. `models/` 模型包
 4. `licenses/` 授权文件
 5. JNI 库与 Java 接口说明
 6. `tools/license_tool`
-7. `docs/` 接入说明、错误码说明、验收说明
+7. `docs/` 接入说明、错误码说明、验收说明、部署说明
+8. `validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`
 
 ## 4. 接口原则
 
@@ -44,7 +45,7 @@
 1. GPU 优先，CPU 回退
 2. 并发调用安全
 3. 与生产 runtime 协议兼容
-4. 交付内容可直接纳入统一 `delivery_package/`
+4. 交付内容可直接纳入统一 `delivery_package/`，并与 `sdk_*` 目录命名、license_tool、验收清单保持一致
 
 ## 7. 设计决策
 

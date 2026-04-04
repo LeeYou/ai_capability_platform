@@ -14,9 +14,9 @@
 | S4 | 生成 JNI 交付包 | 已完成 |
 | S5 | 编写接入文档与验收说明 | 已完成 |
 | S6 | 首期联调与验收 | 已完成 |
-| S7 | 收敛 Linux/JNI/Windows SDK 标准目录 | 未开始 |
-| S8 | 收敛 `license_tool`、示例工程与错误码文档 | 未开始 |
-| S9 | 纳入统一 `delivery_package/` 与验收体系 | 未开始 |
+| S7 | 收敛 Linux/JNI/Windows SDK 标准目录 | 已完成 |
+| S8 | 收敛 `license_tool`、示例工程与错误码文档 | 已完成 |
+| S9 | 纳入统一 `delivery_package/` 与验收体系 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -31,15 +31,13 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已明确单机交付 SDK 后续重点是标准化交付目录、工具、文档与验收一致性。
-2. 当前已完成与 ai-builder `delivery_package/` 的基础对齐前置：交付包侧已可承载 SDK / license 基础物料，并已补齐 `tools/license_tool` 标准 source bundle、README 与错误码说明，但 SDK 模块自身的目录规范、示例工程与验收文档一体化仍未单独收口。
+1. 当前阶段已完成单机交付 SDK 标准化交付目录、工具、文档与验收一致性收口。
+2. 当前已完成与 ai-builder `delivery_package/` 的目录命名与验收物料对齐：SDK 包已按 `sdk_*` 标准目录输出，并附带 `tools/license_tool`、验收清单、部署说明与快速校验脚本。
 
 ### 4.3 未完成
 
-1. Linux、JNI、Windows SDK 目录规则仍需进一步统一。
-2. `license_tool` 与错误码文档已具备交付包侧基础物料，但示例工程与验收说明仍需一体化输出。
-3. SDK 交付尚未完全纳入最终 `delivery_package/` 规范。
+1. 暂无；当前模块开发计划项已全部完成，后续以联调验收与交付跟踪为主。
 
 ### 4.4 阶段小结
 
-单机交付 SDK 已具备基础打包能力，下一阶段要把它从“能打包”提升为“可直接商业交付、可标准验收、可稳定集成”。
+单机交付 SDK 已完成 S7/S8/S9：当前输出已按 `sdk_linux_x86_64` / `sdk_linux_aarch64` / `sdk_windows_x86` / `sdk_windows_x86_64` 等标准目录收敛，统一附带 `models/`、`licenses/`、`docs/`、`examples/`、`tools/license_tool`、`validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`，并将接入说明、错误码、部署说明、验收清单、示例工程与快速校验脚本纳入统一交付物，使 SDK 模块从“可打包”提升为“可直接交付、可标准验收、可稳定集成”。
