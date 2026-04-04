@@ -139,3 +139,26 @@ class AcceptanceTaskModel(Base):
     )
 
     task: Mapped[TestTaskModel] = relationship(back_populates="acceptance_task")
+
+
+class PerformanceBaselineModel(Base):
+    __tablename__ = "performance_baseline"
+    __table_args__ = (
+        UniqueConstraint("capability_name", "scenario_name", name="uq_performance_baseline_capability_scenario"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    capability_name: Mapped[str] = mapped_column(String(128), index=True)
+    scenario_name: Mapped[str] = mapped_column(String(64))
+    latency_max_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    throughput_min_rps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p95_max_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    p99_max_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success_rate_min: Mapped[float] = mapped_column(Float, default=1.0)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )

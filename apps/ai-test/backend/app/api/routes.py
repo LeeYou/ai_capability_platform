@@ -14,6 +14,8 @@ from app.models import (
     CreateAcceptanceTaskRequest,
     CreateSingleTestRequest,
     HealthResponse,
+    PerformanceBaselineItem,
+    PerformanceBaselineListResponse,
     RemoteCapabilityItem,
     RemoteCapabilityListResponse,
     RemoteModelItem,
@@ -25,6 +27,7 @@ from app.models import (
     TestTaskDetailResponse,
     TestTaskItem,
     TestTaskListResponse,
+    UpsertPerformanceBaselineRequest,
 )
 from app.services.acceptance_service import (
     AcceptanceTaskCreatePayload,
@@ -33,6 +36,7 @@ from app.services.acceptance_service import (
     get_acceptance_task,
     list_acceptance_tasks,
 )
+from app.services.baseline_service import list_performance_baselines, upsert_performance_baseline
 from app.services.model_sync_service import ModelCatalogSyncError, get_model_catalog, sync_remote_model_catalog
 from app.services.report_service import TestReportNotFoundError, export_test_report, get_test_report, list_test_reports
 from app.services.test_service import (
@@ -61,6 +65,10 @@ def _acceptance_item(payload: dict[str, object]) -> AcceptanceTaskItem:
     copy_payload = dict(payload)
     copy_payload.pop("script_results", None)
     return AcceptanceTaskItem(**copy_payload)
+
+
+def _baseline_item(payload: dict[str, object]) -> PerformanceBaselineItem:
+    return PerformanceBaselineItem(**payload)
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -230,6 +238,33 @@ def get_acceptance_task_detail(
     except AcceptanceTaskNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return AcceptanceTaskDetailResponse(**payload)
+
+
+@router.get("/performance-baselines", response_model=PerformanceBaselineListResponse, tags=["acceptance"])
+def get_performance_baselines(session: Session = Depends(get_db_session)) -> PerformanceBaselineListResponse:
+    return PerformanceBaselineListResponse(items=[_baseline_item(item) for item in list_performance_baselines(session)])
+
+
+@router.post("/performance-baselines", response_model=PerformanceBaselineItem, status_code=status.HTTP_201_CREATED, tags=["acceptance"])
+def create_or_update_performance_baseline(
+    request: UpsertPerformanceBaselineRequest,
+    session: Session = Depends(get_db_session),
+) -> PerformanceBaselineItem:
+    try:
+        payload = upsert_performance_baseline(
+            session,
+            capability_name=request.capability_name,
+            scenario_name=request.scenario_name,
+            latency_max_ms=request.latency_max_ms,
+            throughput_min_rps=request.throughput_min_rps,
+            p95_max_ms=request.p95_max_ms,
+            p99_max_ms=request.p99_max_ms,
+            success_rate_min=request.success_rate_min,
+            description=request.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return PerformanceBaselineItem(**payload)
 
 
 @router.get("/test-tasks", response_model=TestTaskListResponse, tags=["test"])

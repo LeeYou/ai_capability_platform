@@ -11,6 +11,7 @@ from app.config import get_settings, reset_settings_cache
 from app.db.database import get_session_factory, reset_database_cache
 from app.api.routes import create_acceptance, get_acceptance_task_detail, get_acceptance_tasks
 from app.models import CreateAcceptanceTaskRequest
+from app.services.baseline_service import list_performance_baselines
 from app.services.acceptance_service import AcceptanceTaskCreatePayload, create_acceptance_task, get_acceptance_task, list_acceptance_tasks
 from app.services.test_service import initialize_database
 
@@ -85,11 +86,15 @@ class AcceptanceServiceTestCase(unittest.TestCase):
             )
             items = list_acceptance_tasks(session)
             detail = get_acceptance_task(session, int(payload["acceptance_task_id"]))
+            baselines = list_performance_baselines(session)
 
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["passed_cases"], 2)
         self.assertEqual(len(items), 1)
+        self.assertGreaterEqual(len(baselines), 1)
         self.assertEqual(detail["script_results"][0]["case_name"], "acceptance_check")
+        self.assertIn("baseline_comparison", detail["script_results"][0])
+        self.assertTrue(detail["script_results"][1]["passed_baseline"])
         self.assertTrue((get_settings().test_reports_root / f"task_{payload['task_id']}" / "report.json").is_file())
 
     @patch("app.services.acceptance_service.subprocess.run", side_effect=_mock_subprocess_run)
@@ -117,3 +122,4 @@ class AcceptanceServiceTestCase(unittest.TestCase):
         self.assertEqual(payload.image_uri, "registry.local/ai-prod:test")
         self.assertEqual(len(items.items), 1)
         self.assertEqual(len(detail.script_results), 2)
+        self.assertIsNotNone(detail.script_results[1].baseline_comparison)

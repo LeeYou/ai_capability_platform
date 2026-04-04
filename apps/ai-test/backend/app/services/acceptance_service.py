@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from app.db.models import AcceptanceTaskModel, TestCaseModel, TestResultModel, TestTaskModel
+from app.services.baseline_service import get_performance_baseline
 from app.services.report_service import generate_test_report
 
 
@@ -79,20 +80,114 @@ def _task_item(task: TestTaskModel, acceptance_task: AcceptanceTaskModel) -> dic
     }
 
 
-def _task_detail(task: TestTaskModel, acceptance_task: AcceptanceTaskModel) -> dict[str, object]:
+def _task_detail(session: Session, task: TestTaskModel, acceptance_task: AcceptanceTaskModel) -> dict[str, object]:
     payload = _task_item(task, acceptance_task)
     payload["script_results"] = [
-        {
-            "case_name": case.case_name,
-            "status": result.status,
-            "duration_ms": result.duration_ms,
-            "passed": result.status == "passed",
-            "detail": json.loads(result.raw_output_json),
-        }
+        _script_result_item(session, task.capability_name, case, result, acceptance_task)
         for case in task.cases
         for result in case.results
     ]
     return payload
+
+
+def _script_result_item(
+    session: Session,
+    capability_name: str,
+    case: TestCaseModel,
+    result: TestResultModel,
+    acceptance_task: AcceptanceTaskModel,
+) -> dict[str, object]:
+    detail = json.loads(result.raw_output_json)
+    baseline_comparison = _build_baseline_comparison(
+        session,
+        capability_name,
+        case.case_name,
+        detail,
+        acceptance_task,
+    )
+    return {
+        "case_name": case.case_name,
+        "status": result.status,
+        "duration_ms": result.duration_ms,
+        "passed": result.status == "passed",
+        "detail": detail,
+        "baseline_comparison": baseline_comparison,
+        "passed_baseline": baseline_comparison["passed"] if baseline_comparison is not None else None,
+    }
+
+
+def _build_baseline_comparison(
+    session: Session,
+    capability_name: str,
+    case_name: str,
+    detail: dict[str, object],
+    acceptance_task: AcceptanceTaskModel,
+) -> dict[str, object] | None:
+    if case_name == "acceptance_check":
+        checks = detail.get("results", [])
+        if not isinstance(checks, list):
+            return None
+        check_items: list[dict[str, object]] = []
+        all_passed = True
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            scenario_name = str(item.get("name", "")).strip()
+            baseline = get_performance_baseline(session, capability_name=capability_name, scenario_name=scenario_name)
+            actual_latency_ms = int(item.get("latency_ms", 0))
+            actual_passed = bool(item.get("passed", False))
+            meets_latency = baseline is None or baseline.get("latency_max_ms") is None or actual_latency_ms <= int(baseline["latency_max_ms"])
+            meets_success = baseline is None or actual_passed or float(baseline.get("success_rate_min", 1.0)) <= 0.0
+            item_passed = actual_passed and meets_latency and meets_success
+            all_passed = all_passed and item_passed
+            check_items.append(
+                {
+                    "scenario_name": scenario_name,
+                    "actual_latency_ms": actual_latency_ms,
+                    "actual_passed": actual_passed,
+                    "latency_max_ms": None if baseline is None else baseline.get("latency_max_ms"),
+                    "success_rate_min": None if baseline is None else baseline.get("success_rate_min"),
+                    "passed": item_passed,
+                }
+            )
+        return {
+            "scenario_name": "acceptance_check",
+            "checks": check_items,
+            "passed": all_passed,
+        }
+    if case_name != "pressure_smoke":
+        return None
+    baseline = get_performance_baseline(session, capability_name=capability_name, scenario_name="pressure_default")
+    actual_latency = detail.get("latency_ms", {}) if isinstance(detail.get("latency_ms"), dict) else {}
+    p95_limit = acceptance_task.pressure_max_p95_ms if acceptance_task.pressure_max_p95_ms else baseline.get("p95_max_ms") if baseline else None
+    success_rate_limit = (
+        acceptance_task.pressure_min_success_rate
+        if acceptance_task.pressure_min_success_rate is not None
+        else float(baseline.get("success_rate_min", 1.0)) if baseline else 1.0
+    )
+    p99_limit = baseline.get("p99_max_ms") if baseline else None
+    throughput_min = baseline.get("throughput_min_rps") if baseline else None
+    actual_success_rate = float(detail.get("success_rate", 0.0))
+    actual_p95 = int(actual_latency.get("p95", 0)) if actual_latency else 0
+    actual_p99 = int(actual_latency.get("p99", 0)) if actual_latency else 0
+    actual_throughput = float(detail.get("throughput_rps", 0.0))
+    passed = actual_success_rate >= float(success_rate_limit) and (p95_limit is None or actual_p95 <= int(p95_limit))
+    if p99_limit is not None:
+        passed = passed and actual_p99 <= int(p99_limit)
+    if throughput_min is not None:
+        passed = passed and actual_throughput >= float(throughput_min)
+    return {
+        "scenario_name": "pressure_default",
+        "configured_p95_max_ms": p95_limit,
+        "configured_p99_max_ms": p99_limit,
+        "configured_success_rate_min": success_rate_limit,
+        "configured_throughput_min_rps": throughput_min,
+        "actual_p95_ms": actual_p95,
+        "actual_p99_ms": actual_p99,
+        "actual_throughput_rps": actual_throughput,
+        "actual_success_rate": actual_success_rate,
+        "passed": passed,
+    }
 
 
 def _run_json_script(command: list[str], timeout_seconds: int) -> dict[str, object]:
@@ -337,7 +432,7 @@ def create_acceptance_task(
     generate_test_report(session, test_reports_root, task.id)
     session.refresh(task)
     session.refresh(acceptance_task)
-    return _task_detail(task, acceptance_task)
+    return _task_detail(session, task, acceptance_task)
 
 
 def list_acceptance_tasks(session: Session) -> list[dict[str, object]]:
@@ -354,4 +449,4 @@ def get_acceptance_task(session: Session, acceptance_task_id: int) -> dict[str, 
     acceptance_task = session.get(AcceptanceTaskModel, acceptance_task_id)
     if acceptance_task is None:
         raise AcceptanceTaskNotFoundError("验收任务不存在。")
-    return _task_detail(acceptance_task.task, acceptance_task)
+    return _task_detail(session, acceptance_task.task, acceptance_task)

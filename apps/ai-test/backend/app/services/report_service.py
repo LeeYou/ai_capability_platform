@@ -8,6 +8,7 @@ import shutil
 from sqlalchemy.orm import Session
 
 from app.db.models import TestReportModel, TestResultModel, TestTaskModel
+from app.services.baseline_service import get_performance_baseline
 
 
 class TestReportNotFoundError(ValueError):
@@ -66,6 +67,49 @@ def _report_item(task: TestTaskModel, report: TestReportModel) -> dict[str, obje
     }
 
 
+def _result_baseline_summary(session: Session, task: TestTaskModel, result: TestResultModel) -> dict[str, object] | None:
+    if task.task_type != "acceptance":
+        return None
+    detail = json.loads(result.raw_output_json)
+    if result.case.case_name == "acceptance_check":
+        checks = detail.get("results", [])
+        if not isinstance(checks, list):
+            return None
+        check_items: list[dict[str, object]] = []
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            scenario_name = str(item.get("name", ""))
+            baseline = get_performance_baseline(session, task.capability_name, scenario_name)
+            check_items.append(
+                {
+                    "scenario_name": scenario_name,
+                    "latency_max_ms": None if baseline is None else baseline.get("latency_max_ms"),
+                    "actual_latency_ms": int(item.get("latency_ms", 0)),
+                    "passed": bool(item.get("passed", False)),
+                }
+            )
+        return {
+            "scenario_name": "acceptance_check",
+            "checks": check_items,
+        }
+    if result.case.case_name != "pressure_smoke":
+        return None
+    baseline = get_performance_baseline(session, task.capability_name, "pressure_default")
+    latency = detail.get("latency_ms", {}) if isinstance(detail.get("latency_ms"), dict) else {}
+    return {
+        "scenario_name": "pressure_default",
+        "p95_max_ms": None if baseline is None else baseline.get("p95_max_ms"),
+        "p99_max_ms": None if baseline is None else baseline.get("p99_max_ms"),
+        "success_rate_min": None if baseline is None else baseline.get("success_rate_min"),
+        "throughput_min_rps": None if baseline is None else baseline.get("throughput_min_rps"),
+        "actual_p95_ms": latency.get("p95"),
+        "actual_p99_ms": latency.get("p99"),
+        "actual_success_rate": detail.get("success_rate"),
+        "actual_throughput_rps": detail.get("throughput_rps"),
+    }
+
+
 def generate_test_report(session: Session, test_reports_root: Path, task_id: int) -> dict[str, object]:
     task = session.get(TestTaskModel, task_id)
     if task is None:
@@ -96,6 +140,7 @@ def generate_test_report(session: Session, test_reports_root: Path, task_id: int
                 "score": result.score,
                 "expected_output": result.expected_output,
                 "actual_output": result.actual_output,
+                "baseline_comparison": _result_baseline_summary(session, task, result),
             }
             for result in results
         ],

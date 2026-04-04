@@ -41,6 +41,14 @@ type AcceptanceTaskItem = {
   failed_cases: number
 }
 
+type PerformanceBaselineItem = {
+  baseline_id: number
+  capability_name: string
+  scenario_name: string
+  p95_max_ms: number | null
+  success_rate_min: number
+}
+
 type ApiListResponse<T> = {
   items: T[]
   synced_at?: string | null
@@ -50,6 +58,7 @@ type DashboardState = {
   models: RemoteModelItem[]
   tasks: TestTaskItem[]
   acceptanceTasks: AcceptanceTaskItem[]
+  baselines: PerformanceBaselineItem[]
   reports: TestReportItem[]
   syncedAt: string | null
 }
@@ -58,6 +67,7 @@ const initialState: DashboardState = {
   models: [],
   tasks: [],
   acceptanceTasks: [],
+  baselines: [],
   reports: [],
   syncedAt: null,
 }
@@ -66,6 +76,7 @@ const roadmapItems = [
   '单接口测试表单与测试样本上传能力',
   '批量测试编排、超时反馈与任务重试入口',
   '生产镜像验收任务与回归脚本编排',
+  'C++ HTTP 主服务性能/稳定性验收阈值模板',
   '报告导出中心与交付验收视图',
   '与 ai-train、ai-prod 的跨模块联调验证',
 ]
@@ -91,10 +102,11 @@ function App() {
       try {
         setLoading(true)
         setError(null)
-        const [models, tasks, acceptanceTasks, reports] = await Promise.all([
+        const [models, tasks, acceptanceTasks, baselines, reports] = await Promise.all([
           fetchList<RemoteModelItem>('/api/v1/remote-models'),
           fetchList<TestTaskItem>('/api/v1/test-tasks'),
           fetchList<AcceptanceTaskItem>('/api/v1/acceptance-tasks'),
+          fetchList<PerformanceBaselineItem>('/api/v1/performance-baselines'),
           fetchList<TestReportItem>('/api/v1/test-reports'),
         ])
         if (!cancelled) {
@@ -102,6 +114,7 @@ function App() {
             models: models.items,
             tasks: tasks.items,
             acceptanceTasks: acceptanceTasks.items,
+            baselines: baselines.items,
             reports: reports.items,
             syncedAt: models.synced_at ?? null,
           })
@@ -146,6 +159,11 @@ function App() {
         count: dashboard.acceptanceTasks.length,
         description: '面向 ai-prod 生产镜像的验收脚本编排与结果留痕。',
       },
+      {
+        title: '性能基线',
+        count: dashboard.baselines.length,
+        description: '面向 C++ HTTP 主服务的性能/稳定性验收阈值模板。',
+      },
     ],
     [dashboard],
   )
@@ -158,7 +176,7 @@ function App() {
           <h1>ai-test 管理台</h1>
           <p>
             面向模型验收与批量测试场景的统一测试子系统，当前已具备模型目录同步、测试执行、
-            结果持久化与测试报告导出基础能力。
+            生产镜像验收、性能基线比对与测试报告导出基础能力。
           </p>
         </div>
         <div className="hero-panel">
@@ -288,6 +306,33 @@ function App() {
             </article>
 
             <article className="sub-panel">
+              <h3>性能基线</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>能力</th>
+                    <th>场景</th>
+                    <th>P95 阈值</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard.baselines.map((item) => (
+                    <tr key={item.baseline_id}>
+                      <td>{item.capability_name}</td>
+                      <td>{item.scenario_name}</td>
+                      <td>{item.p95_max_ms ?? '-'}</td>
+                    </tr>
+                  ))}
+                  {dashboard.baselines.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>暂无性能基线</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </article>
+
+            <article className="sub-panel">
               <h3>测试报告</h3>
               <table>
                 <thead>
@@ -325,6 +370,7 @@ function App() {
               <li>ai-train 模型目录同步与本地快照回退</li>
               <li>单接口测试与批量测试</li>
               <li>GPU 优先 / CPU 回退执行策略</li>
+              <li>C++ HTTP 主服务性能/稳定性验收基线</li>
               <li>HTML / JSON / PDF 报告生成与导出</li>
             </ul>
           </article>

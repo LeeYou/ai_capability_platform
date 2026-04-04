@@ -86,6 +86,17 @@ class CreateAcceptanceTaskRequest(BaseModel):
     pressure_max_p95_ms: int = Field(default=5000, ge=1, le=60000, description="压测 P95 延迟阈值")
 
 
+class UpsertPerformanceBaselineRequest(BaseModel):
+    capability_name: str = Field(min_length=1, max_length=128, description="能力标识，all 表示平台级默认阈值")
+    scenario_name: str = Field(min_length=1, max_length=64, description="场景标识")
+    latency_max_ms: int | None = Field(default=None, ge=1, le=60000, description="单请求最大时延阈值")
+    throughput_min_rps: float | None = Field(default=None, ge=0.0, description="最小吞吐阈值")
+    p95_max_ms: int | None = Field(default=None, ge=1, le=60000, description="P95 最大时延阈值")
+    p99_max_ms: int | None = Field(default=None, ge=1, le=60000, description="P99 最大时延阈值")
+    success_rate_min: float = Field(default=1.0, ge=0.0, le=1.0, description="最小成功率阈值")
+    description: str | None = Field(default=None, max_length=2048, description="阈值说明")
+
+
 class TestCaseResultItem(BaseModel):
     case_id: int = Field(description="测试用例 ID")
     case_name: str = Field(description="测试用例名称")
@@ -131,6 +142,8 @@ class AcceptanceScriptResultItem(BaseModel):
     duration_ms: int = Field(description="执行耗时")
     passed: bool = Field(description="是否通过")
     detail: dict[str, Any] = Field(default_factory=dict, description="脚本原始结果")
+    baseline_comparison: dict[str, Any] | None = Field(default=None, description="性能/稳定性基线对比结果")
+    passed_baseline: bool | None = Field(default=None, description="是否满足基线")
 
 
 class AcceptanceTaskItem(BaseModel):
@@ -157,6 +170,24 @@ class AcceptanceTaskDetailResponse(AcceptanceTaskItem):
 
 class AcceptanceTaskListResponse(BaseModel):
     items: list[AcceptanceTaskItem] = Field(default_factory=list)
+
+
+class PerformanceBaselineItem(BaseModel):
+    baseline_id: int = Field(description="基线 ID")
+    capability_name: str = Field(description="能力标识")
+    scenario_name: str = Field(description="场景标识")
+    latency_max_ms: int | None = Field(default=None, description="单请求最大时延阈值")
+    throughput_min_rps: float | None = Field(default=None, description="最小吞吐阈值")
+    p95_max_ms: int | None = Field(default=None, description="P95 最大时延阈值")
+    p99_max_ms: int | None = Field(default=None, description="P99 最大时延阈值")
+    success_rate_min: float = Field(description="最小成功率阈值")
+    description: str | None = Field(default=None, description="基线说明")
+    created_at: str | None = Field(default=None, description="创建时间")
+    updated_at: str | None = Field(default=None, description="更新时间")
+
+
+class PerformanceBaselineListResponse(BaseModel):
+    items: list[PerformanceBaselineItem] = Field(default_factory=list)
 
 
 class TestReportItem(BaseModel):
