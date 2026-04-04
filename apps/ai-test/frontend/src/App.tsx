@@ -30,6 +30,17 @@ type TestReportItem = {
   failed_cases: number
 }
 
+type AcceptanceTaskItem = {
+  acceptance_task_id: number
+  task_id: number
+  image_uri: string
+  target_base_url: string
+  capability_name: string | null
+  status: string
+  passed_cases: number
+  failed_cases: number
+}
+
 type ApiListResponse<T> = {
   items: T[]
   synced_at?: string | null
@@ -38,6 +49,7 @@ type ApiListResponse<T> = {
 type DashboardState = {
   models: RemoteModelItem[]
   tasks: TestTaskItem[]
+  acceptanceTasks: AcceptanceTaskItem[]
   reports: TestReportItem[]
   syncedAt: string | null
 }
@@ -45,6 +57,7 @@ type DashboardState = {
 const initialState: DashboardState = {
   models: [],
   tasks: [],
+  acceptanceTasks: [],
   reports: [],
   syncedAt: null,
 }
@@ -52,6 +65,7 @@ const initialState: DashboardState = {
 const roadmapItems = [
   '单接口测试表单与测试样本上传能力',
   '批量测试编排、超时反馈与任务重试入口',
+  '生产镜像验收任务与回归脚本编排',
   '报告导出中心与交付验收视图',
   '与 ai-train、ai-prod 的跨模块联调验证',
 ]
@@ -77,15 +91,17 @@ function App() {
       try {
         setLoading(true)
         setError(null)
-        const [models, tasks, reports] = await Promise.all([
+        const [models, tasks, acceptanceTasks, reports] = await Promise.all([
           fetchList<RemoteModelItem>('/api/v1/remote-models'),
           fetchList<TestTaskItem>('/api/v1/test-tasks'),
+          fetchList<AcceptanceTaskItem>('/api/v1/acceptance-tasks'),
           fetchList<TestReportItem>('/api/v1/test-reports'),
         ])
         if (!cancelled) {
           setDashboard({
             models: models.items,
             tasks: tasks.items,
+            acceptanceTasks: acceptanceTasks.items,
             reports: reports.items,
             syncedAt: models.synced_at ?? null,
           })
@@ -124,6 +140,11 @@ function App() {
         title: '测试报告',
         count: dashboard.reports.length,
         description: '支持 HTML / JSON / PDF 报告生成与导出。',
+      },
+      {
+        title: '验收任务',
+        count: dashboard.acceptanceTasks.length,
+        description: '面向 ai-prod 生产镜像的验收脚本编排与结果留痕。',
       },
     ],
     [dashboard],
@@ -231,6 +252,35 @@ function App() {
                   {dashboard.tasks.length === 0 && (
                     <tr>
                       <td colSpan={3}>暂无测试任务</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </article>
+
+            <article className="sub-panel">
+              <h3>验收任务</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>镜像</th>
+                    <th>状态</th>
+                    <th>通过/失败</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard.acceptanceTasks.map((item) => (
+                    <tr key={item.acceptance_task_id}>
+                      <td>{item.image_uri}</td>
+                      <td>{item.status}</td>
+                      <td>
+                        {item.passed_cases}/{item.failed_cases}
+                      </td>
+                    </tr>
+                  ))}
+                  {dashboard.acceptanceTasks.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>暂无验收任务</td>
                     </tr>
                   )}
                 </tbody>

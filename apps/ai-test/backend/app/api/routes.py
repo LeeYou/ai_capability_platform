@@ -7,7 +7,11 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.database import get_db_session
 from app.models import (
+    AcceptanceTaskDetailResponse,
+    AcceptanceTaskItem,
+    AcceptanceTaskListResponse,
     CreateBatchTestRequest,
+    CreateAcceptanceTaskRequest,
     CreateSingleTestRequest,
     HealthResponse,
     RemoteCapabilityItem,
@@ -21,6 +25,13 @@ from app.models import (
     TestTaskDetailResponse,
     TestTaskItem,
     TestTaskListResponse,
+)
+from app.services.acceptance_service import (
+    AcceptanceTaskCreatePayload,
+    AcceptanceTaskNotFoundError,
+    create_acceptance_task,
+    get_acceptance_task,
+    list_acceptance_tasks,
 )
 from app.services.model_sync_service import ModelCatalogSyncError, get_model_catalog, sync_remote_model_catalog
 from app.services.report_service import TestReportNotFoundError, export_test_report, get_test_report, list_test_reports
@@ -44,6 +55,12 @@ def _report_item(payload: dict[str, object]) -> TestReportItem:
     copy_payload = dict(payload)
     copy_payload.pop("summary", None)
     return TestReportItem(**copy_payload)
+
+
+def _acceptance_item(payload: dict[str, object]) -> AcceptanceTaskItem:
+    copy_payload = dict(payload)
+    copy_payload.pop("script_results", None)
+    return AcceptanceTaskItem(**copy_payload)
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -165,6 +182,54 @@ def create_batch_test(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return TestTaskDetailResponse(**payload)
+
+
+@router.post("/acceptance-tasks", response_model=AcceptanceTaskDetailResponse, status_code=status.HTTP_201_CREATED, tags=["acceptance"])
+def create_acceptance(
+    request: CreateAcceptanceTaskRequest,
+    session: Session = Depends(get_db_session),
+) -> AcceptanceTaskDetailResponse:
+    settings = get_settings()
+    try:
+        payload = create_acceptance_task(
+            session=session,
+            test_reports_root=settings.test_reports_root,
+            payload=AcceptanceTaskCreatePayload(
+                image_uri=request.image_uri,
+                target_base_url=request.target_base_url,
+                capability_name=request.capability_name,
+                input_type=request.input_type,
+                infer_payload=request.infer_payload,
+                prefer_device=request.prefer_device,
+                acceptance_timeout_seconds=request.acceptance_timeout_seconds,
+                run_admin_checks=request.run_admin_checks,
+                pressure_requests=request.pressure_requests,
+                pressure_concurrency=request.pressure_concurrency,
+                pressure_timeout_seconds=request.pressure_timeout_seconds,
+                pressure_min_success_rate=request.pressure_min_success_rate,
+                pressure_max_p95_ms=request.pressure_max_p95_ms,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return AcceptanceTaskDetailResponse(**payload)
+
+
+@router.get("/acceptance-tasks", response_model=AcceptanceTaskListResponse, tags=["acceptance"])
+def get_acceptance_tasks(session: Session = Depends(get_db_session)) -> AcceptanceTaskListResponse:
+    return AcceptanceTaskListResponse(items=[_acceptance_item(item) for item in list_acceptance_tasks(session)])
+
+
+@router.get("/acceptance-tasks/{acceptance_task_id}", response_model=AcceptanceTaskDetailResponse, tags=["acceptance"])
+def get_acceptance_task_detail(
+    acceptance_task_id: int,
+    session: Session = Depends(get_db_session),
+) -> AcceptanceTaskDetailResponse:
+    try:
+        payload = get_acceptance_task(session, acceptance_task_id)
+    except AcceptanceTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return AcceptanceTaskDetailResponse(**payload)
 
 
 @router.get("/test-tasks", response_model=TestTaskListResponse, tags=["test"])

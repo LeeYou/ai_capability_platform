@@ -40,6 +40,11 @@ class TestTaskModel(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    acceptance_task: Mapped[AcceptanceTaskModel | None] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class TestCaseModel(Base):
@@ -103,3 +108,34 @@ class TestReportModel(Base):
     )
 
     task: Mapped[TestTaskModel] = relationship(back_populates="report")
+
+
+class AcceptanceTaskModel(Base):
+    __tablename__ = "acceptance_task"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_acceptance_task_task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("test_task.id", ondelete="CASCADE"), index=True)
+    image_uri: Mapped[str] = mapped_column(Text)
+    target_base_url: Mapped[str] = mapped_column(Text)
+    capability_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_type: Mapped[str] = mapped_column(String(32), default="json")
+    infer_payload: Mapped[str] = mapped_column(Text)
+    prefer_device: Mapped[str] = mapped_column(String(32), default="auto")
+    acceptance_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
+    run_admin_checks: Mapped[str] = mapped_column(String(8), default="false")
+    pressure_requests: Mapped[int] = mapped_column(Integer, default=32)
+    pressure_concurrency: Mapped[int] = mapped_column(Integer, default=8)
+    pressure_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
+    pressure_min_success_rate: Mapped[float] = mapped_column(Float, default=1.0)
+    pressure_max_p95_ms: Mapped[int] = mapped_column(Integer, default=5000)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
+
+    task: Mapped[TestTaskModel] = relationship(back_populates="acceptance_task")
