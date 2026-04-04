@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
             error_message.c_str())) {
         return 1;
     }
+    executor.RecordLifecycleSample("face_detect", "cpu", 5.0);
     if (!Expect(result.plugin_result.value("mock", false), "plugin result should come from mock plugin")) {
         return 1;
     }
@@ -111,6 +112,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect((*cpu_metrics)["max_batch_size"] == 4, "plugin metrics should expose max batch size")) {
+        return 1;
+    }
+    if (!Expect((*cpu_metrics)["avg_lifecycle_time_ms"] >= (*cpu_metrics)["avg_infer_time_ms"], "plugin metrics should expose lifecycle latency")) {
         return 1;
     }
     if (!Expect((*cpu_metrics)["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "plugin metrics should expose plugin info")) {
@@ -154,6 +158,7 @@ int main(int argc, char** argv) {
             error_message.c_str())) {
         return 1;
     }
+    executor.RecordLifecycleSample("face_detect", "gpu", 4.0);
     if (!Expect(result.plugin_result.value("device", "") == "cuda", "plugin should receive gpu device")) {
         return 1;
     }
@@ -266,6 +271,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     executor.RecordFallback("gpu_fallback", "cpu", "能力插件健康检查失败。");
+    executor.RecordLifecycleSample("gpu_fallback", "cpu", 6.0);
     const auto fallback_metrics = executor.GetCapabilityMetrics("gpu_fallback");
     if (!Expect(fallback_metrics.has_value(), "fallback metrics should exist after cpu execution")) {
         return 1;
@@ -274,6 +280,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect((*fallback_metrics)["last_fallback_reason"] == "能力插件健康检查失败。", "fallback metrics should expose last fallback reason")) {
+        return 1;
+    }
+    if (!Expect((*fallback_metrics)["avg_lifecycle_time_ms"] >= (*fallback_metrics)["avg_infer_time_ms"], "fallback metrics should expose lifecycle latency")) {
         return 1;
     }
 

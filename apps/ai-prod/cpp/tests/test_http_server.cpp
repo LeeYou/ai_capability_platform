@@ -632,6 +632,9 @@ int main(int argc, char** argv) {
     if (!Expect(infer_payload["result"]["max_pending_request_count"] == 3, "direct infer should expose snapshot max pending configuration")) {
         return 1;
     }
+    if (!Expect(infer_payload["result"]["lifecycle_elapsed_ms"] >= infer_payload["result"]["infer_time_ms"], "direct infer should expose lifecycle elapsed time")) {
+        return 1;
+    }
     if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {
         return 1;
     }
@@ -729,6 +732,9 @@ int main(int argc, char** argv) {
     if (!Expect(fallback_infer_payload["result"]["fallback_reason"] == "能力插件健康检查失败。", "fallback infer should expose lifecycle fallback reason")) {
         return 1;
     }
+    if (!Expect(fallback_infer_payload["result"]["lifecycle_elapsed_ms"] >= fallback_infer_payload["result"]["infer_time_ms"], "fallback infer should expose lifecycle elapsed time")) {
+        return 1;
+    }
     const auto metrics_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
     if (!Expect(metrics_catalog_result && metrics_catalog_result->status == 200, "catalog should respond after metrics-producing infer")) {
         return 1;
@@ -750,6 +756,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["max_batch_size"] == 3, "catalog metrics should expose capability max batch size")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["avg_lifecycle_time_ms"] >= item["execution_metrics"]["avg_infer_time_ms"], "catalog metrics should expose lifecycle latency aggregate")) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["bindings"][0]["plugin_info"]["capability_id"] == "mock_capability", "catalog metrics should expose plugin info")) {
@@ -781,6 +790,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (!Expect(item["execution_metrics"]["last_fallback_reason"] == "能力插件健康检查失败。", "catalog metrics should expose last fallback reason")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["avg_lifecycle_time_ms"] >= item["execution_metrics"]["avg_infer_time_ms"], "fallback metrics should expose lifecycle latency aggregate")) {
             return 1;
         }
     }
@@ -815,6 +827,9 @@ int main(int argc, char** argv) {
         }
         found_fallback_capability_metrics = true;
         if (!Expect(item["execution_metrics"]["fallback_count"] == 1, "runtime metrics should expose fallback count")) {
+            return 1;
+        }
+        if (!Expect(item["execution_metrics"]["avg_lifecycle_time_ms"] >= item["execution_metrics"]["avg_infer_time_ms"], "runtime metrics should expose lifecycle latency aggregate")) {
             return 1;
         }
     }

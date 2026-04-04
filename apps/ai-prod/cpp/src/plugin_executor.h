@@ -34,6 +34,10 @@ public:
     void SyncEntries(const std::vector<CapabilityCatalogEntry>& entries);
     std::optional<nlohmann::json> GetCapabilityMetrics(const std::string& capability_name) const;
     void RecordFallback(const std::string& capability_name, const std::string& device, const std::string& reason);
+    void RecordLifecycleSample(
+        const std::string& capability_name,
+        const std::string& device,
+        double lifecycle_elapsed_ms);
     bool Execute(
         const CapabilityCatalogEntry& entry,
         std::size_t slot_index,
@@ -69,6 +73,9 @@ private:
         double total_infer_time_ms = 0.0;
         double min_infer_time_ms = 0.0;
         double max_infer_time_ms = 0.0;
+        double total_lifecycle_time_ms = 0.0;
+        double min_lifecycle_time_ms = 0.0;
+        double max_lifecycle_time_ms = 0.0;
         std::string last_request_id;
         std::string last_error_message;
         std::string last_executed_at_utc;

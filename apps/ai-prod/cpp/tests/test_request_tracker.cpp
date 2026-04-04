@@ -35,6 +35,9 @@ int main() {
     if (!Expect(snapshot[0].status == "executing", "tracker snapshot should record status")) {
         return 1;
     }
+    if (!Expect(snapshot[0].ElapsedMs(std::chrono::steady_clock::now()) >= 0, "tracker snapshot should calculate elapsed time")) {
+        return 1;
+    }
     if (!Expect(tracker.MarkCompleted("req-1"), "tracker should complete request")) {
         return 1;
     }

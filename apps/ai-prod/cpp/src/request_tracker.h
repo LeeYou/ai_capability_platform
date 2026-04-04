@@ -19,6 +19,10 @@ struct InFlightRequestInfo {
     std::string status = "registered";
     std::optional<std::string> error_message;
     std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now();
+
+    long long ElapsedMs(std::chrono::steady_clock::time_point now) const {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - started_at).count();
+    }
 };
 
 class InFlightRequestTracker {

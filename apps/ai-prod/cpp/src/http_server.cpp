@@ -630,8 +630,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
 
     nlohmann::json active_requests = nlohmann::json::array();
     for (const auto& active_request : requestTracker->Snapshot()) {
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - active_request.started_at);
+        const auto now = std::chrono::steady_clock::now();
         active_requests.push_back(
             {
                 {"request_id", active_request.request_id},
@@ -640,7 +639,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"slot_index", active_request.slot_index},
                 {"device", active_request.device},
                 {"status", active_request.status},
-                {"elapsed_ms", elapsed_ms.count()},
+                {"elapsed_ms", active_request.ElapsedMs(now)},
             });
     }
 
@@ -864,6 +863,7 @@ void AiProdHttpServer::HandleInferRequest(
     const httplib::Request& request,
     httplib::Response& response) {
     ScopedEndpointMetricRecorder recorder(this, "infer", &response);
+    const auto request_started_at = std::chrono::steady_clock::now();
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
     if (!RefreshCatalogAndPools()) {
@@ -983,6 +983,13 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
     request_lease.MarkCompleted();
+    const double lifecycle_elapsed_ms = std::max(
+        static_cast<double>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - request_started_at)
+                .count()),
+        plugin_result.infer_time_ms);
+    pluginExecutor.RecordLifecycleSample(capability_name, executed_device, lifecycle_elapsed_ms);
 
     const std::string digest = Sha256Hex(
         capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
@@ -1012,6 +1019,7 @@ void AiProdHttpServer::HandleInferRequest(
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
             {"infer_time_ms", plugin_result.infer_time_ms},
+            {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             {"plugin_result", plugin_result.plugin_result},
         }},
     };
@@ -1029,6 +1037,7 @@ void AiProdHttpServer::HandleInferRequest(
             {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
+            {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             {"runtime_revision_id", catalog_entry->revision_id},
         });
     AppendAuditLog(
@@ -1048,6 +1057,7 @@ void AiProdHttpServer::HandleInferRequest(
                 {"queue_wait_ms", acquire_result.queue_wait_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"max_pending_request_count", max_pending_request_count},
+                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             });
 
     response.status = 200;

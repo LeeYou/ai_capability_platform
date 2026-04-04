@@ -148,7 +148,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     double total_infer_time_ms = 0.0;
     double min_infer_time_ms = std::numeric_limits<double>::max();
     double max_infer_time_ms = 0.0;
+    double total_lifecycle_time_ms = 0.0;
+    double min_lifecycle_time_ms = std::numeric_limits<double>::max();
+    double max_lifecycle_time_ms = 0.0;
     bool has_latency_sample = false;
+    bool has_lifecycle_sample = false;
     std::string last_request_id;
     std::string last_error_message;
     std::string last_executed_at_utc;
@@ -179,6 +183,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
                                           : 0.0},
                 {"min_infer_time_ms", binding.successful_execute_count > 0 ? binding.min_infer_time_ms : 0.0},
                 {"max_infer_time_ms", binding.successful_execute_count > 0 ? binding.max_infer_time_ms : 0.0},
+                {"avg_lifecycle_time_ms", binding.successful_execute_count > 0
+                                              ? binding.total_lifecycle_time_ms / static_cast<double>(binding.successful_execute_count)
+                                              : 0.0},
+                {"min_lifecycle_time_ms", binding.successful_execute_count > 0 ? binding.min_lifecycle_time_ms : 0.0},
+                {"max_lifecycle_time_ms", binding.successful_execute_count > 0 ? binding.max_lifecycle_time_ms : 0.0},
                 {"last_request_id", binding.last_request_id},
                 {"last_error_message", binding.last_error_message.empty()
                                            ? nlohmann::json(nullptr)
@@ -211,10 +220,14 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         successful_requests += binding.successful_execute_count;
         failed_requests += binding.failed_execute_count;
         total_infer_time_ms += binding.total_infer_time_ms;
+        total_lifecycle_time_ms += binding.total_lifecycle_time_ms;
         if (binding.successful_execute_count > 0) {
             min_infer_time_ms = std::min(min_infer_time_ms, binding.min_infer_time_ms);
             max_infer_time_ms = std::max(max_infer_time_ms, binding.max_infer_time_ms);
             has_latency_sample = true;
+            min_lifecycle_time_ms = std::min(min_lifecycle_time_ms, binding.min_lifecycle_time_ms);
+            max_lifecycle_time_ms = std::max(max_lifecycle_time_ms, binding.max_lifecycle_time_ms);
+            has_lifecycle_sample = true;
         }
         if (binding.last_executed_at_utc >= last_executed_at_utc) {
             last_request_id = binding.last_request_id;
@@ -251,6 +264,9 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         {"avg_infer_time_ms", successful_requests > 0 ? total_infer_time_ms / static_cast<double>(successful_requests) : 0.0},
         {"min_infer_time_ms", has_latency_sample ? min_infer_time_ms : 0.0},
         {"max_infer_time_ms", has_latency_sample ? max_infer_time_ms : 0.0},
+        {"avg_lifecycle_time_ms", successful_requests > 0 ? total_lifecycle_time_ms / static_cast<double>(successful_requests) : 0.0},
+        {"min_lifecycle_time_ms", has_lifecycle_sample ? min_lifecycle_time_ms : 0.0},
+        {"max_lifecycle_time_ms", has_lifecycle_sample ? max_lifecycle_time_ms : 0.0},
         {"last_request_id", last_request_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_request_id)},
         {"last_error_message", last_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_error_message)},
         {"last_executed_at_utc", last_executed_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_executed_at_utc)},
@@ -286,6 +302,36 @@ void PluginExecutor::RecordFallback(const std::string& capability_name, const st
     target_binding->fallback_count += 1;
     target_binding->last_fallback_at_utc = CurrentUtcIsoString();
     target_binding->last_fallback_reason = reason;
+}
+
+void PluginExecutor::RecordLifecycleSample(
+    const std::string& capability_name,
+    const std::string& device,
+    double lifecycle_elapsed_ms) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* target_binding = nullptr;
+    const auto cache_it = bindings.find(BuildCacheKey(capability_name, device));
+    if (cache_it != bindings.end()) {
+        target_binding = &cache_it->second;
+    } else {
+        for (auto& item : bindings) {
+            if (item.second.capability_name == capability_name) {
+                target_binding = &item.second;
+                break;
+            }
+        }
+    }
+    if (target_binding == nullptr || lifecycle_elapsed_ms < 0.0) {
+        return;
+    }
+    target_binding->total_lifecycle_time_ms += lifecycle_elapsed_ms;
+    if (target_binding->successful_execute_count <= 1) {
+        target_binding->min_lifecycle_time_ms = lifecycle_elapsed_ms;
+        target_binding->max_lifecycle_time_ms = lifecycle_elapsed_ms;
+        return;
+    }
+    target_binding->min_lifecycle_time_ms = std::min(target_binding->min_lifecycle_time_ms, lifecycle_elapsed_ms);
+    target_binding->max_lifecycle_time_ms = std::max(target_binding->max_lifecycle_time_ms, lifecycle_elapsed_ms);
 }
 
 bool PluginExecutor::Execute(
