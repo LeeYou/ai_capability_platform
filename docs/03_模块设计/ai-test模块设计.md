@@ -27,6 +27,7 @@
 3. `test_result`
 4. `test_report`
 5. `acceptance_task`
+6. `acceptance_script_result`
 
 ## 5. 关键流程
 
@@ -36,6 +37,7 @@
 4. GPU 优先执行，失败时回退 CPU
 5. 持久化结果并生成报告
 6. 输出研发验收报告与交付验收报告
+7. 统一编排 `acceptance_check.py` 与 `pressure_smoke.py` 等生产验收脚本
 
 ## 6. 接口要求
 

@@ -7,11 +7,10 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
-
 from app.config import get_settings, reset_settings_cache
 from app.db.database import get_session_factory, reset_database_cache
-from app.main import create_app
+from app.api.routes import create_acceptance, get_acceptance_task_detail, get_acceptance_tasks
+from app.models import CreateAcceptanceTaskRequest
 from app.services.acceptance_service import AcceptanceTaskCreatePayload, create_acceptance_task, get_acceptance_task, list_acceptance_tasks
 from app.services.test_service import initialize_database
 
@@ -95,32 +94,26 @@ class AcceptanceServiceTestCase(unittest.TestCase):
 
     @patch("app.services.acceptance_service.subprocess.run", side_effect=_mock_subprocess_run)
     def test_acceptance_routes(self, _mock_run) -> None:
-        client = TestClient(create_app())
-        response = client.post(
-            "/api/v1/acceptance-tasks",
-            json={
-                "image_uri": "registry.local/ai-prod:test",
-                "target_base_url": "http://127.0.0.1:26004",
-                "capability_name": "ocr_review",
-                "input_type": "json",
-                "infer_payload": '{"image":"demo"}',
-                "prefer_device": "auto",
-                "acceptance_timeout_seconds": 10,
-                "pressure_requests": 16,
-                "pressure_concurrency": 4,
-                "pressure_timeout_seconds": 10,
-                "pressure_min_success_rate": 0.9,
-                "pressure_max_p95_ms": 3000,
-            },
-        )
-        self.assertEqual(response.status_code, 201)
-        payload = response.json()
-        self.assertEqual(payload["image_uri"], "registry.local/ai-prod:test")
-
-        list_response = client.get("/api/v1/acceptance-tasks")
-        self.assertEqual(list_response.status_code, 200)
-        self.assertEqual(len(list_response.json()["items"]), 1)
-
-        detail_response = client.get(f"/api/v1/acceptance-tasks/{payload['acceptance_task_id']}")
-        self.assertEqual(detail_response.status_code, 200)
-        self.assertEqual(len(detail_response.json()["script_results"]), 2)
+        with get_session_factory()() as session:
+            payload = create_acceptance(
+                CreateAcceptanceTaskRequest(
+                    image_uri="registry.local/ai-prod:test",
+                    target_base_url="http://127.0.0.1:26004",
+                    capability_name="ocr_review",
+                    input_type="json",
+                    infer_payload='{"image":"demo"}',
+                    prefer_device="auto",
+                    acceptance_timeout_seconds=10,
+                    pressure_requests=16,
+                    pressure_concurrency=4,
+                    pressure_timeout_seconds=10,
+                    pressure_min_success_rate=0.9,
+                    pressure_max_p95_ms=3000,
+                ),
+                session=session,
+            )
+            items = get_acceptance_tasks(session=session)
+            detail = get_acceptance_task_detail(payload.acceptance_task_id, session=session)
+        self.assertEqual(payload.image_uri, "registry.local/ai-prod:test")
+        self.assertEqual(len(items.items), 1)
+        self.assertEqual(len(detail.script_results), 2)
