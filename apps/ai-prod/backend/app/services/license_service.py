@@ -32,17 +32,35 @@ def _parse_cst_datetime(raw_value: str) -> datetime:
     return parsed.astimezone(CST)
 
 
+def _version_tuple(raw_value: str) -> tuple[int, ...]:
+    normalized = raw_value.strip()
+    if not normalized:
+        return tuple()
+    parts: list[int] = []
+    for segment in normalized.split("."):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
 def _is_version_allowed(product_version: str | None, version_constraints: dict[str, Any]) -> bool:
-    if product_version is None:
+    if not version_constraints:
         return True
-    allowed_versions = version_constraints.get("allowed_versions")
-    if isinstance(allowed_versions, list) and allowed_versions:
-        return product_version in {str(item) for item in allowed_versions}
-    min_version = version_constraints.get("min_version")
-    max_version = version_constraints.get("max_version")
-    if min_version is not None and product_version < str(min_version):
+    if not product_version:
         return False
-    if max_version is not None and product_version > str(max_version):
+    normalized_version = product_version.strip()
+    allowed_versions = version_constraints.get("allowed_versions")
+    if isinstance(allowed_versions, list) and allowed_versions and normalized_version not in {str(item) for item in allowed_versions}:
+        return False
+    prefix = version_constraints.get("prefix")
+    if isinstance(prefix, str) and prefix.strip() and not normalized_version.startswith(prefix.strip()):
+        return False
+    current = _version_tuple(normalized_version)
+    min_version = version_constraints.get("min_version")
+    if isinstance(min_version, str) and min_version.strip() and current < _version_tuple(min_version):
+        return False
+    max_version = version_constraints.get("max_version")
+    if isinstance(max_version, str) and max_version.strip() and current > _version_tuple(max_version):
         return False
     return True
 
@@ -120,7 +138,7 @@ def validate_license_bundle(
         elif capability_name and capability_scope and capability_name not in capability_scope:
             valid = False
             reason = "能力范围不匹配。"
-        elif not _is_version_allowed(product_version, version_constraints):
+        elif product_version is not None and not _is_version_allowed(product_version, version_constraints):
             valid = False
             reason = "版本约束不匹配。"
         else:

@@ -59,7 +59,7 @@
 2. 所有签发与变更有审计日志
 3. 使用 CST 时区管理生效与到期时间
 4. 私钥签发侧与客户运行侧逻辑隔离
-5. License 规则必须与 ai-prod 运行时校验策略保持一致
+5. License 规则必须与 ai-prod 运行时校验策略保持一致，尤其是 `allowed_versions` / `prefix` / `min_version` / `max_version` 等版本约束语义
 
 ## 9. 设计决策
 

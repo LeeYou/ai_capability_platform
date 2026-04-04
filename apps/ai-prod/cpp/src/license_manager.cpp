@@ -20,6 +20,33 @@ std::string JsonString(const std::string& value) {
     return nlohmann::json(value).dump();
 }
 
+std::vector<int> VersionTuple(const std::string& raw_value) {
+    std::string normalized = raw_value;
+    normalized.erase(
+        std::remove_if(normalized.begin(), normalized.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        }),
+        normalized.end());
+    if (normalized.empty()) {
+        return {};
+    }
+
+    std::vector<int> parts;
+    std::stringstream input(normalized);
+    std::string segment;
+    while (std::getline(input, segment, '.')) {
+        std::string digits;
+        digits.reserve(segment.size());
+        for (char ch : segment) {
+            if (std::isdigit(static_cast<unsigned char>(ch))) {
+                digits.push_back(ch);
+            }
+        }
+        parts.push_back(digits.empty() ? 0 : std::stoi(digits));
+    }
+    return parts;
+}
+
 }
 
 LicenseManager::LicenseManager(
@@ -207,26 +234,44 @@ std::string LicenseManager::CurrentCstIsoString() {
 }
 
 bool LicenseManager::IsVersionAllowed(const std::string& product_version, const nlohmann::json& version_constraints) {
-    if (product_version.empty() || !version_constraints.is_object()) {
+    if (!version_constraints.is_object() || version_constraints.empty()) {
         return true;
+    }
+    if (product_version.empty()) {
+        return false;
     }
     const auto allowed_versions_it = version_constraints.find("allowed_versions");
     if (allowed_versions_it != version_constraints.end() && allowed_versions_it->is_array() && !allowed_versions_it->empty()) {
+        bool matched = false;
         for (const auto& item : *allowed_versions_it) {
             if (item.is_string() && item.get<std::string>() == product_version) {
-                return true;
+                matched = true;
+                break;
             }
         }
-        return false;
+        if (!matched) {
+            return false;
+        }
     }
+    const auto prefix_it = version_constraints.find("prefix");
+    if (prefix_it != version_constraints.end() && prefix_it->is_string()) {
+        const std::string prefix = prefix_it->get<std::string>();
+        if (!prefix.empty() && product_version.rfind(prefix, 0) != 0) {
+            return false;
+        }
+    }
+
+    const std::vector<int> current_version = VersionTuple(product_version);
     const auto min_version_it = version_constraints.find("min_version");
     if (min_version_it != version_constraints.end() && min_version_it->is_string() &&
-        product_version < min_version_it->get<std::string>()) {
+        !min_version_it->get<std::string>().empty() &&
+        current_version < VersionTuple(min_version_it->get<std::string>())) {
         return false;
     }
     const auto max_version_it = version_constraints.find("max_version");
     if (max_version_it != version_constraints.end() && max_version_it->is_string() &&
-        product_version > max_version_it->get<std::string>()) {
+        !max_version_it->get<std::string>().empty() &&
+        current_version > VersionTuple(max_version_it->get<std::string>())) {
         return false;
     }
     return true;

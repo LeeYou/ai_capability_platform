@@ -61,7 +61,7 @@
 6. 当前已启动 P10 首轮实施，在 C++ 侧新增 capability catalog 与轻量实例池骨架，并提供 `/api/v1/admin/catalog` 诊断接口。
 7. 当前继续推进 P10 第二轮实施，已让 infer 路由接入 capability catalog 与轻量实例池借还流程，并补齐未知能力/池繁忙保护。
 8. 当前已完成 P10 第三轮实施，在 C++ 侧为 reload/rollback 接入实例池 drain 编排、切换等待与切换后 catalog/pool 刷新。
-9. 当前已完成 P11：在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验；同时在 Python runtime 的 bootstrap / infer / reload / rollback 路径补齐按能力/版本维度的二次 license 校验与审计日志。
+9. 当前已完成 P11：在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验；同时在 Python runtime 的 bootstrap / infer / reload / rollback 路径补齐按能力/版本维度的二次 license 校验与审计日志。后续已进一步与 ai-license-mgr 对齐版本约束语义，统一支持 `allowed_versions`、`prefix`、`min_version`、`max_version` 与缺失产品版本拒绝语义。
 10. 当前已完成 P12：将 Python/React 测试验收外壳的内部查询接口拆分到 `/internal/*`，前端显式标记为内部验收外壳，并让 Vite 开发代理直连 Python 后端；同时移除 C++ 生产主链路对 revision / operation 等内部查询接口的转发暴露。
 11. 当前已完成 P13：补齐 ai-prod 面向客户交付的默认环境模板、公共 API 验收脚本、基础并发压测脚本与运行规范文档，并在 Makefile / 运维文档中固化标准入口。
 12. 当前已完成 P9 收口：生产镜像与 docker-compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路，C++ HTTP 正式成为交付主入口。
@@ -87,4 +87,4 @@
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P28：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计之后，本轮进一步把 capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口到资源扫描、revision 明细、runtime snapshot、catalog、infer 结果、验收脚本与内部验收页面，形成按能力配置排队等待策略并保留运行态观测的更细粒度调度闭环。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。
+ai-prod 当前已完成 P9-P28：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计之后，本轮进一步把 capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口到资源扫描、revision 明细、runtime snapshot、catalog、infer 结果、验收脚本与内部验收页面，形成按能力配置排队等待策略并保留运行态观测的更细粒度调度闭环；同时也将版本约束判定规则与 ai-license-mgr 签发侧统一到同一语义基线，降低授权签发与运行校验分叉风险。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。

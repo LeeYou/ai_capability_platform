@@ -69,8 +69,40 @@ int main() {
     if (!Expect(!manager.QuickCheck("face_detect", "v10_0_0"), "capability outside version range should fail quick check")) {
         return 1;
     }
+    payload["version_constraints"] = {
+        {"prefix", "v1."},
+        {"min_version", "v1.2.0"},
+        {"max_version", "v1.10.0"},
+    };
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(manager.Reload(), "reload should succeed with prefix-based version constraints")) {
+        return 1;
+    }
+    if (!Expect(manager.QuickCheck("face_detect", "v1.10.0"), "numeric version comparison should allow upper bound")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", "v1.11.0"), "numeric version comparison should reject beyond upper bound")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", ""), "configured version constraints should reject missing version")) {
+        return 1;
+    }
+    payload["version_constraints"] = {
+        {"allowed_versions", nlohmann::json::array({"v1.2.0", "v1.10.0"})},
+    };
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(manager.Reload(), "reload should succeed with allowed_versions constraints")) {
+        return 1;
+    }
+    if (!Expect(manager.QuickCheck("face_detect", "v1.10.0"), "allowed_versions should accept exact configured version")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", "v1.10.1"), "allowed_versions should reject unmatched version")) {
+        return 1;
+    }
 
     payload["capability_scope"] = nlohmann::json::array({"ocr"});
+    payload["version_constraints"] = {{"min_version", "v1_0_0"}, {"max_version", "v9_9_9"}};
     test_license_helpers::WriteLicenseBundle(license_root, payload);
     if (!Expect(manager.Reload(), "reload should succeed with another valid license")) {
         return 1;

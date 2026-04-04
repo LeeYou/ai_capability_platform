@@ -1,6 +1,6 @@
 # ai-license-mgr backend
 
-ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、license 签发、校验、导出与审计日志能力。
+ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、license 签发、校验、导出与审计日志能力，并与 ai-prod 运行态保持一致的版本约束判定语义。
 
 ## 当前能力
 
@@ -10,6 +10,7 @@ ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、li
 4. license 签发、查询、校验接口
 5. `license.bin` / `pubkey.pem` 导出接口
 6. 审计日志查询接口
+7. 与 ai-prod 对齐的 `allowed_versions` / `prefix` / `min_version` / `max_version` 版本约束语义
 
 ## 本地运行
 
