@@ -14,7 +14,8 @@ public:
         InstancePoolItem item,
         std::shared_ptr<InFlightRequestTracker> request_tracker,
         const std::string& capability_name,
-        const std::string& request_id);
+        const std::string& request_id,
+        int requested_deadline_ms);
     ~RequestLease();
 
     RequestLease(const RequestLease&) = delete;
@@ -23,6 +24,7 @@ public:
     const InstancePoolItem& Item() const;
     const std::string& RequestId() const;
     void MarkExecuting(const std::string& device);
+    void MarkSlaStatus(const std::string& sla_status);
     void MarkCompleted();
     void MarkFailed(const std::string& error_message);
 

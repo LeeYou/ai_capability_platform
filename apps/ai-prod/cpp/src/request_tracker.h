@@ -17,7 +17,9 @@ struct InFlightRequestInfo {
     std::string device;
     std::size_t slot_index = 0;
     std::string status = "registered";
+    std::string sla_status = "not_requested";
     std::optional<std::string> error_message;
+    int requested_deadline_ms = -1;
     std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now();
 
     long long ElapsedMs(std::chrono::steady_clock::time_point now) const {
@@ -31,8 +33,10 @@ public:
         const std::string& request_id,
         const std::string& capability_name,
         const std::string& instance_id,
-        std::size_t slot_index);
+        std::size_t slot_index,
+        int requested_deadline_ms);
     bool MarkExecuting(const std::string& request_id, const std::string& device);
+    bool MarkSlaStatus(const std::string& request_id, const std::string& sla_status);
     bool MarkCompleted(const std::string& request_id);
     bool MarkFailed(const std::string& request_id, const std::string& error_message);
     int GetActiveCount() const;

@@ -4,7 +4,8 @@ void InFlightRequestTracker::Register(
     const std::string& request_id,
     const std::string& capability_name,
     const std::string& instance_id,
-    std::size_t slot_index) {
+    std::size_t slot_index,
+    int requested_deadline_ms) {
     std::lock_guard<std::mutex> guard(mutex);
     requests[request_id] = InFlightRequestInfo{
         request_id,
@@ -13,7 +14,9 @@ void InFlightRequestTracker::Register(
         "",
         slot_index,
         "registered",
+        requested_deadline_ms >= 0 ? "pending" : "not_requested",
         std::nullopt,
+        requested_deadline_ms,
         std::chrono::steady_clock::now(),
     };
 }
@@ -26,6 +29,16 @@ bool InFlightRequestTracker::MarkExecuting(const std::string& request_id, const 
     }
     it->second.device = device;
     it->second.status = "executing";
+    return true;
+}
+
+bool InFlightRequestTracker::MarkSlaStatus(const std::string& request_id, const std::string& sla_status) {
+    std::lock_guard<std::mutex> guard(mutex);
+    const auto it = requests.find(request_id);
+    if (it == requests.end()) {
+        return false;
+    }
+    it->second.sla_status = sla_status;
     return true;
 }
 

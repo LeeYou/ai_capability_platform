@@ -40,6 +40,7 @@ struct InferRequestPayload {
     std::string payload;
     DecodedPayload decoded_payload;
     std::string prefer_device = "auto";
+    int prefer_deadline_ms = -1;
     nlohmann::json options = nlohmann::json::object();
     int simulate_delay_ms = 0;
 };
@@ -199,6 +200,7 @@ bool ParseInferRequest(const std::string& body, InferRequestPayload* request, st
         request->input_type = payload.value("input_type", "json");
         request->payload = payload.value("payload", "");
         request->prefer_device = payload.value("prefer_device", "auto");
+        request->prefer_deadline_ms = payload.value("prefer_deadline_ms", -1);
         request->options = payload.contains("options") ? payload["options"] : nlohmann::json::object();
         if (!request->options.is_object()) {
             *error_message = "options 必须是 JSON 对象。";
@@ -216,6 +218,10 @@ bool ParseInferRequest(const std::string& body, InferRequestPayload* request, st
         if (request->prefer_device != "auto" && request->prefer_device != "gpu" &&
             request->prefer_device != "cpu") {
             *error_message = "prefer_device 不受支持。";
+            return false;
+        }
+        if (request->prefer_deadline_ms < -1) {
+            *error_message = "prefer_deadline_ms 不能小于 -1。";
             return false;
         }
         if (request->options.contains("simulate_delay_ms") && request->options["simulate_delay_ms"].is_number_integer()) {
@@ -484,6 +490,18 @@ void AiProdHttpServer::RecordEndpointMetric(
     }
 }
 
+void AiProdHttpServer::RecordSlaMetric(const std::string& endpoint, bool tracked, bool deadline_exceeded) {
+    if (!tracked) {
+        return;
+    }
+    std::lock_guard<std::mutex> guard(metricsMutex);
+    auto& metrics = endpointMetrics[endpoint];
+    metrics.sla_tracked_requests += 1;
+    if (deadline_exceeded) {
+        metrics.deadline_exceeded_requests += 1;
+    }
+}
+
 bool AiProdHttpServer::EnsureRuntimeReady() {
     if (RefreshCatalogAndPools()) {
         std::string state_error;
@@ -574,6 +592,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         int pending_count = 0;
         int max_pending_count = 0;
         int queue_timeout_count = 0;
+        int deadline_exceeded_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
         const int queue_wait_timeout_ms =
@@ -590,6 +609,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
             pending_count = pool_it->second->GetPendingCount();
             max_pending_count = pool_it->second->GetMaxPendingCount();
             queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            deadline_exceeded_count = pool_it->second->GetDeadlineExceededCount();
             avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
             max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
         }
@@ -612,6 +632,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"max_pending_request_count", max_pending_count},
                 {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
                 {"queue_timeout_count", queue_timeout_count},
+                {"deadline_exceeded_count", deadline_exceeded_count},
                 {"avg_queue_wait_ms", avg_queue_wait_ms},
                 {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
@@ -639,6 +660,8 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"slot_index", active_request.slot_index},
                 {"device", active_request.device},
                 {"status", active_request.status},
+                {"sla_status", active_request.sla_status},
+                {"requested_deadline_ms", active_request.requested_deadline_ms},
                 {"elapsed_ms", active_request.ElapsedMs(now)},
             });
     }
@@ -682,6 +705,11 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
             {"p99_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.99)},
             {"max_latency_ms", metrics.total_requests > 0 ? metrics.max_latency_ms : 0.0},
             {"recent_sample_count", metrics.recent_latency_ms.size()},
+            {"sla_tracked_requests", metrics.sla_tracked_requests},
+            {"deadline_exceeded_requests", metrics.deadline_exceeded_requests},
+            {"deadline_exceeded_ratio", metrics.sla_tracked_requests > 0
+                                           ? static_cast<double>(metrics.deadline_exceeded_requests) / static_cast<double>(metrics.sla_tracked_requests)
+                                           : 0.0},
             {"last_status_code", metrics.last_status_code == 0 ? nlohmann::json(nullptr) : nlohmann::json(metrics.last_status_code)},
             {"last_error_at_utc", metrics.last_error_at_utc.empty()
                                       ? nlohmann::json(nullptr)
@@ -702,12 +730,17 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
     int total_capability_failures = 0;
     double total_queue_wait_ms = 0.0;
     int global_max_queue_wait_ms = 0;
+    const auto infer_metrics_it = endpointMetrics.find("infer");
+    const int total_deadline_exceeded_requests = infer_metrics_it != endpointMetrics.end()
+        ? infer_metrics_it->second.deadline_exceeded_requests
+        : 0;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
         bool draining = false;
         int pending_count = 0;
         int queue_timeout_count = 0;
+        int deadline_exceeded_count = 0;
         int queued_request_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
@@ -725,6 +758,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
             pending_count = pool_it->second->GetPendingCount();
             total_busy_reject_count += pool_it->second->GetBusyRejectCount();
             queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            deadline_exceeded_count = pool_it->second->GetDeadlineExceededCount();
             queued_request_count = pool_it->second->GetQueuedRequestCount();
             avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
             max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
@@ -746,6 +780,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                 {"utilization_ratio", total_size > 0 ? static_cast<double>(busy_count) / static_cast<double>(total_size) : 0.0},
                 {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
                 {"queue_timeout_count", queue_timeout_count},
+                {"deadline_exceeded_count", deadline_exceeded_count},
                 {"queued_request_count", queued_request_count},
                 {"avg_queue_wait_ms", avg_queue_wait_ms},
                 {"max_queue_wait_ms", max_queue_wait_ms},
@@ -796,7 +831,8 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
              {"max_queue_wait_ms", global_max_queue_wait_ms},
              {"busy_reject_count", total_busy_reject_count},
              {"queue_timeout_count", total_queue_timeout_count},
-         }},
+             {"deadline_exceeded_request_count", total_deadline_exceeded_requests},
+          }},
         {"endpoint_metrics", endpoint_metrics},
         {"pool_metrics", pool_metrics},
         {"capability_metrics", capability_metrics},
@@ -897,6 +933,10 @@ void AiProdHttpServer::HandleInferRequest(
         ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
+    if (infer_request.prefer_deadline_ms > config.infer_request_max_deadline_ms) {
+        ApplyJsonErrorResponse(400, "prefer_deadline_ms 超出运行时允许上限。", response);
+        return;
+    }
 
     const auto pool = GetInstancePool(capability_name);
     if (!pool) {
@@ -915,9 +955,14 @@ void AiProdHttpServer::HandleInferRequest(
         catalog_entry->max_pending_request_count >= 0
             ? catalog_entry->max_pending_request_count
             : config.infer_queue_max_pending_requests;
+    const bool has_request_deadline = infer_request.prefer_deadline_ms >= 0;
+    const auto request_deadline = has_request_deadline
+        ? std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(infer_request.prefer_deadline_ms))
+        : std::nullopt;
     const auto acquire_result = pool->AcquireWithWait(
         std::chrono::milliseconds(queue_wait_timeout_ms),
-        max_pending_request_count);
+        max_pending_request_count,
+        request_deadline);
     if (acquire_result.status != InstanceAcquireStatus::kAcquired || !acquire_result.item.has_value()) {
         if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
             ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
@@ -927,18 +972,38 @@ void AiProdHttpServer::HandleInferRequest(
             ApplyJsonErrorResponse(503, "能力排队已满，请稍后重试。", response);
             return;
         }
+        if (acquire_result.status == InstanceAcquireStatus::kDeadlineExceeded) {
+            RecordSlaMetric("infer", true, true);
+            ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
+            return;
+        }
         ApplyJsonErrorResponse(503, "能力实例池繁忙或排队超时，请稍后重试。", response);
         return;
     }
 
     const std::string request_id = GenerateRequestId();
-    RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id);
+    RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id, infer_request.prefer_deadline_ms);
+    request_lease.MarkSlaStatus(has_request_deadline ? "pending" : "not_requested");
 
     const std::string requested_device = ResolveDevice(infer_request, *catalog_entry);
     std::string executed_device = requested_device;
     request_lease.MarkExecuting(executed_device);
     if (infer_request.simulate_delay_ms > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
+    }
+    if (has_request_deadline) {
+        const auto pre_execute_elapsed_ms = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - request_started_at)
+                .count());
+        if (pre_execute_elapsed_ms > infer_request.prefer_deadline_ms) {
+            request_lease.MarkSlaStatus("deadline_exceeded");
+            request_lease.MarkFailed("请求 SLA 截止时间已超出，未进入执行。");
+            pool->RecordDeadlineExceeded();
+            RecordSlaMetric("infer", true, true);
+            ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
+            return;
+        }
     }
 
     PluginExecutionResult plugin_result;
@@ -989,6 +1054,12 @@ void AiProdHttpServer::HandleInferRequest(
                 std::chrono::steady_clock::now() - request_started_at)
                 .count()),
         plugin_result.infer_time_ms);
+    const std::string sla_status =
+        has_request_deadline && lifecycle_elapsed_ms > static_cast<double>(infer_request.prefer_deadline_ms)
+            ? "deadline_exceeded"
+            : (has_request_deadline ? "ok" : "not_requested");
+    request_lease.MarkSlaStatus(sla_status);
+    RecordSlaMetric("infer", has_request_deadline, sla_status == "deadline_exceeded");
     pluginExecutor.RecordLifecycleSample(capability_name, executed_device, lifecycle_elapsed_ms);
 
     const std::string digest = Sha256Hex(
@@ -1018,6 +1089,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
+            {"deadline_ms", infer_request.prefer_deadline_ms},
+            {"sla_status", sla_status},
             {"infer_time_ms", plugin_result.infer_time_ms},
             {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             {"plugin_result", plugin_result.plugin_result},
@@ -1037,6 +1110,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"queue_wait_timeout_ms", queue_wait_timeout_ms},
             {"max_pending_request_count", max_pending_request_count},
+            {"deadline_ms", infer_request.prefer_deadline_ms},
+            {"sla_status", sla_status},
             {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             {"runtime_revision_id", catalog_entry->revision_id},
         });
@@ -1057,6 +1132,8 @@ void AiProdHttpServer::HandleInferRequest(
                 {"queue_wait_ms", acquire_result.queue_wait_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"max_pending_request_count", max_pending_request_count},
+                {"deadline_ms", infer_request.prefer_deadline_ms},
+                {"sla_status", sla_status},
                 {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
             });
 

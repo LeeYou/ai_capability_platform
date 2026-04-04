@@ -181,6 +181,27 @@ int main() {
         return 1;
     }
 
+    const auto deadline_holder = queue_pool.Acquire();
+    if (!Expect(deadline_holder.has_value(), "deadline holder acquire should succeed")) {
+        return 1;
+    }
+    const auto deadline_exceeded = queue_pool.AcquireWithWait(
+        std::chrono::milliseconds(100),
+        1,
+        std::chrono::milliseconds(10));
+    if (!Expect(deadline_exceeded.status == InstanceAcquireStatus::kDeadlineExceeded, "queued acquire should stop at request deadline")) {
+        return 1;
+    }
+    if (!Expect(deadline_exceeded.deadline_exceeded, "deadline exceeded result should mark deadline flag")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetDeadlineExceededCount() == 1, "deadline exceeded count should increment")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(deadline_holder->slot_index), "deadline holder release should succeed")) {
+        return 1;
+    }
+
     RuntimeStateMachine state_machine;
     std::string state_error;
     if (!Expect(

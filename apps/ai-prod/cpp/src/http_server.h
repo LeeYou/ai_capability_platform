@@ -45,6 +45,8 @@ private:
         std::deque<int> recent_latency_ms;
         std::multiset<int> recent_latency_sorted;
         std::map<int, int> status_code_counts;
+        int sla_tracked_requests = 0;
+        int deadline_exceeded_requests = 0;
     };
 
     bool RefreshCatalogAndPools(bool force_rebuild = false);
@@ -70,6 +72,7 @@ private:
         const std::vector<std::shared_ptr<InstancePool>>& pools,
         std::chrono::milliseconds timeout);
     void RegisterRoutes();
+    void RecordSlaMetric(const std::string& endpoint, bool tracked, bool deadline_exceeded);
 
     ProxyConfig config;
     CapabilityCatalog capabilityCatalog;

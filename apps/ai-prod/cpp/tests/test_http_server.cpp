@@ -431,7 +431,7 @@ int main(int argc, char** argv) {
         httplib::Client infer_client("127.0.0.1", proxy_port);
         const auto infer_result = infer_client.Post(
             "/api/v1/infer/face_detect",
-            "{\"input_type\":\"json\",\"payload\":\"demo\",\"prefer_device\":\"gpu\",\"options\":{\"simulate_delay_ms\":400}}",
+            "{\"input_type\":\"json\",\"payload\":\"demo\",\"prefer_device\":\"gpu\",\"prefer_deadline_ms\":700,\"options\":{\"simulate_delay_ms\":400}}",
             "application/json");
         if (!infer_result) {
             infer_status = 0;
@@ -484,6 +484,14 @@ int main(int argc, char** argv) {
         infer_thread.join();
         return 1;
     }
+    if (!Expect(busy_catalog_payload["active_requests"][0]["requested_deadline_ms"] == 700, "active request should expose requested deadline")) {
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(busy_catalog_payload["active_requests"][0]["sla_status"] == "pending", "active request should expose pending sla status")) {
+        infer_thread.join();
+        return 1;
+    }
     if (!Expect(busy_catalog_payload["items"][0]["pending_request_count"] == 0, "catalog should still show zero pending requests before queueing")) {
         infer_thread.join();
         return 1;
@@ -511,7 +519,6 @@ int main(int argc, char** argv) {
         infer_thread.join();
         return 1;
     }
-
     std::optional<int> reload_status;
     std::string reload_body;
     std::thread reload_thread([&]() {
@@ -632,6 +639,12 @@ int main(int argc, char** argv) {
     if (!Expect(infer_payload["result"]["max_pending_request_count"] == 3, "direct infer should expose snapshot max pending configuration")) {
         return 1;
     }
+    if (!Expect(infer_payload["result"]["deadline_ms"] == 700, "infer should expose request deadline")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["sla_status"] == "ok", "infer should report non-violated sla status")) {
+        return 1;
+    }
     if (!Expect(infer_payload["result"]["lifecycle_elapsed_ms"] >= infer_payload["result"]["infer_time_ms"], "direct infer should expose lifecycle elapsed time")) {
         return 1;
     }
@@ -639,6 +652,35 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(std::filesystem::exists(audit_log_path), "infer should append audit log")) {
+        return 1;
+    }
+    const auto deadline_exceeded_result = proxy_client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"deadline-demo\",\"prefer_deadline_ms\":50,\"options\":{\"simulate_delay_ms\":80}}",
+        "application/json");
+    if (!Expect(deadline_exceeded_result && deadline_exceeded_result->status == 503, "infer route should reject when request deadline expires before execution")) {
+        return 1;
+    }
+    const auto deadline_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(deadline_metrics_result && deadline_metrics_result->status == 200, "metrics should respond after deadline exceeded infer")) {
+        return 1;
+    }
+    const auto deadline_metrics_payload = nlohmann::json::parse(deadline_metrics_result->body);
+    if (!Expect(deadline_metrics_payload["endpoint_metrics"]["infer"]["deadline_exceeded_requests"] >= 1, "metrics should count deadline exceeded requests")) {
+        return 1;
+    }
+    if (!Expect(deadline_metrics_payload["request_summary"]["deadline_exceeded_request_count"] >= 1, "request summary should count deadline exceeded requests")) {
+        return 1;
+    }
+    bool found_deadline_pool_metric = false;
+    for (const auto& item : deadline_metrics_payload["pool_metrics"]) {
+        if (item["capability_name"] != "face_detect") {
+            continue;
+        }
+        found_deadline_pool_metric = item["deadline_exceeded_count"] >= 1;
+        break;
+    }
+    if (!Expect(found_deadline_pool_metric, "pool metrics should count deadline exceeded requests")) {
         return 1;
     }
 
@@ -711,7 +753,7 @@ int main(int argc, char** argv) {
     }
     const auto fallback_infer_result = proxy_client.Post(
         "/api/v1/infer/pose_estimate",
-        "{\"input_type\":\"json\",\"payload\":\"demo-fallback\",\"prefer_device\":\"gpu\"}",
+        "{\"input_type\":\"json\",\"payload\":\"demo-fallback\",\"prefer_device\":\"gpu\",\"prefer_deadline_ms\":500}",
         "application/json");
     if (!Expect(fallback_infer_result && fallback_infer_result->status == 200, "gpu lifecycle failure should fallback to cpu")) {
         return 1;
@@ -730,6 +772,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(fallback_infer_payload["result"]["fallback_reason"] == "能力插件健康检查失败。", "fallback infer should expose lifecycle fallback reason")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["result"]["deadline_ms"] == 500, "fallback infer should expose request deadline")) {
+        return 1;
+    }
+    if (!Expect(fallback_infer_payload["result"]["sla_status"] == "ok", "fallback infer should preserve ok sla status")) {
         return 1;
     }
     if (!Expect(fallback_infer_payload["result"]["lifecycle_elapsed_ms"] >= fallback_infer_payload["result"]["infer_time_ms"], "fallback infer should expose lifecycle elapsed time")) {

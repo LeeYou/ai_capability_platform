@@ -25,6 +25,7 @@ struct ProxyConfig {
     int license_auto_reload_interval_seconds = 60;
     int infer_queue_wait_timeout_ms = 200;
     int infer_queue_max_pending_requests = 8;
+    int infer_request_max_deadline_ms = 60000;
     std::map<std::string, std::string> hardware_features;
 };
 
