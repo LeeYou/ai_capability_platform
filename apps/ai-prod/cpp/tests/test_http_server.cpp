@@ -228,6 +228,8 @@ int main(int argc, char** argv) {
     config.read_timeout_ms = 1000;
     config.write_timeout_ms = 1000;
     config.snapshot_max_age_seconds = 60;
+    config.infer_queue_wait_timeout_ms = 150;
+    config.infer_queue_max_pending_requests = 2;
 
     AiProdHttpServer proxy_server(config);
     std::thread proxy_thread([&]() {
@@ -290,6 +292,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"][0]["max_batch_size"] == 4, "catalog should expose max batch size from snapshot")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["pending_request_count"] == 0, "catalog should start with zero pending requests")) {
+        return 1;
+    }
 
     const auto initial_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
     if (!Expect(initial_metrics_result && initial_metrics_result->status == 200, "metrics route should respond")) {
@@ -327,6 +332,70 @@ int main(int argc, char** argv) {
     }
     const auto internal_operations_result = proxy_client.Get("/api/v1/admin/operations");
     if (!Expect(internal_operations_result && internal_operations_result->status == 404, "public proxy should not expose internal operation route")) {
+        return 1;
+    }
+
+    std::optional<int> queued_success_status;
+    std::thread queued_success_thread([&]() {
+        httplib::Client infer_client("127.0.0.1", proxy_port);
+        const auto infer_result = infer_client.Post(
+            "/api/v1/infer/face_detect",
+            "{\"input_type\":\"json\",\"payload\":\"queue-holder\",\"options\":{\"simulate_delay_ms\":120}}",
+            "application/json");
+        if (!infer_result) {
+            queued_success_status = 0;
+            return;
+        }
+        queued_success_status = infer_result->status;
+    });
+    bool queue_holder_busy = false;
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        const auto inflight_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+        if (inflight_catalog_result && inflight_catalog_result->status == 200) {
+            const auto inflight_catalog_payload = nlohmann::json::parse(inflight_catalog_result->body);
+            if (inflight_catalog_payload["items"][0]["busy_count"] == 1) {
+                queue_holder_busy = true;
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!Expect(queue_holder_busy, "queue success holder should occupy pool")) {
+        queued_success_thread.join();
+        return 1;
+    }
+    const auto queued_success_result = proxy_client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"queue-success\"}",
+        "application/json");
+    queued_success_thread.join();
+    if (!Expect(queued_success_status.has_value() && queued_success_status.value() == 200, "queue success holder should finish successfully")) {
+        return 1;
+    }
+    if (!Expect(queued_success_result && queued_success_result->status == 200, "infer should succeed after queued wait")) {
+        return 1;
+    }
+    const auto queued_success_payload = nlohmann::json::parse(queued_success_result->body);
+    if (!Expect(queued_success_payload["result"]["queue_wait_ms"] >= 20, "queued infer should report positive queue wait")) {
+        return 1;
+    }
+    const auto queue_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(queue_metrics_result && queue_metrics_result->status == 200, "metrics should respond after queued infer")) {
+        return 1;
+    }
+    const auto queue_metrics_payload = nlohmann::json::parse(queue_metrics_result->body);
+    if (!Expect(queue_metrics_payload["request_summary"]["queued_request_count"] >= 1, "metrics should count queued requests")) {
+        return 1;
+    }
+    if (!Expect(queue_metrics_payload["request_summary"]["avg_queue_wait_ms"] > 0.0, "metrics should report average queue wait")) {
+        return 1;
+    }
+    const auto queue_catalog_result = proxy_client.Get("/api/v1/admin/catalog");
+    if (!Expect(queue_catalog_result && queue_catalog_result->status == 200, "catalog should respond after queued infer")) {
+        return 1;
+    }
+    const auto queue_catalog_payload = nlohmann::json::parse(queue_catalog_result->body);
+    if (!Expect(queue_catalog_payload["items"][0]["max_pending_request_count"] >= 1, "catalog should expose max pending request count")) {
         return 1;
     }
 
@@ -389,6 +458,10 @@ int main(int argc, char** argv) {
         infer_thread.join();
         return 1;
     }
+    if (!Expect(busy_catalog_payload["items"][0]["pending_request_count"] == 0, "catalog should still show zero pending requests before queueing")) {
+        infer_thread.join();
+        return 1;
+    }
 
     const auto busy_infer_result = proxy_client.Post(
         "/api/v1/infer/face_detect",
@@ -405,6 +478,10 @@ int main(int argc, char** argv) {
     }
     const auto busy_metrics_payload = nlohmann::json::parse(busy_metrics_result->body);
     if (!Expect(busy_metrics_payload["pool_metrics"][0]["busy_reject_count"] >= 1, "metrics should count busy rejects per pool")) {
+        infer_thread.join();
+        return 1;
+    }
+    if (!Expect(busy_metrics_payload["pool_metrics"][0]["queue_timeout_count"] >= 1, "metrics should count queue timeouts")) {
         infer_thread.join();
         return 1;
     }
@@ -518,6 +595,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(infer_payload["result"]["plugin_result"]["device"] == "cuda", "infer should execute plugin on gpu binding")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["queue_wait_ms"] == 0, "direct infer should report zero queue wait")) {
         return 1;
     }
     if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {

@@ -122,6 +122,56 @@ int main() {
     if (!Expect(pool.Acquire().has_value(), "instance pool should recover after drain")) {
         return 1;
     }
+    if (!Expect(pool.GetBusyRejectCount() == 0, "busy reject count should stay zero without rejection")) {
+        return 1;
+    }
+
+    InstancePool queue_pool;
+    queue_pool.Reset("ocr", 1, false);
+    const auto queue_holder = queue_pool.Acquire();
+    if (!Expect(queue_holder.has_value(), "queue pool initial acquire should succeed")) {
+        return 1;
+    }
+    std::thread queue_release_thread([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        queue_pool.Release(queue_holder->slot_index);
+    });
+    const auto queued_acquire = queue_pool.AcquireWithWait(std::chrono::milliseconds(200), 2);
+    if (!Expect(queued_acquire.status == InstanceAcquireStatus::kAcquired, "queued acquire should eventually succeed")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queued_acquire.queue_wait_ms >= 20, "queued acquire should record wait time")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queue_pool.GetQueuedRequestCount() == 1, "queue pool should count queued success")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(queued_acquire.item->slot_index), "queued acquire release should succeed")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    queue_release_thread.join();
+
+    const auto timeout_holder = queue_pool.Acquire();
+    if (!Expect(timeout_holder.has_value(), "timeout holder acquire should succeed")) {
+        return 1;
+    }
+    const auto timed_out = queue_pool.AcquireWithWait(std::chrono::milliseconds(20), 1);
+    if (!Expect(timed_out.status == InstanceAcquireStatus::kTimedOut, "queued acquire should time out when slot stays busy")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetQueueTimeoutCount() == 1, "queue timeout count should increment")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetBusyRejectCount() == 1, "busy reject count should include timed out queue")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(timeout_holder->slot_index), "timeout holder release should succeed")) {
+        return 1;
+    }
 
     RuntimeStateMachine state_machine;
     std::string state_error;

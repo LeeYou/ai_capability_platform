@@ -552,11 +552,21 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
+        int pending_count = 0;
+        int max_pending_count = 0;
+        int queue_timeout_count = 0;
+        double avg_queue_wait_ms = 0.0;
+        int max_queue_wait_ms = 0;
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
             total_size = pool_it->second->GetTotalSize();
+            pending_count = pool_it->second->GetPendingCount();
+            max_pending_count = pool_it->second->GetMaxPendingCount();
+            queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
+            max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
         }
         items.push_back(
             {
@@ -571,7 +581,12 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"pool_size", total_size},
                 {"max_batch_size", entry.max_batch_size},
                 {"busy_count", busy_count},
+                {"pending_request_count", pending_count},
+                {"max_pending_request_count", max_pending_count},
                 {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
+                {"queue_timeout_count", queue_timeout_count},
+                {"avg_queue_wait_ms", avg_queue_wait_ms},
+                {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
                 {"revision_id", entry.revision_id},
@@ -653,30 +668,55 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
     nlohmann::json capability_metrics = nlohmann::json::array();
     int total_pool_slots = 0;
     int total_busy_slots = 0;
+    int total_pending_requests = 0;
     int total_busy_reject_count = 0;
+    int total_queue_timeout_count = 0;
+    int total_queued_requests = 0;
     int total_capability_requests = 0;
     int total_capability_failures = 0;
+    double total_queue_wait_ms = 0.0;
+    int global_max_queue_wait_ms = 0;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
         bool draining = false;
+        int pending_count = 0;
+        int queue_timeout_count = 0;
+        int queued_request_count = 0;
+        double avg_queue_wait_ms = 0.0;
+        int max_queue_wait_ms = 0;
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
             total_size = pool_it->second->GetTotalSize();
             draining = pool_it->second->IsDraining();
+            pending_count = pool_it->second->GetPendingCount();
             total_busy_reject_count += pool_it->second->GetBusyRejectCount();
+            queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            queued_request_count = pool_it->second->GetQueuedRequestCount();
+            avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
+            max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
         }
         total_pool_slots += total_size;
         total_busy_slots += busy_count;
+        total_pending_requests += pending_count;
+        total_queue_timeout_count += queue_timeout_count;
+        total_queued_requests += queued_request_count;
+        total_queue_wait_ms += avg_queue_wait_ms * static_cast<double>(queued_request_count);
+        global_max_queue_wait_ms = std::max(global_max_queue_wait_ms, max_queue_wait_ms);
         pool_metrics.push_back(
             {
                 {"capability_name", entry.capability_name},
                 {"pool_size", total_size},
                 {"busy_count", busy_count},
+                {"pending_request_count", pending_count},
                 {"idle_count", std::max(0, total_size - busy_count)},
                 {"utilization_ratio", total_size > 0 ? static_cast<double>(busy_count) / static_cast<double>(total_size) : 0.0},
                 {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
+                {"queue_timeout_count", queue_timeout_count},
+                {"queued_request_count", queued_request_count},
+                {"avg_queue_wait_ms", avg_queue_wait_ms},
+                {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", draining},
                 {"device_mode", entry.device_mode},
                 {"max_batch_size", entry.max_batch_size},
@@ -710,13 +750,18 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
              {"capability_count", capabilityCatalog.ListEntries().size()},
              {"total_pool_slots", total_pool_slots},
              {"busy_pool_slots", total_busy_slots},
+             {"pending_request_count", total_pending_requests},
              {"idle_pool_slots", std::max(0, total_pool_slots - total_busy_slots)},
              {"utilization_ratio", total_pool_slots > 0 ? static_cast<double>(total_busy_slots) / static_cast<double>(total_pool_slots) : 0.0},
          }},
         {"request_summary", {
              {"capability_total_requests", total_capability_requests},
              {"capability_failed_requests", total_capability_failures},
+             {"queued_request_count", total_queued_requests},
+             {"avg_queue_wait_ms", total_queued_requests > 0 ? total_queue_wait_ms / static_cast<double>(total_queued_requests) : 0.0},
+             {"max_queue_wait_ms", global_max_queue_wait_ms},
              {"busy_reject_count", total_busy_reject_count},
+             {"queue_timeout_count", total_queue_timeout_count},
          }},
         {"endpoint_metrics", endpoint_metrics},
         {"pool_metrics", pool_metrics},
@@ -811,6 +856,13 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
+    InferRequestPayload infer_request;
+    std::string parse_error;
+    if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
+        ApplyJsonErrorResponse(400, parse_error, response);
+        return;
+    }
+
     const auto pool = GetInstancePool(capability_name);
     if (!pool) {
         ApplyJsonErrorResponse(503, "能力实例池不可用。", response);
@@ -822,26 +874,24 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    const auto lease = pool->Acquire();
-    if (!lease.has_value()) {
-        if (pool->IsDraining()) {
+    const auto acquire_result = pool->AcquireWithWait(
+        std::chrono::milliseconds(config.infer_queue_wait_timeout_ms),
+        config.infer_queue_max_pending_requests);
+    if (acquire_result.status != InstanceAcquireStatus::kAcquired || !acquire_result.item.has_value()) {
+        if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
             ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
             return;
         }
-        ApplyJsonErrorResponse(503, "能力实例池繁忙，请稍后重试。", response);
+        if (acquire_result.status == InstanceAcquireStatus::kQueueRejected) {
+            ApplyJsonErrorResponse(503, "能力排队已满，请稍后重试。", response);
+            return;
+        }
+        ApplyJsonErrorResponse(503, "能力实例池繁忙或排队超时，请稍后重试。", response);
         return;
     }
 
     const std::string request_id = GenerateRequestId();
-    RequestLease request_lease(pool, *lease, requestTracker, capability_name, request_id);
-
-    InferRequestPayload infer_request;
-    std::string parse_error;
-    if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
-        request_lease.MarkFailed(parse_error);
-        ApplyJsonErrorResponse(400, parse_error, response);
-        return;
-    }
+    RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id);
 
     const std::string device = ResolveDevice(infer_request, *catalog_entry);
     request_lease.MarkExecuting(device);
@@ -853,7 +903,7 @@ void AiProdHttpServer::HandleInferRequest(
     std::string plugin_error;
     const bool plugin_ok = pluginExecutor.Execute(
         *catalog_entry,
-        static_cast<std::size_t>(lease->slot_index),
+        static_cast<std::size_t>(acquire_result.item->slot_index),
         infer_request.input_type,
         infer_request.decoded_payload.normalized_payload,
         infer_request.options,
@@ -890,6 +940,7 @@ void AiProdHttpServer::HandleInferRequest(
             {"input_metadata", infer_request.decoded_payload.metadata},
             {"instance_id", request_lease.Item().instance_id},
             {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
+            {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"infer_time_ms", plugin_result.infer_time_ms},
             {"plugin_result", plugin_result.plugin_result},
         }},
@@ -902,6 +953,7 @@ void AiProdHttpServer::HandleInferRequest(
             {"request_id", request_id},
             {"capability_name", capability_name},
             {"device", device},
+            {"queue_wait_ms", acquire_result.queue_wait_ms},
             {"runtime_revision_id", catalog_entry->revision_id},
         });
     AppendAuditLog(
@@ -915,6 +967,7 @@ void AiProdHttpServer::HandleInferRequest(
                 {"instance_id", request_lease.Item().instance_id},
                 {"input_type", infer_request.input_type},
                 {"input_metadata", infer_request.decoded_payload.metadata},
+                {"queue_wait_ms", acquire_result.queue_wait_ms},
             });
 
     response.status = 200;

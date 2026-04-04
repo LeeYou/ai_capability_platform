@@ -23,6 +23,8 @@ struct ProxyConfig {
     int write_timeout_ms = 30000;
     int snapshot_max_age_seconds = 30;
     int license_auto_reload_interval_seconds = 60;
+    int infer_queue_wait_timeout_ms = 200;
+    int infer_queue_max_pending_requests = 8;
     std::map<std::string, std::string> hardware_features;
 };
 

@@ -67,9 +67,10 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 4. `/api/v1/admin/catalog` 可返回 catalog / pool 诊断信息
 5. `/api/v1/admin/metrics` 可返回 endpoint 请求量、延迟分位、实例池利用率与能力级执行汇总
 6. catalog / metrics 应可看到 capability 级 `max_batch_size` 与实例池 `busy_reject_count`
-7. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
-8. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用
-9. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
+7. catalog / metrics 应可看到 `pending_request_count`、`queued_request_count`、`queue_timeout_count`、`avg_queue_wait_ms`
+8. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
+9. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用，并确认返回 `queue_wait_ms`
+10. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
 
 ### 5.2 验收命令
 

@@ -79,13 +79,18 @@ type RuntimeMetrics = {
     capability_count: number
     total_pool_slots: number
     busy_pool_slots: number
+    pending_request_count: number
     idle_pool_slots: number
     utilization_ratio: number
   }
   request_summary: {
     capability_total_requests: number
     capability_failed_requests: number
+    queued_request_count: number
+    avg_queue_wait_ms: number
+    max_queue_wait_ms: number
     busy_reject_count: number
+    queue_timeout_count: number
   }
   endpoint_metrics: Record<
     string,
@@ -380,8 +385,13 @@ function App() {
                 <li>当前 revision：{dashboard.runtimeMetrics?.runtime_revision_id ?? '无'}</li>
                 <li>实例池总槽位：{dashboard.runtimeMetrics?.pool_summary.total_pool_slots ?? 0}</li>
                 <li>繁忙槽位：{dashboard.runtimeMetrics?.pool_summary.busy_pool_slots ?? 0}</li>
+                <li>排队请求：{dashboard.runtimeMetrics?.pool_summary.pending_request_count ?? 0}</li>
                 <li>失败请求：{dashboard.runtimeMetrics?.request_summary.capability_failed_requests ?? 0}</li>
+                <li>排队成功：{dashboard.runtimeMetrics?.request_summary.queued_request_count ?? 0}</li>
+                <li>平均排队等待：{dashboard.runtimeMetrics?.request_summary.avg_queue_wait_ms ?? 0}ms</li>
+                <li>最长排队等待：{dashboard.runtimeMetrics?.request_summary.max_queue_wait_ms ?? 0}ms</li>
                 <li>繁忙拒绝：{dashboard.runtimeMetrics?.request_summary.busy_reject_count ?? 0}</li>
+                <li>排队超时：{dashboard.runtimeMetrics?.request_summary.queue_timeout_count ?? 0}</li>
               </ul>
             </article>
             <article className="sub-panel">

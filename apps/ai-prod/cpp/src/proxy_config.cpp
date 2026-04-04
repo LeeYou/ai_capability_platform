@@ -89,6 +89,14 @@ ProxyConfig load_proxy_config_from_env() {
         "AI_PROD_CPP_LICENSE_AUTO_RELOAD_INTERVAL_SECONDS",
         config.license_auto_reload_interval_seconds,
         1);
+    config.infer_queue_wait_timeout_ms = read_int_env(
+        "AI_PROD_CPP_INFER_QUEUE_WAIT_TIMEOUT_MS",
+        config.infer_queue_wait_timeout_ms,
+        0);
+    config.infer_queue_max_pending_requests = read_int_env(
+        "AI_PROD_CPP_INFER_QUEUE_MAX_PENDING_REQUESTS",
+        config.infer_queue_max_pending_requests,
+        1);
     config.hardware_features = read_hardware_features_env("AI_CAP_HARDWARE_FEATURES");
     return config;
 }

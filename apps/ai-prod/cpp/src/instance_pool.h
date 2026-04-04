@@ -16,12 +16,26 @@ struct InstancePoolItem {
     bool in_use = false;
 };
 
+enum class InstanceAcquireStatus {
+    kAcquired,
+    kDraining,
+    kQueueRejected,
+    kTimedOut,
+};
+
+struct InstanceAcquireResult {
+    InstanceAcquireStatus status = InstanceAcquireStatus::kTimedOut;
+    std::optional<InstancePoolItem> item;
+    int queue_wait_ms = 0;
+};
+
 class InstancePool {
 public:
     InstancePool() = default;
 
     void Reset(const std::string& capability_name, int pool_size, bool gpu_available);
     std::optional<InstancePoolItem> Acquire();
+    InstanceAcquireResult AcquireWithWait(std::chrono::milliseconds timeout, int max_pending_requests);
     bool Release(std::size_t slot_index);
     void BeginDrain();
     void EndDrain();
@@ -29,10 +43,18 @@ public:
     bool IsDraining() const;
     int GetBusyCount() const;
     int GetBusyRejectCount() const;
+    int GetPendingCount() const;
+    int GetMaxPendingCount() const;
+    int GetQueueTimeoutCount() const;
+    int GetQueuedRequestCount() const;
+    double GetAverageQueueWaitMs() const;
+    int GetMaxQueueWaitMs() const;
     int GetTotalSize() const;
     std::vector<InstancePoolItem> Snapshot() const;
 
 private:
+    bool HasAvailableSlotUnlocked() const;
+    std::optional<InstancePoolItem> TryAcquireUnlocked();
     bool IsIdleUnlocked() const;
 
     mutable std::condition_variable condition;
@@ -40,6 +62,12 @@ private:
     std::vector<InstancePoolItem> items;
     bool draining = false;
     int busyRejectCount = 0;
+    int pendingCount = 0;
+    int maxPendingCount = 0;
+    int queueTimeoutCount = 0;
+    int queuedRequestCount = 0;
+    long long totalQueueWaitMs = 0;
+    int maxQueueWaitMs = 0;
 };
 
 #endif

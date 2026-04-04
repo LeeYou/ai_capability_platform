@@ -118,7 +118,13 @@ def main() -> int:
             max_latency_ms=args.catalog_max_ms,
             predicate=isinstance(catalog_payload, dict)
             and "items" in catalog_payload
-            and all(isinstance(item, dict) and "max_batch_size" in item for item in catalog_payload.get("items", [])),
+            and all(
+                isinstance(item, dict)
+                and "max_batch_size" in item
+                and "pending_request_count" in item
+                and "queue_timeout_count" in item
+                for item in catalog_payload.get("items", [])
+            ),
             detail=f"status={catalog_status}, payload={catalog_payload}",
         )
     )
@@ -133,7 +139,9 @@ def main() -> int:
             predicate=isinstance(metrics_payload, dict)
             and "endpoint_metrics" in metrics_payload
             and "pool_summary" in metrics_payload
-            and "request_summary" in metrics_payload,
+            and "request_summary" in metrics_payload
+            and "queued_request_count" in metrics_payload.get("request_summary", {})
+            and "pending_request_count" in metrics_payload.get("pool_summary", {}),
             detail=f"status={metrics_status}, payload={metrics_payload}",
         )
     )
