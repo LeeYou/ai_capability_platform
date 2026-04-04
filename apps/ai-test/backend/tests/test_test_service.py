@@ -85,10 +85,15 @@ class TestServiceTestCase(unittest.TestCase):
                 ],
             )
             report = get_test_report(session, int(payload["report_id"]))
+            delivery_report = get_test_report(session, int(payload["report_id"]), template_type="delivery")
 
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["total_cases"], 1)
         self.assertTrue(Path(report["json_report_path"]).is_file())
+        self.assertEqual(report["active_template_type"], "research")
+        self.assertEqual(delivery_report["active_template_type"], "delivery")
+        self.assertIn("report_templates", report["summary"])
+        self.assertIn("template_summary", delivery_report["summary"])
 
     def test_batch_test_gpu_request_falls_back_to_cpu(self) -> None:
         with get_session_factory()() as session:
@@ -132,6 +137,14 @@ class TestServiceTestCase(unittest.TestCase):
                     TestCaseInputPayload(case_name="导出样例", input_path="ocr_review/sample_1.jpg", expected_output=None)
                 ],
             )
-            exported_path = export_test_report(session, get_settings().exports_root, int(payload["report_id"]), "pdf")
+            exported_path = export_test_report(
+                session,
+                get_settings().exports_root,
+                int(payload["report_id"]),
+                "json",
+                template_type="delivery",
+            )
 
+        exported_summary = Path(exported_path).read_text(encoding="utf-8")
         self.assertTrue(Path(exported_path).is_file())
+        self.assertIn('"active_template_type": "delivery"', exported_summary)

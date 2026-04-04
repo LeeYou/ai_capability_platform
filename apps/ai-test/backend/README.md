@@ -1,6 +1,6 @@
 # ai-test backend
 
-ai-test 后端当前提供模型查询代理、单接口测试、批量测试、生产镜像验收任务、性能/稳定性验收基线管理，以及测试报告生成与导出能力。
+ai-test 后端当前提供模型查询代理、单接口测试、批量测试、生产镜像验收任务、性能/稳定性验收基线管理，以及研发验收 / 交付验收双视角的测试报告生成与导出能力。
 
 ## 当前能力
 
@@ -10,8 +10,9 @@ ai-test 后端当前提供模型查询代理、单接口测试、批量测试、
 4. GPU 优先、CPU 回退的基础执行策略
 5. 面向 ai-prod 公共入口的 `acceptance_check.py` / `pressure_smoke.py` 验收任务编排
 6. 面向 C++ HTTP 主服务的性能/稳定性验收基线模板初始化与查询/写入
-7. 测试结果持久化与 HTML/JSON/PDF 报告生成
-8. 测试报告导出接口
+7. 研发验收 / 交付验收双视角报告模板切换
+8. 测试结果持久化与 HTML/JSON/PDF 报告生成
+9. 测试报告导出接口
 
 ## 本地运行
 
@@ -41,3 +42,5 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 6. `GET /api/v1/performance-baselines`
 7. `POST /api/v1/performance-baselines`
 8. `GET /api/v1/test-reports`
+9. `GET /api/v1/test-reports/{id}?template_type=research|delivery`
+10. `GET /api/v1/test-reports/{id}/export?export_format=json|html|pdf&template_type=research|delivery`

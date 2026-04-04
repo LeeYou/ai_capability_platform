@@ -13,6 +13,7 @@ from app.api.routes import create_acceptance, get_acceptance_task_detail, get_ac
 from app.models import CreateAcceptanceTaskRequest
 from app.services.baseline_service import list_performance_baselines
 from app.services.acceptance_service import AcceptanceTaskCreatePayload, create_acceptance_task, get_acceptance_task, list_acceptance_tasks
+from app.services.report_service import get_test_report
 from app.services.test_service import initialize_database
 
 
@@ -86,6 +87,7 @@ class AcceptanceServiceTestCase(unittest.TestCase):
             )
             items = list_acceptance_tasks(session)
             detail = get_acceptance_task(session, int(payload["acceptance_task_id"]))
+            delivery_report = get_test_report(session, int(payload["report_id"]), template_type="delivery")
             baselines = list_performance_baselines(session)
 
         self.assertEqual(payload["status"], "completed")
@@ -95,6 +97,8 @@ class AcceptanceServiceTestCase(unittest.TestCase):
         self.assertEqual(detail["script_results"][0]["case_name"], "acceptance_check")
         self.assertIn("baseline_comparison", detail["script_results"][0])
         self.assertTrue(detail["script_results"][1]["passed_baseline"])
+        self.assertEqual(delivery_report["active_template_type"], "delivery")
+        self.assertEqual(delivery_report["summary"]["template_summary"]["delivery_conclusion"], "passed")
         self.assertTrue((get_settings().test_reports_root / f"task_{payload['task_id']}" / "report.json").is_file())
 
     @patch("app.services.acceptance_service.subprocess.run", side_effect=_mock_subprocess_run)

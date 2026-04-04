@@ -287,9 +287,13 @@ def get_reports(session: Session = Depends(get_db_session)) -> TestReportListRes
 
 
 @router.get("/test-reports/{report_id}", response_model=TestReportDetailResponse, tags=["report"])
-def get_report_detail(report_id: int, session: Session = Depends(get_db_session)) -> TestReportDetailResponse:
+def get_report_detail(
+    report_id: int,
+    template_type: str = Query(default="research", pattern="^(research|delivery)$"),
+    session: Session = Depends(get_db_session),
+) -> TestReportDetailResponse:
     try:
-        payload = get_test_report(session, report_id)
+        payload = get_test_report(session, report_id, template_type=template_type)
     except TestReportNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return TestReportDetailResponse(**payload)
@@ -299,11 +303,12 @@ def get_report_detail(report_id: int, session: Session = Depends(get_db_session)
 def export_report(
     report_id: int,
     export_format: str = Query(default="json", pattern="^(json|html|pdf)$"),
+    template_type: str = Query(default="research", pattern="^(research|delivery)$"),
     session: Session = Depends(get_db_session),
 ) -> FileResponse:
     settings = get_settings()
     try:
-        exported_path = export_test_report(session, settings.exports_root, report_id, export_format)
+        exported_path = export_test_report(session, settings.exports_root, report_id, export_format, template_type=template_type)
     except TestReportNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:

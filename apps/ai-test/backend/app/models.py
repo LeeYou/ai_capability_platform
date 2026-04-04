@@ -5,6 +5,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+ReportTemplateType = Literal["research", "delivery"]
+
+
 class HealthResponse(BaseModel):
     status: str = Field(description="服务状态")
     service: str = Field(description="服务名称")
@@ -201,6 +204,8 @@ class TestReportItem(BaseModel):
     json_report_path: str = Field(description="JSON 报告路径")
     html_report_path: str = Field(description="HTML 报告路径")
     pdf_report_path: str = Field(description="PDF 报告路径")
+    available_template_types: list[ReportTemplateType] = Field(default_factory=lambda: ["research", "delivery"], description="可用报告模板")
+    active_template_type: ReportTemplateType = Field(default="research", description="当前报告视角")
     exported_at: str | None = Field(default=None, description="导出时间")
 
 

@@ -28,6 +28,7 @@ type TestReportItem = {
   status: string
   passed_cases: number
   failed_cases: number
+  available_template_types: string[]
 }
 
 type AcceptanceTaskItem = {
@@ -152,7 +153,7 @@ function App() {
       {
         title: '测试报告',
         count: dashboard.reports.length,
-        description: '支持 HTML / JSON / PDF 报告生成与导出。',
+        description: '支持研发验收 / 交付验收双视角的 HTML / JSON / PDF 报告生成与导出。',
       },
       {
         title: '验收任务',
@@ -339,6 +340,7 @@ function App() {
                   <tr>
                     <th>报告</th>
                     <th>能力</th>
+                    <th>模板</th>
                     <th>通过/失败</th>
                   </tr>
                 </thead>
@@ -347,6 +349,7 @@ function App() {
                     <tr key={item.report_id}>
                       <td>#{item.report_id}</td>
                       <td>{item.capability_name}</td>
+                      <td>{item.available_template_types.join(' / ')}</td>
                       <td>
                         {item.passed_cases}/{item.failed_cases}
                       </td>
@@ -354,7 +357,7 @@ function App() {
                   ))}
                   {dashboard.reports.length === 0 && (
                     <tr>
-                      <td colSpan={3}>暂无测试报告</td>
+                      <td colSpan={4}>暂无测试报告</td>
                     </tr>
                   )}
                 </tbody>
@@ -371,6 +374,7 @@ function App() {
               <li>单接口测试与批量测试</li>
               <li>GPU 优先 / CPU 回退执行策略</li>
               <li>C++ HTTP 主服务性能/稳定性验收基线</li>
+              <li>研发验收 / 交付验收双视角报告模板</li>
               <li>HTML / JSON / PDF 报告生成与导出</li>
             </ul>
           </article>
