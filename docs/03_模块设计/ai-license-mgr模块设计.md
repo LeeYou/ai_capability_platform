@@ -19,7 +19,7 @@
 2. API 服务：客户、密钥、license、审计管理
 3. 加密引擎：签名、验签、指纹生成
 4. 文件导出器：`license.bin`、`pubkey.pem`、授权说明
-5. 工具管理器：`license_tool`、硬件信息查询说明
+5. 工具管理器：`license_tool` 标准 source bundle、版本归档、错误码说明与硬件信息查询说明
 
 ## 4. 核心数据
 
@@ -42,7 +42,7 @@
 1. 内部宿主机目录：`/data/ai_capability_platform/license/`
 2. 标准文件：`license.bin`、`pubkey.pem`
 3. 交付工具：`license_tool`
-4. 支持替换更新与版本归档
+4. 支持替换更新与版本归档，并以标准 C++ source bundle 方式交付 `license_tool`
 
 ## 7. 接口要求
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -8,12 +9,22 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.models import CustomerModel, KeyPairModel, LicenseIssueRecordModel, LicensePolicyModel
+from app.db.models import CustomerModel, KeyPairModel, LicenseIssueRecordModel, LicensePolicyModel, LicenseToolReleaseModel
 from app.services.audit_service import append_audit_log, now_cst_iso
 from app.services.crypto_service import generate_hardware_fingerprint, generate_key_pair_files, sign_payload, verify_signature
 
 
 CST = timezone(timedelta(hours=8))
+REPO_ROOT = Path(__file__).resolve().parents[5]
+LICENSE_TOOL_NAME = "license_tool"
+LICENSE_TOOL_VERSION = "1.0.0"
+LICENSE_TOOL_SOURCE_FILES = {
+    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
+}
+LICENSE_TOOL_SUPPORTED_TARGETS = ["linux_x86_64", "linux_aarch64", "windows_x86", "windows_x86_64"]
 
 
 class CustomerNotFoundError(ValueError):
@@ -30,6 +41,10 @@ class LicensePolicyNotFoundError(ValueError):
 
 class LicenseIssueNotFoundError(ValueError):
     """签发记录不存在。"""
+
+
+class LicenseToolReleaseNotFoundError(ValueError):
+    """工具发布记录不存在。"""
 
 
 def initialize_database() -> None:
@@ -158,6 +173,150 @@ def _issue_item(issue: LicenseIssueRecordModel) -> dict[str, object]:
         "last_validation_result": issue.last_validation_result,
         "payload": payload,
     }
+
+
+def _tool_release_item(release: LicenseToolReleaseModel) -> dict[str, object]:
+    return {
+        "release_id": release.id,
+        "tool_name": release.tool_name,
+        "version": release.version,
+        "status": release.status,
+        "archive_path": release.archive_path,
+        "manifest_path": release.manifest_path,
+        "readme_path": release.readme_path,
+        "checksum_sha256": release.checksum_sha256,
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _build_license_tool_release_materials(license_tools_root: Path, *, version: str) -> tuple[Path, Path, Path]:
+    release_root = (license_tools_root / f"{LICENSE_TOOL_NAME}_v{version}").resolve()
+    if not (release_root == license_tools_root or license_tools_root in release_root.parents):
+        raise ValueError("license_tool 发布目录非法。")
+    if release_root.exists():
+        shutil.rmtree(release_root)
+    release_root.mkdir(parents=True, exist_ok=True)
+
+    for relative_path, source_path in LICENSE_TOOL_SOURCE_FILES.items():
+        destination = release_root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination)
+
+    manifest_path = release_root / "manifest.json"
+    readme_path = release_root / "README.md"
+    error_codes_path = release_root / "ERROR_CODES.md"
+    hardware_guide_path = release_root / "HARDWARE_FINGERPRINT.md"
+    _write_text(release_root / "VERSION", version + "\n")
+    _write_text(
+        manifest_path,
+        json.dumps(
+            {
+                "tool_name": LICENSE_TOOL_NAME,
+                "version": version,
+                "bundle_format": "source_bundle",
+                "entrypoint": "src/license_tool.cpp",
+                "build_system": "cmake",
+                "supported_targets": LICENSE_TOOL_SUPPORTED_TARGETS,
+                "source_files": sorted(LICENSE_TOOL_SOURCE_FILES),
+                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+    _write_text(
+        readme_path,
+        "\n".join(
+            [
+                "# license_tool",
+                "",
+                f"- 工具名称：`{LICENSE_TOOL_NAME}`",
+                f"- 版本：`{version}`",
+                "- 交付形态：标准 C++ source bundle",
+                "",
+                "## 目录说明",
+                "",
+                "- `src/`：`license_tool` 与 `license_common` 参考实现源码",
+                "- `CMakeLists.txt`：最小 CMake 构建入口",
+                "- `ERROR_CODES.md`：退出码说明",
+                "- `HARDWARE_FINGERPRINT.md`：硬件指纹采集说明",
+                "",
+                "## 构建方式",
+                "",
+                "```bash",
+                "cmake -S . -B build",
+                "cmake --build build --parallel",
+                "```",
+                "",
+                "## 用法",
+                "",
+                "```bash",
+                "./build/license_tool verify /path/to/license.bin",
+                "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b",
+                "```",
+                "",
+                "## 版本兼容性",
+                "",
+                "- 当前 bundle 已对齐 ai-license-mgr 与 ai-prod 的 license 版本约束语义。",
+                "- 交付时需配套 `license.bin`、`pubkey.pem` 与本文档一并提供。",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        error_codes_path,
+        "\n".join(
+            [
+                "# ERROR_CODES",
+                "",
+                "| 退出码 | 含义 |",
+                "| --- | --- |",
+                "| 1 | 参数不足或 mode 非法 |",
+                "| 2 | generate 参数错误或 bool 选项非法 |",
+                "| 3 | 生成 license 文件失败 |",
+                "| 4 | 解析 license 文件失败 |",
+                "| 5 | 验证 license 失败 |",
+                "| 6 | 未知 mode |",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        hardware_guide_path,
+        "\n".join(
+            [
+                "# HARDWARE_FINGERPRINT",
+                "",
+                "硬件指纹采用 `key=value` 形式按 key 排序后，以 `|` 连接并计算 SHA256。",
+                "",
+                "示例：",
+                "",
+                "```text",
+                "cpu=intel-i7|disk=nvme-sn-001|mac=00:11:22:33:44:55",
+                "```",
+                "",
+                "若现场需要预先计算硬件指纹，可通过 ai-license-mgr `/api/v1/hardware-fingerprint` 接口统一生成。",
+                "",
+            ]
+        ),
+    )
+
+    archive_base = release_root.parent / release_root.name
+    archive_path = Path(shutil.make_archive(str(archive_base), "gztar", root_dir=release_root.parent, base_dir=release_root.name))
+    return archive_path.resolve(), manifest_path.resolve(), readme_path.resolve()
 
 
 def list_customers(session: Session) -> list[dict[str, object]]:
@@ -508,6 +667,109 @@ def export_license_issue(
         action="export",
         entity_type="license_issue_record",
         entity_id=str(issue.id),
+        detail={"export_format": export_format, "exported_path": str(destination.resolve())},
+    )
+    return destination.resolve()
+
+
+def list_license_tool_releases(session: Session) -> list[dict[str, object]]:
+    return [
+        _tool_release_item(item)
+        for item in session.query(LicenseToolReleaseModel).order_by(LicenseToolReleaseModel.id.asc()).all()
+    ]
+
+
+def get_license_tool_release(session: Session, release_id: int) -> dict[str, object]:
+    release = session.get(LicenseToolReleaseModel, release_id)
+    if release is None:
+        raise LicenseToolReleaseNotFoundError("工具发布记录不存在。")
+    return _tool_release_item(release)
+
+
+def sync_default_license_tool_release(
+    session: Session,
+    license_tools_root: Path,
+    audit_log_path: Path,
+) -> dict[str, object]:
+    archive_path, manifest_path, readme_path = _build_license_tool_release_materials(
+        license_tools_root,
+        version=LICENSE_TOOL_VERSION,
+    )
+    checksum_sha256 = _sha256_file(archive_path)
+    release = (
+        session.query(LicenseToolReleaseModel)
+        .filter(
+            LicenseToolReleaseModel.tool_name == LICENSE_TOOL_NAME,
+            LicenseToolReleaseModel.version == LICENSE_TOOL_VERSION,
+        )
+        .first()
+    )
+    if release is None:
+        release = LicenseToolReleaseModel(
+            tool_name=LICENSE_TOOL_NAME,
+            version=LICENSE_TOOL_VERSION,
+            status="active",
+            archive_path=str(archive_path),
+            manifest_path=str(manifest_path),
+            readme_path=str(readme_path),
+            checksum_sha256=checksum_sha256,
+        )
+        session.add(release)
+    else:
+        release.status = "active"
+        release.archive_path = str(archive_path)
+        release.manifest_path = str(manifest_path)
+        release.readme_path = str(readme_path)
+        release.checksum_sha256 = checksum_sha256
+    session.commit()
+    session.refresh(release)
+    append_audit_log(
+        audit_log_path,
+        action="sync",
+        entity_type="license_tool_release",
+        entity_id=str(release.id),
+        detail={"tool_name": release.tool_name, "version": release.version},
+    )
+    return _tool_release_item(release)
+
+
+def export_license_tool_release(
+    session: Session,
+    exports_root: Path,
+    audit_log_path: Path,
+    *,
+    release_id: int,
+    export_format: str,
+) -> Path:
+    release = session.get(LicenseToolReleaseModel, release_id)
+    if release is None:
+        raise LicenseToolReleaseNotFoundError("工具发布记录不存在。")
+    source_map = {
+        "archive": Path(release.archive_path),
+        "manifest": Path(release.manifest_path),
+        "readme": Path(release.readme_path),
+    }
+    if export_format not in source_map:
+        raise ValueError("仅支持导出 archive/manifest/readme。")
+
+    export_dir = (exports_root / "ai-license-mgr").resolve()
+    if not (export_dir == exports_root or exports_root in export_dir.parents):
+        raise ValueError("导出目录非法。")
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    source_path = source_map[export_format]
+    suffix = (
+        f"license_tool_v{release.version}.tar.gz"
+        if export_format == "archive"
+        else f"license_tool_v{release.version}_{source_path.name}"
+    )
+    destination = export_dir / suffix
+    shutil.copyfile(source_path, destination)
+    append_audit_log(
+        audit_log_path,
+        action="export",
+        entity_type="license_tool_release",
+        entity_id=str(release.id),
         detail={"export_format": export_format, "exported_path": str(destination.resolve())},
     )
     return destination.resolve()

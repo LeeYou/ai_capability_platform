@@ -130,6 +130,21 @@ class ExportLicenseResponse(BaseModel):
     export_format: str = Field(description="导出格式")
 
 
+class LicenseToolReleaseItem(BaseModel):
+    release_id: int = Field(description="工具发布记录 ID")
+    tool_name: str = Field(description="工具名称")
+    version: str = Field(description="工具版本")
+    status: str = Field(description="状态")
+    archive_path: str = Field(description="归档包路径")
+    manifest_path: str = Field(description="manifest 路径")
+    readme_path: str = Field(description="README 路径")
+    checksum_sha256: str = Field(description="归档包 SHA256")
+
+
+class LicenseToolReleaseListResponse(BaseModel):
+    items: list[LicenseToolReleaseItem] = Field(default_factory=list)
+
+
 class GenerateFingerprintRequest(BaseModel):
     features: dict[str, str] = Field(default_factory=dict, description="硬件特征键值对")
 

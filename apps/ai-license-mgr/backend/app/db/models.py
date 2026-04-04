@@ -103,3 +103,23 @@ class LicenseIssueRecordModel(Base):
     policy: Mapped[LicensePolicyModel] = relationship(back_populates="issues")
     customer: Mapped[CustomerModel] = relationship(back_populates="issues")
     key_pair: Mapped[KeyPairModel] = relationship(back_populates="issues")
+
+
+class LicenseToolReleaseModel(Base):
+    __tablename__ = "license_tool_release"
+    __table_args__ = (UniqueConstraint("tool_name", "version", name="uq_license_tool_release_name_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tool_name: Mapped[str] = mapped_column(String(128), index=True, default="license_tool")
+    version: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    archive_path: Mapped[str] = mapped_column(Text)
+    manifest_path: Mapped[str] = mapped_column(Text)
+    readme_path: Mapped[str] = mapped_column(Text)
+    checksum_sha256: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )

@@ -16,7 +16,7 @@
 | L6 | 实现授权镜像 | 已完成 |
 | L7 | 首期联调与验收 | 已完成 |
 | L8 | 与 ai-prod 运行态 License 规则收敛 | 已完成 |
-| L9 | license_tool 与交付材料收敛 | 未开始 |
+| L9 | license_tool 与交付材料收敛 | 已完成 |
 | L10 | 私钥管理、轮转与隔离策略增强 | 未开始 |
 
 ## 3. 进度维护要求
@@ -32,13 +32,12 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已完成 ai-license-mgr 与 ai-prod 运行时 License 规则的一轮收敛，后续重点转向 `license_tool` 交付材料与私钥管理增强。
+1. 当前阶段已完成 ai-license-mgr 与 ai-prod 运行时 License 规则的一轮收敛，并进一步完成 `license_tool` 默认发布归档、导出接口与交付材料收敛。
 
 ### 4.3 未完成
 
-1. `license_tool` 的标准交付与版本管理尚未完成。
-2. 私钥轮转、隔离与更细粒度策略控制仍需增强。
+1. 私钥轮转、隔离与更细粒度策略控制仍需增强。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 已具备基础签发与管理能力。本轮已完成 L8：进一步将 ai-prod 运行时的版本约束判定规则与 ai-license-mgr 签发/校验侧对齐，统一支持 `allowed_versions`、`prefix`、`min_version`、`max_version` 与“约束存在时缺失产品版本即拒绝”的语义，降低签发侧与运行侧行为分叉风险。下一阶段继续推进 L9/L10，完善 `license_tool` 标准交付、私钥轮转与隔离策略。
+ai-license-mgr 已具备基础签发与管理能力。本轮已完成 L9：新增 `license_tool_release` 发布归档模型、默认 `license_tool` source bundle 生成/查询/导出能力，并补齐 README、错误码与硬件指纹说明等交付材料；同时 ai-builder 的 `delivery_package/tools/` 已纳入标准化 `license_tool` 物料，为后续 SDK / delivery_package / docs 统一收敛提供了正式交付基础。下一阶段继续推进 L10，完善私钥轮转、隔离与更细粒度策略。

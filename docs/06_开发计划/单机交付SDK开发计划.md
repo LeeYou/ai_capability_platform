@@ -32,12 +32,12 @@
 ### 4.2 进行中
 
 1. 当前阶段已明确单机交付 SDK 后续重点是标准化交付目录、工具、文档与验收一致性。
-2. 当前已完成与 ai-builder `delivery_package/` 的基础对齐前置：交付包侧已可承载 SDK / license 基础物料，但 SDK 模块自身的目录规范、示例工程与验收文档一体化仍未单独收口。
+2. 当前已完成与 ai-builder `delivery_package/` 的基础对齐前置：交付包侧已可承载 SDK / license 基础物料，并已补齐 `tools/license_tool` 标准 source bundle、README 与错误码说明，但 SDK 模块自身的目录规范、示例工程与验收文档一体化仍未单独收口。
 
 ### 4.3 未完成
 
 1. Linux、JNI、Windows SDK 目录规则仍需进一步统一。
-2. `license_tool`、错误码文档、示例工程与验收说明仍需一体化输出。
+2. `license_tool` 与错误码文档已具备交付包侧基础物料，但示例工程与验收说明仍需一体化输出。
 3. SDK 交付尚未完全纳入最终 `delivery_package/` 规范。
 
 ### 4.4 阶段小结

@@ -1,6 +1,6 @@
 # ai-builder backend
 
-ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建任务、产物打包、标准 `delivery_package/` 目录生成，以及 docker / mount_template / tools / docs / 验收清单 / 版本清单 / 交付摘要等交付物料归档与下载能力。
+ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建任务、产物打包、标准 `delivery_package/` 目录生成，以及 docker / mount_template / tools / docs / `license_tool` source bundle / 验收清单 / 版本清单 / 交付摘要等交付物料归档与下载能力。
 
 ## 当前能力
 
@@ -14,7 +14,8 @@ ai-builder 后端当前提供能力与授权快照同步、平台矩阵、构建
 8. libs 标准目录组织、manifest/checksum 生成与下载导出
 9. 标准 `delivery_package/` 目录输出、归档与下载
 10. ai-prod 生产镜像构建上下文 tarball、mount_template、tools、docs 打包
-11. 验收清单、版本清单、交付摘要生成
+11. `tools/license_tool` 标准授权工具 source bundle、README 与错误码说明打包
+12. 验收清单、版本清单、交付摘要生成
 12. 审计日志查询
 
 ## 本地运行

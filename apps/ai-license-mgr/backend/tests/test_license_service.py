@@ -14,13 +14,17 @@ from app.services.license_service import (
     create_key_pair,
     create_license_policy,
     export_license_issue,
+    export_license_tool_release,
     get_license_issue,
+    get_license_tool_release,
     initialize_database,
     issue_license,
     list_customers,
     list_key_pairs,
     list_license_issues,
     list_license_policies,
+    list_license_tool_releases,
+    sync_default_license_tool_release,
     validate_license_issue,
 )
 
@@ -193,3 +197,28 @@ class LicenseServiceTestCase(unittest.TestCase):
         logs = list_audit_logs(get_settings().audit_log_path, limit=20)
         self.assertGreaterEqual(len(logs), 1)
         self.assertEqual(logs[0]["entity_type"], "customer")
+
+    def test_sync_and_export_license_tool_release(self) -> None:
+        with get_session_factory()() as session:
+            release = sync_default_license_tool_release(
+                session,
+                get_settings().license_tools_root,
+                get_settings().audit_log_path,
+            )
+            export_path = export_license_tool_release(
+                session,
+                get_settings().exports_root,
+                get_settings().audit_log_path,
+                release_id=int(release["release_id"]),
+                export_format="archive",
+            )
+            release_detail = get_license_tool_release(session, int(release["release_id"]))
+
+        self.assertEqual(len(list_license_tool_releases(session)), 1)
+        self.assertEqual(release_detail["tool_name"], "license_tool")
+        self.assertTrue(Path(release["archive_path"]).is_file())
+        self.assertTrue(Path(release["manifest_path"]).is_file())
+        self.assertTrue(Path(release["readme_path"]).is_file())
+        self.assertTrue(Path(export_path).is_file())
+        manifest_payload = Path(release["manifest_path"]).read_text(encoding="utf-8")
+        self.assertIn('"version": "1.0.0"', manifest_payload)
