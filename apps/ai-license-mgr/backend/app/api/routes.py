@@ -18,6 +18,7 @@ from app.models import (
     GenerateFingerprintRequest,
     GenerateFingerprintResponse,
     HealthResponse,
+    IsolateKeyPairRequest,
     IssueLicenseRequest,
     KeyPairItem,
     KeyPairListResponse,
@@ -28,6 +29,8 @@ from app.models import (
     LicensePolicyListResponse,
     LicenseToolReleaseItem,
     LicenseToolReleaseListResponse,
+    RotateKeyPairRequest,
+    RotateKeyPairResponse,
     ValidateLicenseRequest,
     ValidateLicenseResponse,
 )
@@ -55,6 +58,8 @@ from app.services.license_service import (
     list_license_issues,
     list_license_policies,
     list_license_tool_releases,
+    isolate_key_pair,
+    rotate_key_pair,
     sync_default_license_tool_release,
     validate_license_issue,
 )
@@ -136,6 +141,52 @@ def create_key_pair_route(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return KeyPairItem(**payload)
+
+
+@router.post("/key-pairs/{key_pair_id}/rotate", response_model=RotateKeyPairResponse, tags=["key"])
+def rotate_key_pair_route(
+    key_pair_id: int,
+    request: RotateKeyPairRequest,
+    session: Session = Depends(get_db_session),
+) -> RotateKeyPairResponse:
+    settings = get_settings()
+    try:
+        payload = rotate_key_pair(
+            session,
+            settings.key_pairs_root,
+            settings.audit_log_path,
+            key_pair_id=key_pair_id,
+            new_key_name=request.new_key_name,
+            reason=request.reason,
+        )
+    except (ValueError, KeyPairNotFoundError) as exc:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, KeyPairNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return RotateKeyPairResponse(
+        source_key_pair=KeyPairItem(**payload["source_key_pair"]),
+        new_key_pair=KeyPairItem(**payload["new_key_pair"]),
+        migrated_policy_ids=list(payload["migrated_policy_ids"]),
+    )
+
+
+@router.post("/key-pairs/{key_pair_id}/isolate", response_model=KeyPairItem, tags=["key"])
+def isolate_key_pair_route(
+    key_pair_id: int,
+    request: IsolateKeyPairRequest,
+    session: Session = Depends(get_db_session),
+) -> KeyPairItem:
+    settings = get_settings()
+    try:
+        payload = isolate_key_pair(
+            session,
+            settings.audit_log_path,
+            key_pair_id=key_pair_id,
+            reason=request.reason,
+        )
+    except (ValueError, KeyPairNotFoundError) as exc:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, KeyPairNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return KeyPairItem(**payload)
 
 

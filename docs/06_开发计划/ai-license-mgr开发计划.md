@@ -17,7 +17,7 @@
 | L7 | 首期联调与验收 | 已完成 |
 | L8 | 与 ai-prod 运行态 License 规则收敛 | 已完成 |
 | L9 | license_tool 与交付材料收敛 | 已完成 |
-| L10 | 私钥管理、轮转与隔离策略增强 | 未开始 |
+| L10 | 私钥管理、轮转与隔离策略增强 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -32,12 +32,12 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已完成 ai-license-mgr 与 ai-prod 运行时 License 规则的一轮收敛，并进一步完成 `license_tool` 默认发布归档、导出接口与交付材料收敛。
+1. 当前阶段已完成 ai-license-mgr 与 ai-prod 运行时 License 规则的一轮收敛，并进一步完成 `license_tool` 默认发布归档、导出接口、私钥轮转/隔离与交付材料收敛。
 
 ### 4.3 未完成
 
-1. 私钥轮转、隔离与更细粒度策略控制仍需增强。
+1. 暂无；当前模块开发计划项已全部完成，后续以联调验收与交付跟踪为主。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 已具备基础签发与管理能力。本轮已完成 L9：新增 `license_tool_release` 发布归档模型、默认 `license_tool` source bundle 生成/查询/导出能力，并补齐 README、错误码与硬件指纹说明等交付材料；同时 ai-builder 的 `delivery_package/tools/` 已纳入标准化 `license_tool` 物料，为后续 SDK / delivery_package / docs 统一收敛提供了正式交付基础。下一阶段继续推进 L10，完善私钥轮转、隔离与更细粒度策略。
+ai-license-mgr 已具备基础签发与管理能力。本轮已完成 L10：新增密钥轮转版本、前序密钥链路、状态变更原因/时间等生命周期元数据，并补齐密钥轮转、隔离、策略迁移与非激活密钥阻断能力，使私钥签发侧能够在不影响既有 license 校验链路的前提下完成轮转和风险隔离；至此 ai-license-mgr 模块开发计划项已全部完成，后续推进转入 SDK / delivery_package / docs 的统一收口。

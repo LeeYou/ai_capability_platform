@@ -37,6 +37,10 @@ class KeyPairModel(Base):
     private_key_path: Mapped[str] = mapped_column(Text)
     public_key_path: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="active")
+    rotation_version: Mapped[int] = mapped_column(Integer, default=1)
+    predecessor_key_pair_id: Mapped[int | None] = mapped_column(ForeignKey("key_pair.id"), nullable=True)
+    status_changed_at_cst: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -46,6 +50,7 @@ class KeyPairModel(Base):
 
     policies: Mapped[list[LicensePolicyModel]] = relationship(back_populates="key_pair")
     issues: Mapped[list[LicenseIssueRecordModel]] = relationship(back_populates="key_pair")
+    predecessor: Mapped[KeyPairModel | None] = relationship(remote_side=[id])
 
 
 class LicensePolicyModel(Base):

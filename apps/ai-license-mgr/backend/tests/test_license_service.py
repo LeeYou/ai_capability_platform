@@ -16,7 +16,9 @@ from app.services.license_service import (
     export_license_issue,
     export_license_tool_release,
     get_license_issue,
+    get_license_policy,
     get_license_tool_release,
+    isolate_key_pair,
     initialize_database,
     issue_license,
     list_customers,
@@ -24,6 +26,7 @@ from app.services.license_service import (
     list_license_issues,
     list_license_policies,
     list_license_tool_releases,
+    rotate_key_pair,
     sync_default_license_tool_release,
     validate_license_issue,
 )
@@ -222,3 +225,182 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertTrue(Path(export_path).is_file())
         manifest_payload = Path(release["manifest_path"]).read_text(encoding="utf-8")
         self.assertIn('"version": "1.0.0"', manifest_payload)
+
+    def test_rotate_key_pair_migrates_active_policies(self) -> None:
+        with get_session_factory()() as session:
+            customer = create_customer(
+                session,
+                get_settings().audit_log_path,
+                customer_code="cust_rotate",
+                customer_name="轮转客户",
+                contact_name=None,
+                contact_email=None,
+            )
+            key_pair = create_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_name="rotate-key",
+            )
+            policy = create_license_policy(
+                session,
+                get_settings().audit_log_path,
+                policy_name="policy-rotate",
+                customer_id=int(customer["customer_id"]),
+                key_pair_id=int(key_pair["key_pair_id"]),
+                capability_scope=["ocr"],
+                version_constraints={},
+                hardware_fingerprint=None,
+                start_at_cst="2026-04-01T00:00:00+08:00",
+                expire_at_cst="2027-04-01T00:00:00+08:00",
+                notes=None,
+            )
+            rotated = rotate_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_pair_id=int(key_pair["key_pair_id"]),
+                new_key_name=None,
+                reason="年度轮转",
+            )
+            policy_after = get_license_policy(session, int(policy["policy_id"]))
+            issue = issue_license(
+                session,
+                get_settings().license_root,
+                get_settings().issue_records_root,
+                get_settings().audit_log_path,
+                policy_id=int(policy["policy_id"]),
+            )
+
+        self.assertEqual(rotated["source_key_pair"]["status"], "rotated")
+        self.assertEqual(rotated["new_key_pair"]["rotation_version"], 2)
+        self.assertEqual(policy_after["key_pair_id"], rotated["new_key_pair"]["key_pair_id"])
+        self.assertEqual(issue["key_pair_id"], rotated["new_key_pair"]["key_pair_id"])
+        self.assertEqual(rotated["migrated_policy_ids"], [int(policy["policy_id"])])
+
+    def test_isolated_key_pair_blocks_policy_and_issue(self) -> None:
+        with get_session_factory()() as session:
+            customer = create_customer(
+                session,
+                get_settings().audit_log_path,
+                customer_code="cust_isolate",
+                customer_name="隔离客户",
+                contact_name=None,
+                contact_email=None,
+            )
+            active_key_pair = create_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_name="active-key",
+            )
+            policy = create_license_policy(
+                session,
+                get_settings().audit_log_path,
+                policy_name="policy-isolate",
+                customer_id=int(customer["customer_id"]),
+                key_pair_id=int(active_key_pair["key_pair_id"]),
+                capability_scope=["ocr"],
+                version_constraints={},
+                hardware_fingerprint=None,
+                start_at_cst="2026-04-01T00:00:00+08:00",
+                expire_at_cst="2027-04-01T00:00:00+08:00",
+                notes=None,
+            )
+            isolated = isolate_key_pair(
+                session,
+                get_settings().audit_log_path,
+                key_pair_id=int(active_key_pair["key_pair_id"]),
+                reason="发现风险",
+            )
+            with self.assertRaisesRegex(ValueError, "不可用于签发 license"):
+                issue_license(
+                    session,
+                    get_settings().license_root,
+                    get_settings().issue_records_root,
+                    get_settings().audit_log_path,
+                    policy_id=int(policy["policy_id"]),
+                )
+            with self.assertRaisesRegex(ValueError, "不可用于创建授权策略"):
+                create_license_policy(
+                    session,
+                    get_settings().audit_log_path,
+                    policy_name="policy-isolate-new",
+                    customer_id=int(customer["customer_id"]),
+                    key_pair_id=int(active_key_pair["key_pair_id"]),
+                    capability_scope=["ocr"],
+                    version_constraints={},
+                    hardware_fingerprint=None,
+                    start_at_cst="2026-04-01T00:00:00+08:00",
+                    expire_at_cst="2027-04-01T00:00:00+08:00",
+                    notes=None,
+                )
+
+        self.assertEqual(isolated["status"], "isolated")
+        self.assertEqual(isolated["status_reason"], "发现风险")
+
+    def test_isolated_key_pair_cannot_create_new_policy(self) -> None:
+        with get_session_factory()() as session:
+            customer = create_customer(
+                session,
+                get_settings().audit_log_path,
+                customer_code="cust_isolate_2",
+                customer_name="隔离客户二",
+                contact_name=None,
+                contact_email=None,
+            )
+            key_pair = create_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_name="isolated-new-policy-key",
+            )
+            isolate_key_pair(
+                session,
+                get_settings().audit_log_path,
+                key_pair_id=int(key_pair["key_pair_id"]),
+                reason="隔离测试",
+            )
+
+            with self.assertRaisesRegex(ValueError, "不可用于创建授权策略"):
+                create_license_policy(
+                    session,
+                    get_settings().audit_log_path,
+                    policy_name="policy-isolated-fail",
+                    customer_id=int(customer["customer_id"]),
+                    key_pair_id=int(key_pair["key_pair_id"]),
+                    capability_scope=["det"],
+                    version_constraints={},
+                    hardware_fingerprint=None,
+                    start_at_cst="2026-04-01T00:00:00+08:00",
+                    expire_at_cst="2027-04-01T00:00:00+08:00",
+                    notes=None,
+                )
+
+    def test_key_pair_audit_logs_include_rotate_and_isolate(self) -> None:
+        with get_session_factory()() as session:
+            key_pair = create_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_name="audit-key",
+            )
+            rotate_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_pair_id=int(key_pair["key_pair_id"]),
+                new_key_name="audit-key-v2",
+                reason="审计轮转",
+            )
+            isolate_key_pair(
+                session,
+                get_settings().audit_log_path,
+                key_pair_id=int(key_pair["key_pair_id"]) + 1,
+                reason="审计隔离",
+            )
+
+        logs = list_audit_logs(get_settings().audit_log_path, limit=20)
+        actions = [item["action"] for item in logs]
+        self.assertIn("rotate", actions)
+        self.assertIn("isolate", actions)

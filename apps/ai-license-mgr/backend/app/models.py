@@ -40,6 +40,10 @@ class KeyPairItem(BaseModel):
     public_key_path: str = Field(description="公钥路径")
     private_key_path: str = Field(description="私钥路径")
     status: str = Field(description="状态")
+    rotation_version: int = Field(description="轮转版本")
+    predecessor_key_pair_id: int | None = Field(default=None, description="前序密钥对 ID")
+    status_changed_at_cst: str | None = Field(default=None, description="状态变更时间")
+    status_reason: str | None = Field(default=None, description="状态变更原因")
 
 
 class KeyPairListResponse(BaseModel):
@@ -48,6 +52,21 @@ class KeyPairListResponse(BaseModel):
 
 class CreateKeyPairRequest(BaseModel):
     key_name: str = Field(min_length=1, max_length=128, description="密钥名称")
+
+
+class RotateKeyPairRequest(BaseModel):
+    new_key_name: str | None = Field(default=None, min_length=1, max_length=128, description="新密钥名称")
+    reason: str | None = Field(default=None, max_length=2000, description="轮转原因")
+
+
+class IsolateKeyPairRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000, description="隔离原因")
+
+
+class RotateKeyPairResponse(BaseModel):
+    source_key_pair: KeyPairItem = Field(description="原密钥对")
+    new_key_pair: KeyPairItem = Field(description="新密钥对")
+    migrated_policy_ids: list[int] = Field(default_factory=list, description="已迁移策略 ID 列表")
 
 
 class LicensePolicyItem(BaseModel):
