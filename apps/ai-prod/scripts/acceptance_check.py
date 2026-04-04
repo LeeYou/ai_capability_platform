@@ -121,6 +121,8 @@ def main() -> int:
             and all(
                 isinstance(item, dict)
                 and "max_batch_size" in item
+                and "queue_wait_timeout_ms" in item
+                and "configured_max_pending_request_count" in item
                 and "pending_request_count" in item
                 and "queue_timeout_count" in item
                 for item in catalog_payload.get("items", [])

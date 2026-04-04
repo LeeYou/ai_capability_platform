@@ -93,10 +93,10 @@ int main(int argc, char** argv) {
 
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5,"queue_wait_timeout_ms":280})");
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3})");
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3,"max_pending_request_count":5})");
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -201,6 +201,16 @@ int main(int argc, char** argv) {
         proxy_thread.join();
         return 1;
     }
+    if (!Expect(infer_payload["result"]["queue_wait_timeout_ms"] == 280, "bootstrap infer should expose queue wait timeout")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["max_pending_request_count"] == 5, "bootstrap infer should expose max pending request count")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
     if (!Expect(infer_payload["model_version"] == "v2_0_0", "bootstrap infer should expose initial model version")) {
         proxy_server.Stop();
         proxy_thread.join();
@@ -209,7 +219,7 @@ int main(int argc, char** argv) {
 
     WriteTextFile(
         host_root / "models" / "face_detect" / "v3_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v3_0_0","backend_type":"onnxruntime","max_batch_size":6})");
+        R"({"capability_name":"face_detect","model_version":"v3_0_0","backend_type":"onnxruntime","max_batch_size":6,"queue_wait_timeout_ms":320})");
     const auto reload_result = client.Post(
         "/api/v1/admin/reload",
         "{\"action\":\"reload\"}",
@@ -236,6 +246,16 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(infer_after_reload_payload["result"]["plugin_result"]["max_batch_size"] == 6, "reload should refresh max batch size")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_after_reload_payload["result"]["queue_wait_timeout_ms"] == 320, "reload should refresh queue wait timeout")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_after_reload_payload["result"]["max_pending_request_count"] == 5, "reload should keep max pending request count")) {
         proxy_server.Stop();
         proxy_thread.join();
         return 1;

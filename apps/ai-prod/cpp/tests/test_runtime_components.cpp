@@ -37,6 +37,8 @@ int main() {
             << "\"device_mode\":\"gpu/cpu\","
             << "\"pool_size\":2,"
             << "\"max_batch_size\":8,"
+            << "\"queue_wait_timeout_ms\":260,"
+            << "\"max_pending_request_count\":6,"
             << "\"revision_id\":12"
             << "},"
             << "{"
@@ -73,6 +75,12 @@ int main() {
         return 1;
     }
     if (!Expect(face_detect->max_batch_size == 8, "face_detect max batch size mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->queue_wait_timeout_ms == 260, "face_detect queue wait timeout mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->max_pending_request_count == 6, "face_detect max pending request count mismatch")) {
         return 1;
     }
 

@@ -19,6 +19,8 @@ struct RuntimeCapabilityRecord {
     std::string active_source;
     int max_batch_size = 1;
     int instance_count = 0;
+    int queue_wait_timeout_ms = -1;
+    int max_pending_request_count = -1;
     nlohmann::json model_manifest = nlohmann::json::object();
     nlohmann::json plugin_manifest = nlohmann::json::object();
 };

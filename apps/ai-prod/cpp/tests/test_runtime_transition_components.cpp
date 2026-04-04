@@ -32,10 +32,10 @@ int main() {
 
     WriteText(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":8})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":8,"queue_wait_timeout_ms":260})");
     WriteText(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3})");
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3,"max_pending_request_count":6})");
     WriteText(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so",
         "binary");
@@ -68,6 +68,12 @@ int main() {
     if (!Expect(scan_result.capabilities.at("face_detect").instance_count == 3, "scanner should keep instance count")) {
         return 1;
     }
+    if (!Expect(scan_result.capabilities.at("face_detect").queue_wait_timeout_ms == 260, "scanner should keep queue wait timeout")) {
+        return 1;
+    }
+    if (!Expect(scan_result.capabilities.at("face_detect").max_pending_request_count == 6, "scanner should keep max pending request count")) {
+        return 1;
+    }
     const auto serialized_capability = SerializeRuntimeCapabilityRecord(scan_result.capabilities.at("face_detect"));
     std::string deserialize_error;
     const auto deserialized_capability = DeserializeRuntimeCapabilityRecord(serialized_capability, &deserialize_error);
@@ -84,6 +90,12 @@ int main() {
         return 1;
     }
     if (!Expect(deserialized_capability->instance_count == 3, "serialized capability should keep instance count")) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->queue_wait_timeout_ms == 260, "serialized capability should keep queue wait timeout")) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->max_pending_request_count == 6, "serialized capability should keep max pending request count")) {
         return 1;
     }
 

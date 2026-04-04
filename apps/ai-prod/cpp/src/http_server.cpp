@@ -275,6 +275,12 @@ nlohmann::json BuildSnapshotCapabilityPayload(
     int revision_id,
     const ProxyConfig& config) {
     const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
+    const int queue_wait_timeout_ms =
+        capability_record.queue_wait_timeout_ms >= 0 ? capability_record.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+    const int max_pending_request_count =
+        capability_record.max_pending_request_count >= 0
+            ? capability_record.max_pending_request_count
+            : config.infer_queue_max_pending_requests;
     return {
         {"capability_name", capability_record.capability_name},
         {"plugin_target", capability_record.plugin_target},
@@ -286,6 +292,8 @@ nlohmann::json BuildSnapshotCapabilityPayload(
         {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
         {"pool_size", pool_size},
         {"max_batch_size", capability_record.max_batch_size},
+        {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+        {"max_pending_request_count", max_pending_request_count},
         {"revision_id", revision_id},
     };
 }
@@ -558,6 +566,12 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         int queue_timeout_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
+        const int queue_wait_timeout_ms =
+            entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+        const int configured_max_pending_request_count =
+            entry.max_pending_request_count >= 0
+                ? entry.max_pending_request_count
+                : config.infer_queue_max_pending_requests;
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
@@ -581,6 +595,8 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"binary_path", entry.binary_path},
                 {"pool_size", total_size},
                 {"max_batch_size", entry.max_batch_size},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"configured_max_pending_request_count", configured_max_pending_request_count},
                 {"busy_count", busy_count},
                 {"pending_request_count", pending_count},
                 {"max_pending_request_count", max_pending_count},
@@ -686,6 +702,12 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         int queued_request_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
+        const int queue_wait_timeout_ms =
+            entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+        const int configured_max_pending_request_count =
+            entry.max_pending_request_count >= 0
+                ? entry.max_pending_request_count
+                : config.infer_queue_max_pending_requests;
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
@@ -721,6 +743,8 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                 {"draining", draining},
                 {"device_mode", entry.device_mode},
                 {"max_batch_size", entry.max_batch_size},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"configured_max_pending_request_count", configured_max_pending_request_count},
             });
 
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
@@ -875,9 +899,15 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
+    const int queue_wait_timeout_ms =
+        catalog_entry->queue_wait_timeout_ms >= 0 ? catalog_entry->queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+    const int max_pending_request_count =
+        catalog_entry->max_pending_request_count >= 0
+            ? catalog_entry->max_pending_request_count
+            : config.infer_queue_max_pending_requests;
     const auto acquire_result = pool->AcquireWithWait(
-        std::chrono::milliseconds(config.infer_queue_wait_timeout_ms),
-        config.infer_queue_max_pending_requests);
+        std::chrono::milliseconds(queue_wait_timeout_ms),
+        max_pending_request_count);
     if (acquire_result.status != InstanceAcquireStatus::kAcquired || !acquire_result.item.has_value()) {
         if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
             ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
@@ -942,6 +972,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"instance_id", request_lease.Item().instance_id},
             {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
             {"queue_wait_ms", acquire_result.queue_wait_ms},
+            {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+            {"max_pending_request_count", max_pending_request_count},
             {"infer_time_ms", plugin_result.infer_time_ms},
             {"plugin_result", plugin_result.plugin_result},
         }},
@@ -955,6 +987,8 @@ void AiProdHttpServer::HandleInferRequest(
             {"capability_name", capability_name},
             {"device", device},
             {"queue_wait_ms", acquire_result.queue_wait_ms},
+            {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+            {"max_pending_request_count", max_pending_request_count},
             {"runtime_revision_id", catalog_entry->revision_id},
         });
     AppendAuditLog(
@@ -969,6 +1003,8 @@ void AiProdHttpServer::HandleInferRequest(
                 {"input_type", infer_request.input_type},
                 {"input_metadata", infer_request.decoded_payload.metadata},
                 {"queue_wait_ms", acquire_result.queue_wait_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"max_pending_request_count", max_pending_request_count},
             });
 
     response.status = 200;

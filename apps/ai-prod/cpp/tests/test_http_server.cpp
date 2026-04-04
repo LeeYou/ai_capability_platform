@@ -67,6 +67,8 @@ void WriteSnapshot(
     int revision_id,
     int pool_size,
     int max_batch_size,
+    int queue_wait_timeout_ms,
+    int max_pending_request_count,
     const std::filesystem::path& model_root,
     const std::filesystem::path& binary_path) {
     std::ofstream snapshot_output(snapshot_path);
@@ -88,6 +90,8 @@ void WriteSnapshot(
         << "\"binary_path\":\"" << binary_path.string() << "\","
         << "\"pool_size\":" << pool_size << ","
         << "\"max_batch_size\":" << max_batch_size << ","
+        << "\"queue_wait_timeout_ms\":" << queue_wait_timeout_ms << ","
+        << "\"max_pending_request_count\":" << max_pending_request_count << ","
         << "\"revision_id\":" << revision_id
         << "}],"
         << "\"license_status\":{"
@@ -144,10 +148,10 @@ int main(int argc, char** argv) {
     }
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5,"queue_wait_timeout_ms":220})");
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2})");
+        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2,"max_pending_request_count":4})");
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -169,6 +173,8 @@ int main(int argc, char** argv) {
         9,
         1,
         4,
+        180,
+        3,
         host_root / "models" / "face_detect" / "v2_0_0",
         host_root / "libs" / "linux_x86_64" / "face_detect" / "lib" / "libface_detect.so");
     const std::map<std::string, std::string> hardware_features = {
@@ -292,6 +298,12 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"][0]["max_batch_size"] == 4, "catalog should expose max batch size from snapshot")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["queue_wait_timeout_ms"] == 180, "catalog should expose snapshot queue wait timeout")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["configured_max_pending_request_count"] == 3, "catalog should expose snapshot max pending configuration")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"][0]["pending_request_count"] == 0, "catalog should start with zero pending requests")) {
         return 1;
     }
@@ -396,6 +408,9 @@ int main(int argc, char** argv) {
     }
     const auto queue_catalog_payload = nlohmann::json::parse(queue_catalog_result->body);
     if (!Expect(queue_catalog_payload["items"][0]["max_pending_request_count"] >= 1, "catalog should expose max pending request count")) {
+        return 1;
+    }
+    if (!Expect(queue_catalog_payload["items"][0]["configured_max_pending_request_count"] == 3, "catalog should preserve configured max pending configuration")) {
         return 1;
     }
 
@@ -600,6 +615,12 @@ int main(int argc, char** argv) {
     if (!Expect(infer_payload["result"]["queue_wait_ms"] == 0, "direct infer should report zero queue wait")) {
         return 1;
     }
+    if (!Expect(infer_payload["result"]["queue_wait_timeout_ms"] == 220, "direct infer should expose refreshed queue wait timeout")) {
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["max_pending_request_count"] == 4, "direct infer should expose refreshed max pending configuration")) {
+        return 1;
+    }
     if (!Expect(std::filesystem::exists(runtime_log_path), "infer should append runtime log")) {
         return 1;
     }
@@ -625,6 +646,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["items"][0]["max_batch_size"] == 5, "reload should expose refreshed max batch size")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["items"][0]["queue_wait_timeout_ms"] == 220, "reload should expose refreshed queue wait timeout")) {
+        return 1;
+    }
+    if (!Expect(reloaded_catalog_payload["items"][0]["configured_max_pending_request_count"] == 4, "reload should expose refreshed max pending configuration")) {
         return 1;
     }
     if (!Expect(reloaded_catalog_payload["draining"] == false, "catalog should leave draining state after reload")) {

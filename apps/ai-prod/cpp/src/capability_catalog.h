@@ -22,6 +22,8 @@ struct CapabilityCatalogEntry {
     std::string binary_path;
     int pool_size = 0;
     int max_batch_size = 1;
+    int queue_wait_timeout_ms = -1;
+    int max_pending_request_count = -1;
     int revision_id = 0;
 };
 

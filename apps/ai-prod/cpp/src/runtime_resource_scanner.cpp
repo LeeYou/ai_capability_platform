@@ -32,6 +32,13 @@ int ReadPositiveIntOrDefaultMinOne(const nlohmann::json& payload, const char* ke
     return std::max(1, payload[key].get<int>());
 }
 
+int ReadNonNegativeIntOrDefault(const nlohmann::json& payload, const char* key, int fallback) {
+    if (!payload.contains(key) || !payload[key].is_number_integer()) {
+        return fallback;
+    }
+    return std::max(0, payload[key].get<int>());
+}
+
 int ExtractBatchSizeFromManifest(const nlohmann::json& manifest) {
     if (manifest.contains("max_batch_size") && manifest["max_batch_size"].is_number_integer()) {
         return std::max(1, manifest["max_batch_size"].get<int>());
@@ -80,6 +87,8 @@ struct ModelEntry {
     std::string backend_type;
     int max_batch_size = 1;
     int instance_count = 0;
+    int queue_wait_timeout_ms = -1;
+    int max_pending_request_count = -1;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -90,6 +99,8 @@ struct PluginEntry {
     std::string binary_path;
     int max_batch_size = 1;
     int instance_count = 0;
+    int queue_wait_timeout_ms = -1;
+    int max_pending_request_count = -1;
     nlohmann::json manifest = nlohmann::json::object();
 };
 
@@ -118,6 +129,8 @@ std::map<std::string, ModelEntry> ScanModels(const std::filesystem::path& root) 
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
+                ReadNonNegativeIntOrDefault(manifest, "queue_wait_timeout_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "max_pending_request_count", -1),
                 manifest,
             });
     }
@@ -161,6 +174,8 @@ std::map<std::string, PluginEntry> ScanPlugins(const std::filesystem::path& root
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
+                ReadNonNegativeIntOrDefault(manifest, "queue_wait_timeout_ms", -1),
+                ReadNonNegativeIntOrDefault(manifest, "max_pending_request_count", -1),
                 manifest,
             });
     }
@@ -221,6 +236,8 @@ RuntimeResourceScanResult RuntimeResourceScanner::ResolveSources(
                 host_model_it != host_models.end() && host_plugin_it != host_plugins.end() ? "host" : "image",
                 plugin_entry.max_batch_size > 1 ? plugin_entry.max_batch_size : model_entry.max_batch_size,
                 plugin_entry.instance_count > 0 ? plugin_entry.instance_count : model_entry.instance_count,
+                plugin_entry.queue_wait_timeout_ms >= 0 ? plugin_entry.queue_wait_timeout_ms : model_entry.queue_wait_timeout_ms,
+                plugin_entry.max_pending_request_count >= 0 ? plugin_entry.max_pending_request_count : model_entry.max_pending_request_count,
                 model_entry.manifest,
                 plugin_entry.manifest,
             });
@@ -253,6 +270,8 @@ nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& r
         {"active_source", record.active_source},
         {"max_batch_size", record.max_batch_size},
         {"instance_count", record.instance_count},
+        {"queue_wait_timeout_ms", record.queue_wait_timeout_ms},
+        {"max_pending_request_count", record.max_pending_request_count},
         {"model_manifest", record.model_manifest},
         {"plugin_manifest", record.plugin_manifest},
     };
@@ -286,6 +305,14 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
     record.instance_count = payload.contains("instance_count") && payload["instance_count"].is_number_integer()
                                 ? std::max(1, payload["instance_count"].get<int>())
                                 : 0;
+    record.queue_wait_timeout_ms =
+        payload.contains("queue_wait_timeout_ms") && payload["queue_wait_timeout_ms"].is_number_integer()
+            ? std::max(0, payload["queue_wait_timeout_ms"].get<int>())
+            : -1;
+    record.max_pending_request_count =
+        payload.contains("max_pending_request_count") && payload["max_pending_request_count"].is_number_integer()
+            ? std::max(0, payload["max_pending_request_count"].get<int>())
+            : -1;
 
     if (payload.contains("model_manifest")) {
         if (!payload["model_manifest"].is_object()) {

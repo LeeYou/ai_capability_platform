@@ -10,6 +10,8 @@ type CapabilityItem = {
   device_mode: string
   pool_size: number
   max_batch_size: number
+  queue_wait_timeout_ms: number
+  max_pending_request_count: number
   revision_id: number | null
 }
 
@@ -56,6 +58,9 @@ type InferResponse = {
     input_type: string
     payload_size: number
     instance_id: string
+    queue_wait_ms: number
+    queue_wait_timeout_ms: number
+    max_pending_request_count: number
     fallback_applied: boolean
   }
 }
@@ -336,6 +341,8 @@ function App() {
                     <th>模型版本</th>
                     <th>插件目标</th>
                     <th>max_batch_size</th>
+                    <th>queue_wait_timeout_ms</th>
+                    <th>max_pending_request_count</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -345,11 +352,13 @@ function App() {
                       <td>{item.model_version}</td>
                       <td>{item.plugin_target}</td>
                       <td>{item.max_batch_size}</td>
+                      <td>{item.queue_wait_timeout_ms}</td>
+                      <td>{item.max_pending_request_count}</td>
                     </tr>
                   ))}
                   {dashboard.capabilities.length === 0 && (
                     <tr>
-                      <td colSpan={4}>暂无已装载能力</td>
+                      <td colSpan={6}>暂无已装载能力</td>
                     </tr>
                   )}
                 </tbody>
