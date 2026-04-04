@@ -56,7 +56,7 @@ InstanceAcquireResult InstancePool::AcquireWithWait(std::chrono::milliseconds ti
     pendingCount += 1;
     maxPendingCount = std::max(maxPendingCount, pendingCount);
 
-    const auto cleanup_pending = [&]() {
+    const auto cleanup_pending = [this]() {
         pendingCount = std::max(0, pendingCount - 1);
     };
     while (true) {

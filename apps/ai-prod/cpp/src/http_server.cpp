@@ -149,13 +149,14 @@ double PercentileFromSamples(const std::multiset<int>& samples, double ratio) {
     if (samples.empty()) {
         return 0.0;
     }
-    const auto index = static_cast<std::size_t>(
-        std::clamp(
-            static_cast<int>(std::ceil(static_cast<double>(samples.size()) * ratio)) - 1,
-            0,
-            static_cast<int>(samples.size()) - 1));
+    const double scaled_index = std::ceil(static_cast<double>(samples.size()) * ratio) - 1.0;
+    const double clamped_index = std::clamp(
+        scaled_index,
+        0.0,
+        static_cast<double>(samples.size() - 1));
+    const auto index = static_cast<std::size_t>(clamped_index);
     auto it = samples.begin();
-    std::advance(it, static_cast<long>(index));
+    std::advance(it, static_cast<std::ptrdiff_t>(index));
     return static_cast<double>(*it);
 }
 

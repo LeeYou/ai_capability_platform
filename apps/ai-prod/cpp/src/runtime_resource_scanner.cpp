@@ -25,7 +25,7 @@ bool ReadRequiredString(
     return true;
 }
 
-int ReadPositiveIntOrDefault(const nlohmann::json& payload, const char* key, int fallback) {
+int ReadPositiveIntOrDefaultMinOne(const nlohmann::json& payload, const char* key, int fallback) {
     if (!payload.contains(key) || !payload[key].is_number_integer()) {
         return fallback;
     }
@@ -157,7 +157,7 @@ std::map<std::string, PluginEntry> ScanPlugins(const std::filesystem::path& root
                 target_name,
                 manifest.value("build_mode", std::string("template")),
                 binary_path,
-                ReadPositiveIntOrDefault(manifest, "max_batch_size", 1),
+                ReadPositiveIntOrDefaultMinOne(manifest, "max_batch_size", 1),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
