@@ -68,6 +68,7 @@ void WriteSnapshot(
     int revision_id,
     int pool_size,
     int max_batch_size,
+    int batch_wait_timeout_ms,
     int queue_wait_timeout_ms,
     int max_pending_request_count,
     const std::filesystem::path& model_root,
@@ -91,6 +92,7 @@ void WriteSnapshot(
         << "\"binary_path\":\"" << binary_path.string() << "\","
         << "\"pool_size\":" << pool_size << ","
         << "\"max_batch_size\":" << max_batch_size << ","
+        << "\"batch_wait_timeout_ms\":" << batch_wait_timeout_ms << ","
         << "\"queue_wait_timeout_ms\":" << queue_wait_timeout_ms << ","
         << "\"max_pending_request_count\":" << max_pending_request_count << ","
         << "\"revision_id\":" << revision_id
@@ -207,6 +209,7 @@ int main(int argc, char** argv) {
         9,
         1,
         4,
+        30,
         180,
         3,
         host_root / "models" / "face_detect" / "v2_0_0",
@@ -270,6 +273,7 @@ int main(int argc, char** argv) {
     config.snapshot_max_age_seconds = 60;
     config.infer_queue_wait_timeout_ms = 150;
     config.infer_queue_max_pending_requests = 2;
+    config.infer_batch_wait_timeout_ms = 10;
 
     AiProdHttpServer proxy_server(config);
     std::thread proxy_thread([&]() {
@@ -332,6 +336,9 @@ int main(int argc, char** argv) {
     if (!Expect(catalog_payload["items"][0]["max_batch_size"] == 4, "catalog should expose max batch size from snapshot")) {
         return 1;
     }
+    if (!Expect(catalog_payload["items"][0]["batch_wait_timeout_ms"] == 30, "catalog should expose snapshot batch wait timeout")) {
+        return 1;
+    }
     if (!Expect(catalog_payload["items"][0]["queue_wait_timeout_ms"] == 180, "catalog should expose snapshot queue wait timeout")) {
         return 1;
     }
@@ -357,6 +364,77 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(initial_metrics_payload["endpoint_metrics"]["admin_catalog"]["total_requests"] >= 1, "metrics should count catalog requests")) {
+        return 1;
+    }
+    if (!Expect(initial_metrics_payload["pool_metrics"][0]["batch_metrics"]["batch_wait_timeout_ms"] == 30, "metrics should expose batch wait timeout")) {
+        return 1;
+    }
+
+    std::optional<int> batch_status_a;
+    std::optional<int> batch_status_b;
+    std::string batch_body_a;
+    std::string batch_body_b;
+    std::thread batch_thread_a([&]() {
+        httplib::Client infer_client("127.0.0.1", proxy_port);
+        const auto infer_result = infer_client.Post(
+            "/api/v1/infer/face_detect",
+            "{\"input_type\":\"json\",\"payload\":\"batch-a\"}",
+            "application/json");
+        if (!infer_result) {
+            batch_status_a = 0;
+            return;
+        }
+        batch_status_a = infer_result->status;
+        batch_body_a = infer_result->body;
+    });
+    std::thread batch_thread_b([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        httplib::Client infer_client("127.0.0.1", proxy_port);
+        const auto infer_result = infer_client.Post(
+            "/api/v1/infer/face_detect",
+            "{\"input_type\":\"json\",\"payload\":\"batch-b\"}",
+            "application/json");
+        if (!infer_result) {
+            batch_status_b = 0;
+            return;
+        }
+        batch_status_b = infer_result->status;
+        batch_body_b = infer_result->body;
+    });
+    batch_thread_a.join();
+    batch_thread_b.join();
+    if (!Expect(batch_status_a.has_value() && batch_status_a.value() == 200, "batched request a should succeed")) {
+        return 1;
+    }
+    if (!Expect(batch_status_b.has_value() && batch_status_b.value() == 200, "batched request b should succeed")) {
+        return 1;
+    }
+    const auto batch_payload_a = nlohmann::json::parse(batch_body_a);
+    const auto batch_payload_b = nlohmann::json::parse(batch_body_b);
+    if (!Expect(batch_payload_a["result"]["batch"]["batch_size"] == 2, "batched request a should report batch size")) {
+        return 1;
+    }
+    if (!Expect(batch_payload_b["result"]["batch"]["batch_size"] == 2, "batched request b should report batch size")) {
+        return 1;
+    }
+    if (!Expect(batch_payload_a["result"]["batch"]["batch_id"] == batch_payload_b["result"]["batch"]["batch_id"], "batched requests should share batch id")) {
+        return 1;
+    }
+    if (!Expect(batch_payload_b["result"]["batch"]["batch_index"] == 1, "batched request b should report batch index")) {
+        return 1;
+    }
+    if (!Expect(batch_payload_a["result"]["batch"]["batch_wait_ms"] >= 0, "batched request should expose batch wait")) {
+        return 1;
+    }
+    const auto batch_metrics_result = proxy_client.Get("/api/v1/admin/metrics");
+    if (!Expect(batch_metrics_result && batch_metrics_result->status == 200, "metrics should respond after batched infer")) {
+        return 1;
+    }
+    const auto batch_metrics_payload = nlohmann::json::parse(batch_metrics_result->body);
+    if (!Expect(batch_metrics_payload["request_summary"]["formed_batch_count"] >= 1, "metrics should count formed batches")) {
+        return 1;
+    }
+    if (!Expect(batch_metrics_payload["request_summary"]["batched_request_count"] >= 2, "metrics should count batched requests")) {
         return 1;
     }
 

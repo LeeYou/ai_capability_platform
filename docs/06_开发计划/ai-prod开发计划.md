@@ -40,6 +40,7 @@
 | P30 | 补齐请求全生命周期耗时观测与能力级时延聚合 | 已完成 |
 | P31 | 补齐请求级 SLA 截止时间控制与 deadline 违约观测 | 已完成 |
 | P32 | 补齐结构化审计日志与请求关联字段统一收口 | 已完成 |
+| P33 | 补齐 capability 级短时批次聚合与批次调度观测 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -88,11 +89,12 @@
 29. 当前已完成 P30：C++ infer 主链路现已补齐请求全生命周期耗时观测，在 infer 返回、运行日志与审计日志中统一输出 `lifecycle_elapsed_ms`，并在 capability 级 `execution_metrics` 中新增 `avg/min/max_lifecycle_time_ms` 聚合指标；同时 active request 诊断继续基于请求注册时间输出 `elapsed_ms`，进一步把 queue wait、插件 infer 与端到端请求时延统一收口到同一组运行态观测面。
 30. 当前已完成 P31：C++ infer 主链路现已支持请求级 `prefer_deadline_ms` SLA 截止时间参数，会在排队等待阶段与进入插件执行前做 deadline enforcement，并在 infer 返回、catalog active request、metrics、运行日志与审计日志中统一暴露 `deadline_ms` / `sla_status` / deadline 违约计数；同时 runtime metrics 已补齐 endpoint 级 `sla_tracked_requests`、`deadline_exceeded_requests` 及 pool 级 `deadline_exceeded_count`，进一步让运行时对交互型请求的时限约束具备基础收口能力。
 31. 当前已完成 P32：C++ 侧已新增独立 `AuditLogger` 组件，替换 `http_server.cpp` 内散落的原始审计日志写入逻辑；infer / bootstrap / reload / rollback / license reload 等关键链路现统一输出结构化审计日志，并补齐 `status`、`request_id`、`correlation_id`、`elapsed_ms`、`error_message` 等标准字段，同时保留原有 Python 审计日志顶层 schema，进一步让运行时诊断、合规留痕与请求关联字段具备统一收口能力。
+32. 当前已完成 P33：C++ 侧已新增 capability 级 `RequestBatcher`，在 `max_batch_size` 与 `batch_wait_timeout_ms` 配置生效时，可对同能力请求做短时批次聚合，并由批次 leader 统一借用实例槽位后顺序执行同批请求；runtime resource scanner / revision 明细 / snapshot / catalog / metrics 现已补齐 `batch_wait_timeout_ms` 配置透传，并统一暴露 `formed_batch_count`、`timeout_flush_count`、`full_flush_count`、`batched_request_count`、`pending_batch_request_count` 等批次调度观测，进一步让运行时在不改动插件 ABI 的前提下具备 capability 级短时批次编排能力。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化、统一运行时指标聚合、capability 级批处理元数据透传与繁忙拒绝观测、基础请求排队等待与调度观测、capability 级排队策略元数据透传、GPU 生命周期失败场景下的 CPU 自动回退编排与观测、请求全生命周期耗时观测与能力级时延聚合、请求级 SLA 截止时间控制与 deadline 违约观测，以及结构化审计日志与请求关联字段统一收口，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
+1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec、基于 revision 的真实回滚恢复、Python 验收外壳内化、统一运行时指标聚合、capability 级批处理元数据透传与繁忙拒绝观测、基础请求排队等待与调度观测、capability 级排队策略元数据透传、GPU 生命周期失败场景下的 CPU 自动回退编排与观测、请求全生命周期耗时观测与能力级时延聚合、请求级 SLA 截止时间控制与 deadline 违约观测、结构化审计日志与请求关联字段统一收口，以及 capability 级短时批次聚合与批次调度观测收口，但更完整的 Runtime 编排与最终运行时内核收口仍未完成。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P32：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27/P28/P29/P30/P31 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计、capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口、GPU 插件动态库装载/生命周期失败场景下的 CPU 自动回退编排、`lifecycle_elapsed_ms` 端到端时延观测，以及请求级 `prefer_deadline_ms` SLA 截止时间控制之后，本轮进一步补齐独立 `AuditLogger`、关键链路结构化审计日志输出，以及 `status` / `request_id` / `correlation_id` / `elapsed_ms` / `error_message` 等统一请求关联字段，让运行时日志留痕、故障追踪与审计输出具备更完整的工业化收口能力。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。
+ai-prod 当前已完成 P9-P33：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27/P28/P29/P30/P31/P32 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计、capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口、GPU 插件动态库装载/生命周期失败场景下的 CPU 自动回退编排、`lifecycle_elapsed_ms` 端到端时延观测、请求级 `prefer_deadline_ms` SLA 截止时间控制，以及结构化审计日志与请求关联字段统一收口之后，本轮进一步补齐 capability 级 `RequestBatcher`、`batch_wait_timeout_ms` 配置透传、短时批次聚合与批次 leader 顺序执行编排，以及 formed/full/timeout batch 统计，让运行时对高频短请求具备更完整的 capability 级短时批次调度能力。当前后续重点继续转向更完整的 Runtime 编排与最终运行时内核收口。

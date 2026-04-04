@@ -86,6 +86,7 @@ struct ModelEntry {
     std::string model_version;
     std::string backend_type;
     int max_batch_size = 1;
+    int batch_wait_timeout_ms = -1;
     int instance_count = 0;
     int queue_wait_timeout_ms = -1;
     int max_pending_request_count = -1;
@@ -98,6 +99,7 @@ struct PluginEntry {
     std::string build_mode;
     std::string binary_path;
     int max_batch_size = 1;
+    int batch_wait_timeout_ms = -1;
     int instance_count = 0;
     int queue_wait_timeout_ms = -1;
     int max_pending_request_count = -1;
@@ -126,6 +128,7 @@ std::map<std::string, ModelEntry> ScanModels(const std::filesystem::path& root) 
                 manifest.value("model_version", selected_version_dir.filename().string()),
                 manifest.value("backend_type", std::string("onnxruntime")),
                 ExtractBatchSizeFromManifest(manifest),
+                ReadNonNegativeIntOrDefault(manifest, "batch_wait_timeout_ms", -1),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
@@ -171,6 +174,7 @@ std::map<std::string, PluginEntry> ScanPlugins(const std::filesystem::path& root
                 manifest.value("build_mode", std::string("template")),
                 binary_path,
                 ReadPositiveIntOrDefaultMinOne(manifest, "max_batch_size", 1),
+                ReadNonNegativeIntOrDefault(manifest, "batch_wait_timeout_ms", -1),
                 manifest.contains("instance_count") && manifest["instance_count"].is_number_integer()
                     ? std::max(1, manifest["instance_count"].get<int>())
                     : 0,
@@ -235,6 +239,7 @@ RuntimeResourceScanResult RuntimeResourceScanner::ResolveSources(
                 plugin_entry.binary_path,
                 host_model_it != host_models.end() && host_plugin_it != host_plugins.end() ? "host" : "image",
                 plugin_entry.max_batch_size > 1 ? plugin_entry.max_batch_size : model_entry.max_batch_size,
+                plugin_entry.batch_wait_timeout_ms >= 0 ? plugin_entry.batch_wait_timeout_ms : model_entry.batch_wait_timeout_ms,
                 plugin_entry.instance_count > 0 ? plugin_entry.instance_count : model_entry.instance_count,
                 plugin_entry.queue_wait_timeout_ms >= 0 ? plugin_entry.queue_wait_timeout_ms : model_entry.queue_wait_timeout_ms,
                 plugin_entry.max_pending_request_count >= 0 ? plugin_entry.max_pending_request_count : model_entry.max_pending_request_count,
@@ -269,6 +274,7 @@ nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& r
         {"binary_path", record.binary_path},
         {"active_source", record.active_source},
         {"max_batch_size", record.max_batch_size},
+        {"batch_wait_timeout_ms", record.batch_wait_timeout_ms},
         {"instance_count", record.instance_count},
         {"queue_wait_timeout_ms", record.queue_wait_timeout_ms},
         {"max_pending_request_count", record.max_pending_request_count},
@@ -302,6 +308,10 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
     record.max_batch_size = payload.contains("max_batch_size") && payload["max_batch_size"].is_number_integer()
                                 ? std::max(1, payload["max_batch_size"].get<int>())
                                 : 1;
+    record.batch_wait_timeout_ms =
+        payload.contains("batch_wait_timeout_ms") && payload["batch_wait_timeout_ms"].is_number_integer()
+            ? std::max(0, payload["batch_wait_timeout_ms"].get<int>())
+            : -1;
     record.instance_count = payload.contains("instance_count") && payload["instance_count"].is_number_integer()
                                 ? std::max(1, payload["instance_count"].get<int>())
                                 : 0;

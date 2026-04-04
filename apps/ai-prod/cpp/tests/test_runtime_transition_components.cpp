@@ -32,7 +32,7 @@ int main() {
 
     WriteText(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":8,"queue_wait_timeout_ms":260})");
+        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":8,"batch_wait_timeout_ms":35,"queue_wait_timeout_ms":260})");
     WriteText(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
         R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3,"max_pending_request_count":6})");
@@ -65,6 +65,9 @@ int main() {
     if (!Expect(scan_result.capabilities.at("face_detect").max_batch_size == 8, "scanner should keep max batch size")) {
         return 1;
     }
+    if (!Expect(scan_result.capabilities.at("face_detect").batch_wait_timeout_ms == 35, "scanner should keep batch wait timeout")) {
+        return 1;
+    }
     if (!Expect(scan_result.capabilities.at("face_detect").instance_count == 3, "scanner should keep instance count")) {
         return 1;
     }
@@ -87,6 +90,9 @@ int main() {
         return 1;
     }
     if (!Expect(deserialized_capability->max_batch_size == 8, "serialized capability should keep max batch size")) {
+        return 1;
+    }
+    if (!Expect(deserialized_capability->batch_wait_timeout_ms == 35, "serialized capability should keep batch wait timeout")) {
         return 1;
     }
     if (!Expect(deserialized_capability->instance_count == 3, "serialized capability should keep instance count")) {

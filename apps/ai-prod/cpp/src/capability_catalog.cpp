@@ -107,6 +107,9 @@ bool CapabilityCatalog::ParseSnapshotUnlocked(const nlohmann::json& snapshot_jso
                 item.value("binary_path", ""),
                 item.value("pool_size", 0),
                 item.value("max_batch_size", 1),
+                item.contains("batch_wait_timeout_ms") && item["batch_wait_timeout_ms"].is_number_integer()
+                    ? std::max(0, item["batch_wait_timeout_ms"].get<int>())
+                    : -1,
                 item.contains("queue_wait_timeout_ms") && item["queue_wait_timeout_ms"].is_number_integer()
                     ? std::max(0, item["queue_wait_timeout_ms"].get<int>())
                     : -1,

@@ -15,7 +15,8 @@ public:
         std::shared_ptr<InFlightRequestTracker> request_tracker,
         const std::string& capability_name,
         const std::string& request_id,
-        int requested_deadline_ms);
+        int requested_deadline_ms,
+        bool release_pool_slot = true);
     ~RequestLease();
 
     RequestLease(const RequestLease&) = delete;
@@ -33,6 +34,7 @@ private:
     InstancePoolItem item;
     std::shared_ptr<InFlightRequestTracker> requestTracker;
     std::string requestId;
+    bool releasePoolSlot = true;
     bool completed = false;
     bool failed = false;
     std::string failureReason;

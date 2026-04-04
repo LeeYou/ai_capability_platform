@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +44,11 @@ struct InferRequestPayload {
     int prefer_deadline_ms = -1;
     nlohmann::json options = nlohmann::json::object();
     int simulate_delay_ms = 0;
+};
+
+struct InferExecutionOutcome {
+    int status_code = 200;
+    nlohmann::json payload = nlohmann::json::object();
 };
 
 class ScopedEndpointMetricRecorder {
@@ -106,6 +112,16 @@ void ApplyJsonErrorResponse(
     response.set_content(
         "{\"status\":\"error\",\"message\":\"" + EscapeJson(message) + "\"}",
         kDefaultJsonContentType);
+}
+
+InferExecutionOutcome BuildErrorOutcome(int status, const std::string& message) {
+    return {
+        status,
+        {
+            {"status", "error"},
+            {"message", message},
+        },
+    };
 }
 
 nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
@@ -282,6 +298,8 @@ nlohmann::json BuildSnapshotCapabilityPayload(
     int revision_id,
     const ProxyConfig& config) {
     const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
+    const int batch_wait_timeout_ms =
+        capability_record.batch_wait_timeout_ms >= 0 ? capability_record.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms;
     const int queue_wait_timeout_ms =
         capability_record.queue_wait_timeout_ms >= 0 ? capability_record.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
     const int max_pending_request_count =
@@ -299,6 +317,7 @@ nlohmann::json BuildSnapshotCapabilityPayload(
         {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
         {"pool_size", pool_size},
         {"max_batch_size", capability_record.max_batch_size},
+        {"batch_wait_timeout_ms", batch_wait_timeout_ms},
         {"queue_wait_timeout_ms", queue_wait_timeout_ms},
         {"max_pending_request_count", max_pending_request_count},
         {"revision_id", revision_id},
@@ -421,6 +440,18 @@ bool ParseAdminTransitionRequest(
 
 }
 
+struct AiProdHttpServer::PendingBatchExecution {
+    std::string request_id;
+    std::string capability_name;
+    InferRequestPayload infer_request;
+    std::chrono::steady_clock::time_point request_started_at = std::chrono::steady_clock::now();
+    BatchDispatchAssignment batch_assignment;
+    bool completed = false;
+    InferExecutionOutcome outcome;
+    std::condition_variable condition;
+    std::mutex mutex;
+};
+
 AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
     : config(config_value),
       capabilityCatalog(config_value.runtime_snapshot_path),
@@ -492,6 +523,56 @@ void AiProdHttpServer::RecordSlaMetric(const std::string& endpoint, bool tracked
     if (deadline_exceeded) {
         metrics.deadline_exceeded_requests += 1;
     }
+}
+
+int AiProdHttpServer::ResolveBatchWaitTimeoutMs(const CapabilityCatalogEntry& entry) const {
+    return entry.batch_wait_timeout_ms >= 0 ? entry.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms;
+}
+
+void AiProdHttpServer::CompletePendingBatchExecution(
+    const std::shared_ptr<PendingBatchExecution>& pending_execution,
+    const nlohmann::json& payload,
+    int status_code) {
+    if (!pending_execution) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> guard(pending_execution->mutex);
+        pending_execution->outcome.status_code = status_code;
+        pending_execution->outcome.payload = payload;
+        pending_execution->completed = true;
+    }
+    pending_execution->condition.notify_all();
+}
+
+nlohmann::json AiProdHttpServer::BuildBatchCapabilityMetrics(
+    const CapabilityCatalogEntry& entry,
+    int batch_wait_timeout_ms) const {
+    const auto batch_metrics = requestBatcher.GetCapabilityMetrics(entry.capability_name);
+    if (!batch_metrics.has_value()) {
+        return {
+            {"enabled", entry.max_batch_size > 1 && batch_wait_timeout_ms > 0},
+            {"max_batch_size", entry.max_batch_size},
+            {"batch_wait_timeout_ms", batch_wait_timeout_ms},
+            {"pending_batch_request_count", 0},
+            {"formed_batch_count", 0},
+            {"timeout_flush_count", 0},
+            {"full_flush_count", 0},
+            {"total_batched_request_count", 0},
+            {"avg_batch_size", 0.0},
+            {"max_batch_size_observed", 0},
+            {"last_batch_size", 0},
+            {"last_batch_wait_ms", 0},
+            {"max_batch_wait_ms", 0},
+            {"last_batch_id", nullptr},
+        };
+    }
+
+    nlohmann::json payload = *batch_metrics;
+    payload["enabled"] = entry.max_batch_size > 1 && batch_wait_timeout_ms > 0;
+    payload["max_batch_size"] = entry.max_batch_size;
+    payload["batch_wait_timeout_ms"] = batch_wait_timeout_ms;
+    return payload;
 }
 
 bool AiProdHttpServer::EnsureRuntimeReady() {
@@ -595,6 +676,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         int deadline_exceeded_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
+        const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(entry);
         const int queue_wait_timeout_ms =
             entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
         const int configured_max_pending_request_count =
@@ -625,6 +707,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"binary_path", entry.binary_path},
                 {"pool_size", total_size},
                 {"max_batch_size", entry.max_batch_size},
+                {"batch_wait_timeout_ms", batch_wait_timeout_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"configured_max_pending_request_count", configured_max_pending_request_count},
                 {"busy_count", busy_count},
@@ -636,6 +719,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"avg_queue_wait_ms", avg_queue_wait_ms},
                 {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
+                {"batch_metrics", BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms)},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
                 {"revision_id", entry.revision_id},
             });
@@ -728,6 +812,11 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
     int total_queued_requests = 0;
     int total_capability_requests = 0;
     int total_capability_failures = 0;
+    int total_formed_batches = 0;
+    int total_timeout_batches = 0;
+    int total_full_batches = 0;
+    int total_batched_requests = 0;
+    int total_pending_batch_requests = 0;
     double total_queue_wait_ms = 0.0;
     int global_max_queue_wait_ms = 0;
     const auto infer_metrics_it = endpointMetrics.find("infer");
@@ -744,6 +833,7 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         int queued_request_count = 0;
         double avg_queue_wait_ms = 0.0;
         int max_queue_wait_ms = 0;
+        const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(entry);
         const int queue_wait_timeout_ms =
             entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
         const int configured_max_pending_request_count =
@@ -770,6 +860,12 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         total_queue_timeout_count += queue_timeout_count;
         total_queued_requests += queued_request_count;
         global_max_queue_wait_ms = std::max(global_max_queue_wait_ms, max_queue_wait_ms);
+        const auto batch_metrics = BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms);
+        total_formed_batches += batch_metrics.value("formed_batch_count", 0);
+        total_timeout_batches += batch_metrics.value("timeout_flush_count", 0);
+        total_full_batches += batch_metrics.value("full_flush_count", 0);
+        total_batched_requests += batch_metrics.value("total_batched_request_count", 0);
+        total_pending_batch_requests += batch_metrics.value("pending_batch_request_count", 0);
         pool_metrics.push_back(
             {
                 {"capability_name", entry.capability_name},
@@ -787,8 +883,10 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
                 {"draining", draining},
                 {"device_mode", entry.device_mode},
                 {"max_batch_size", entry.max_batch_size},
+                {"batch_wait_timeout_ms", batch_wait_timeout_ms},
                 {"queue_wait_timeout_ms", queue_wait_timeout_ms},
                 {"configured_max_pending_request_count", configured_max_pending_request_count},
+                {"batch_metrics", batch_metrics},
             });
 
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
@@ -826,6 +924,11 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
         {"request_summary", {
              {"capability_total_requests", total_capability_requests},
              {"capability_failed_requests", total_capability_failures},
+             {"formed_batch_count", total_formed_batches},
+             {"timeout_flush_count", total_timeout_batches},
+             {"full_flush_count", total_full_batches},
+             {"batched_request_count", total_batched_requests},
+             {"pending_batch_request_count", total_pending_batch_requests},
              {"queued_request_count", total_queued_requests},
              {"avg_queue_wait_ms", total_queued_requests > 0 ? total_queue_wait_ms / static_cast<double>(total_queued_requests) : 0.0},
              {"max_queue_wait_ms", global_max_queue_wait_ms},
@@ -986,6 +1089,398 @@ void AiProdHttpServer::HandleInferRequest(
         catalog_entry->max_pending_request_count >= 0
             ? catalog_entry->max_pending_request_count
             : config.infer_queue_max_pending_requests;
+    const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(*catalog_entry);
+
+    auto apply_outcome = [&](const InferExecutionOutcome& outcome) {
+        response.status = outcome.status_code;
+        response.set_content(outcome.payload.dump(), kDefaultJsonContentType);
+    };
+
+    auto build_batch_detail = [](const BatchDispatchAssignment& assignment) {
+        return nlohmann::json{
+            {"batch_id", assignment.batch_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(assignment.batch_id)},
+            {"batch_size", static_cast<int>(assignment.batch_size)},
+            {"batch_index", static_cast<int>(assignment.batch_index)},
+            {"batch_wait_ms", assignment.batch_wait_ms},
+            {"batch_flush_reason", assignment.timeout_triggered ? "timeout" : "full"},
+        };
+    };
+
+    auto execute_prepared_request =
+        [&](const std::shared_ptr<PendingBatchExecution>& pending_execution,
+            const InstancePoolItem& leased_item,
+            bool release_pool_slot,
+            int pool_queue_wait_ms) -> InferExecutionOutcome {
+        const auto& assignment = pending_execution->batch_assignment;
+        const auto& pending_request = pending_execution->infer_request;
+        const bool has_request_deadline = pending_request.prefer_deadline_ms >= 0;
+        RequestLease request_lease(
+            pool,
+            leased_item,
+            requestTracker,
+            capability_name,
+            pending_execution->request_id,
+            pending_request.prefer_deadline_ms,
+            release_pool_slot);
+        request_lease.MarkSlaStatus(has_request_deadline ? "pending" : "not_requested");
+
+        const std::string requested_device = ResolveDevice(pending_request, *catalog_entry);
+        std::string executed_device = requested_device;
+        request_lease.MarkExecuting(executed_device);
+        if (pending_request.simulate_delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(pending_request.simulate_delay_ms));
+        }
+
+        if (has_request_deadline) {
+            const auto pre_execute_elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pending_execution->request_started_at)
+                    .count());
+            if (pre_execute_elapsed_ms > pending_request.prefer_deadline_ms) {
+                request_lease.MarkSlaStatus("deadline_exceeded");
+                request_lease.MarkFailed("请求 SLA 截止时间已超出，未进入执行。");
+                pool->RecordDeadlineExceeded();
+                RecordSlaMetric("infer", true, true);
+                auto detail = build_batch_detail(assignment);
+                detail["deadline_ms"] = pending_request.prefer_deadline_ms;
+                detail["queue_wait_ms"] = pool_queue_wait_ms;
+                auditLogger->Append(
+                    {
+                        "infer_deadline_exceeded",
+                        "capability",
+                        capability_name,
+                        "failure",
+                        pending_execution->request_id,
+                        pending_execution->request_id,
+                        static_cast<double>(pre_execute_elapsed_ms),
+                        "请求 SLA 截止时间已超出，未进入执行。",
+                        detail,
+                    });
+                return BuildErrorOutcome(503, "请求 SLA 截止时间已超出，未进入执行。");
+            }
+        }
+
+        PluginExecutionResult plugin_result;
+        std::string plugin_error;
+        PluginFailureKind plugin_failure_kind = PluginFailureKind::kNone;
+        bool plugin_ok = pluginExecutor.Execute(
+            *catalog_entry,
+            leased_item.slot_index,
+            pending_request.input_type,
+            pending_request.decoded_payload.normalized_payload,
+            pending_request.options,
+            executed_device,
+            pending_execution->request_id,
+            &plugin_result,
+            &plugin_error,
+            &plugin_failure_kind);
+        std::string fallback_reason;
+        if (!plugin_ok && CanFallbackToCpu(*catalog_entry, requested_device, plugin_failure_kind)) {
+            fallback_reason = plugin_error.empty() ? "GPU 插件装载失败，已自动回退 CPU。" : plugin_error;
+            executed_device = "cpu";
+            request_lease.MarkExecuting(executed_device);
+            plugin_error.clear();
+            plugin_failure_kind = PluginFailureKind::kNone;
+            plugin_ok = pluginExecutor.Execute(
+                *catalog_entry,
+                leased_item.slot_index,
+                pending_request.input_type,
+                pending_request.decoded_payload.normalized_payload,
+                pending_request.options,
+                executed_device,
+                pending_execution->request_id,
+                &plugin_result,
+                &plugin_error,
+                &plugin_failure_kind);
+            if (plugin_ok) {
+                pluginExecutor.RecordFallback(capability_name, executed_device, fallback_reason);
+            }
+        }
+        if (!plugin_ok) {
+            request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
+            auto detail = build_batch_detail(assignment);
+            detail["requested_device"] = requested_device;
+            detail["executed_device"] = executed_device;
+            detail["fallback_applied"] = requested_device != executed_device;
+            auditLogger->Append(
+                {
+                    "infer_failed",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    pending_execution->request_id,
+                    pending_execution->request_id,
+                    -1.0,
+                    plugin_error.empty() ? "能力插件执行失败。" : plugin_error,
+                    detail,
+                });
+            return BuildErrorOutcome(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
+        }
+
+        request_lease.MarkCompleted();
+        const double lifecycle_elapsed_ms = std::max(
+            static_cast<double>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pending_execution->request_started_at)
+                    .count()),
+            plugin_result.infer_time_ms);
+        const std::string sla_status =
+            has_request_deadline && lifecycle_elapsed_ms > static_cast<double>(pending_request.prefer_deadline_ms)
+                ? "deadline_exceeded"
+                : (has_request_deadline ? "ok" : "not_requested");
+        request_lease.MarkSlaStatus(sla_status);
+        RecordSlaMetric("infer", has_request_deadline, sla_status == "deadline_exceeded");
+        pluginExecutor.RecordLifecycleSample(capability_name, executed_device, lifecycle_elapsed_ms);
+
+        const std::string digest = Sha256Hex(
+            capability_name + "|" + catalog_entry->model_version + "|" + pending_request.input_type + "|" +
+            pending_request.decoded_payload.normalized_payload + "|" + plugin_result.plugin_result.dump());
+        const nlohmann::json batch_result = {
+            {"batch_id", assignment.batch_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(assignment.batch_id)},
+            {"batch_size", static_cast<int>(assignment.batch_size)},
+            {"batch_index", static_cast<int>(assignment.batch_index)},
+            {"batch_wait_ms", assignment.batch_wait_ms},
+            {"batch_flush_reason", assignment.timeout_triggered ? "timeout" : "full"},
+        };
+
+        const nlohmann::json payload = {
+            {"request_id", pending_execution->request_id},
+            {"capability_name", capability_name},
+            {"model_version", catalog_entry->model_version},
+            {"backend_type", catalog_entry->backend_type},
+            {"plugin_target", catalog_entry->plugin_target},
+            {"device", executed_device},
+            {"requested_device", requested_device},
+            {"runtime_revision_id", catalog_entry->revision_id},
+            {"license_valid", true},
+            {"result", {
+                {"summary", capability_name + " 推理完成"},
+                {"digest", digest},
+                {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
+                {"input_type", pending_request.input_type},
+                {"payload_size", pending_request.decoded_payload.normalized_payload.size()},
+                {"input_metadata", pending_request.decoded_payload.metadata},
+                {"instance_id", request_lease.Item().instance_id},
+                {"fallback_applied", requested_device != executed_device},
+                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
+                {"queue_wait_ms", pool_queue_wait_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"max_pending_request_count", max_pending_request_count},
+                {"deadline_ms", pending_request.prefer_deadline_ms},
+                {"sla_status", sla_status},
+                {"infer_time_ms", plugin_result.infer_time_ms},
+                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
+                {"batch", batch_result},
+                {"plugin_result", plugin_result.plugin_result},
+            }},
+        };
+
+        AppendJsonLine(
+            config.runtime_log_path,
+            {
+                {"event", "infer"},
+                {"request_id", pending_execution->request_id},
+                {"capability_name", capability_name},
+                {"requested_device", requested_device},
+                {"executed_device", executed_device},
+                {"fallback_applied", requested_device != executed_device},
+                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
+                {"queue_wait_ms", pool_queue_wait_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"max_pending_request_count", max_pending_request_count},
+                {"deadline_ms", pending_request.prefer_deadline_ms},
+                {"sla_status", sla_status},
+                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
+                {"runtime_revision_id", catalog_entry->revision_id},
+                {"batch", batch_result},
+            });
+
+        auto detail = build_batch_detail(assignment);
+        detail["requested_device"] = requested_device;
+        detail["executed_device"] = executed_device;
+        detail["fallback_applied"] = requested_device != executed_device;
+        detail["fallback_reason"] = fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason);
+        detail["instance_id"] = request_lease.Item().instance_id;
+        detail["input_type"] = pending_request.input_type;
+        detail["input_metadata"] = pending_request.decoded_payload.metadata;
+        detail["queue_wait_ms"] = pool_queue_wait_ms;
+        detail["queue_wait_timeout_ms"] = queue_wait_timeout_ms;
+        detail["max_pending_request_count"] = max_pending_request_count;
+        detail["deadline_ms"] = pending_request.prefer_deadline_ms;
+        detail["sla_status"] = sla_status;
+        detail["lifecycle_elapsed_ms"] = lifecycle_elapsed_ms;
+        auditLogger->Append(
+            {
+                "infer",
+                "capability",
+                capability_name,
+                "success",
+                pending_execution->request_id,
+                pending_execution->request_id,
+                lifecycle_elapsed_ms,
+                "",
+                detail,
+            });
+        return {200, payload};
+    };
+
+    auto build_pending_execution = [&](const std::string& current_request_id, const InferRequestPayload& current_request) {
+        auto pending_execution = std::make_shared<PendingBatchExecution>();
+        pending_execution->request_id = current_request_id;
+        pending_execution->capability_name = capability_name;
+        pending_execution->infer_request = current_request;
+        pending_execution->request_started_at = request_started_at;
+        pending_execution->batch_assignment.request_ids = {current_request_id};
+        pending_execution->batch_assignment.batch_size = 1;
+        return pending_execution;
+    };
+
+    const bool batching_enabled = catalog_entry->max_batch_size > 1 && batch_wait_timeout_ms > 0;
+    if (batching_enabled) {
+        auto pending_execution = build_pending_execution(request_id, infer_request);
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            pendingBatchExecutions[request_id] = pending_execution;
+        }
+        pending_execution->batch_assignment = requestBatcher.Submit(
+            capability_name,
+            request_id,
+            catalog_entry->max_batch_size,
+            batch_wait_timeout_ms);
+
+        if (!pending_execution->batch_assignment.leader) {
+            std::unique_lock<std::mutex> guard(pending_execution->mutex);
+            pending_execution->condition.wait(guard, [&]() { return pending_execution->completed; });
+            apply_outcome(pending_execution->outcome);
+            return;
+        }
+
+        std::vector<std::shared_ptr<PendingBatchExecution>> batch_executions;
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            for (const auto& grouped_request_id : pending_execution->batch_assignment.request_ids) {
+                const auto it = pendingBatchExecutions.find(grouped_request_id);
+                if (it != pendingBatchExecutions.end()) {
+                    batch_executions.push_back(it->second);
+                }
+            }
+        }
+
+        std::vector<std::shared_ptr<PendingBatchExecution>> executable_requests;
+        executable_requests.reserve(batch_executions.size());
+        for (const auto& batch_execution : batch_executions) {
+            const bool tracked_deadline = batch_execution->infer_request.prefer_deadline_ms >= 0;
+            const auto elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - batch_execution->request_started_at)
+                    .count());
+            if (tracked_deadline && elapsed_ms > batch_execution->infer_request.prefer_deadline_ms) {
+                RecordSlaMetric("infer", true, true);
+                auto detail = build_batch_detail(batch_execution->batch_assignment);
+                detail["deadline_ms"] = batch_execution->infer_request.prefer_deadline_ms;
+                detail["queue_wait_ms"] = 0;
+                auditLogger->Append(
+                    {
+                        "infer_deadline_exceeded",
+                        "capability",
+                        capability_name,
+                        "failure",
+                        batch_execution->request_id,
+                        batch_execution->request_id,
+                        static_cast<double>(elapsed_ms),
+                        "请求 SLA 截止时间已超出，未进入执行。",
+                        detail,
+                    });
+                CompletePendingBatchExecution(
+                    batch_execution,
+                    BuildErrorOutcome(503, "请求 SLA 截止时间已超出，未进入执行。").payload,
+                    503);
+                continue;
+            }
+            executable_requests.push_back(batch_execution);
+        }
+
+        if (!executable_requests.empty()) {
+            std::optional<std::chrono::milliseconds> earliest_deadline = std::nullopt;
+            for (const auto& batch_execution : executable_requests) {
+                if (batch_execution->infer_request.prefer_deadline_ms < 0) {
+                    continue;
+                }
+                const auto elapsed_ms = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - batch_execution->request_started_at)
+                        .count());
+                const int remaining_deadline_ms = std::max(0, batch_execution->infer_request.prefer_deadline_ms - elapsed_ms);
+                if (!earliest_deadline.has_value() || remaining_deadline_ms < earliest_deadline->count()) {
+                    earliest_deadline = std::chrono::milliseconds(remaining_deadline_ms);
+                }
+            }
+
+            const auto acquire_result = pool->AcquireWithWait(
+                std::chrono::milliseconds(queue_wait_timeout_ms),
+                max_pending_request_count,
+                earliest_deadline);
+            if (acquire_result.status == InstanceAcquireStatus::kAcquired && acquire_result.item.has_value()) {
+                for (std::size_t index = 0; index < executable_requests.size(); ++index) {
+                    const bool release_pool_slot = index + 1 == executable_requests.size();
+                    const auto outcome = execute_prepared_request(
+                        executable_requests[index],
+                        *acquire_result.item,
+                        release_pool_slot,
+                        acquire_result.queue_wait_ms);
+                    CompletePendingBatchExecution(executable_requests[index], outcome.payload, outcome.status_code);
+                }
+            } else {
+                for (const auto& batch_execution : executable_requests) {
+                    const bool tracked_deadline = batch_execution->infer_request.prefer_deadline_ms >= 0;
+                    std::string error_message = "能力实例池繁忙或排队超时，请稍后重试。";
+                    std::string action = "infer_queue_timeout";
+                    if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
+                        error_message = "能力正在切换，请稍后重试。";
+                        action = "infer_pool_draining";
+                    } else if (acquire_result.status == InstanceAcquireStatus::kQueueRejected) {
+                        error_message = "能力排队已满，请稍后重试。";
+                        action = "infer_queue_rejected";
+                    } else if (acquire_result.status == InstanceAcquireStatus::kDeadlineExceeded) {
+                        error_message = "请求 SLA 截止时间已超出，未进入执行。";
+                        action = "infer_deadline_exceeded";
+                        RecordSlaMetric("infer", tracked_deadline, true);
+                    }
+                    auto detail = build_batch_detail(batch_execution->batch_assignment);
+                    detail["queue_wait_ms"] = acquire_result.queue_wait_ms;
+                    detail["queue_wait_timeout_ms"] = queue_wait_timeout_ms;
+                    detail["max_pending_request_count"] = max_pending_request_count;
+                    detail["deadline_ms"] = batch_execution->infer_request.prefer_deadline_ms;
+                    auditLogger->Append(
+                        {
+                            action,
+                            "capability",
+                            capability_name,
+                            "failure",
+                            batch_execution->request_id,
+                            batch_execution->request_id,
+                            static_cast<double>(acquire_result.queue_wait_ms),
+                            error_message,
+                            detail,
+                        });
+                    CompletePendingBatchExecution(batch_execution, BuildErrorOutcome(503, error_message).payload, 503);
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            for (const auto& grouped_request_id : pending_execution->batch_assignment.request_ids) {
+                pendingBatchExecutions.erase(grouped_request_id);
+            }
+        }
+
+        std::unique_lock<std::mutex> guard(pending_execution->mutex);
+        pending_execution->condition.wait(guard, [&]() { return pending_execution->completed; });
+        apply_outcome(pending_execution->outcome);
+        return;
+    }
+
     const bool has_request_deadline = infer_request.prefer_deadline_ms >= 0;
     const auto request_deadline = has_request_deadline
         ? std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(infer_request.prefer_deadline_ms))
@@ -1066,199 +1561,9 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    RequestLease request_lease(pool, *acquire_result.item, requestTracker, capability_name, request_id, infer_request.prefer_deadline_ms);
-    request_lease.MarkSlaStatus(has_request_deadline ? "pending" : "not_requested");
-
-    const std::string requested_device = ResolveDevice(infer_request, *catalog_entry);
-    std::string executed_device = requested_device;
-    request_lease.MarkExecuting(executed_device);
-    if (infer_request.simulate_delay_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
-    }
-    if (has_request_deadline) {
-        const auto pre_execute_elapsed_ms = static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - request_started_at)
-                .count());
-        if (pre_execute_elapsed_ms > infer_request.prefer_deadline_ms) {
-            request_lease.MarkSlaStatus("deadline_exceeded");
-            request_lease.MarkFailed("请求 SLA 截止时间已超出，未进入执行。");
-            pool->RecordDeadlineExceeded();
-            RecordSlaMetric("infer", true, true);
-            auditLogger->Append(
-                {
-                    "infer_deadline_exceeded",
-                    "capability",
-                    capability_name,
-                    "failure",
-                    request_id,
-                    request_id,
-                    static_cast<double>(pre_execute_elapsed_ms),
-                    "请求 SLA 截止时间已超出，未进入执行。",
-                    {
-                        {"deadline_ms", infer_request.prefer_deadline_ms},
-                        {"queue_wait_ms", acquire_result.queue_wait_ms},
-                    },
-                });
-            ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
-            return;
-        }
-    }
-
-    PluginExecutionResult plugin_result;
-    std::string plugin_error;
-    PluginFailureKind plugin_failure_kind = PluginFailureKind::kNone;
-    bool plugin_ok = pluginExecutor.Execute(
-        *catalog_entry,
-        static_cast<std::size_t>(acquire_result.item->slot_index),
-        infer_request.input_type,
-        infer_request.decoded_payload.normalized_payload,
-        infer_request.options,
-        executed_device,
-        request_id,
-        &plugin_result,
-        &plugin_error,
-        &plugin_failure_kind);
-    std::string fallback_reason;
-    if (!plugin_ok && CanFallbackToCpu(*catalog_entry, requested_device, plugin_failure_kind)) {
-        fallback_reason = plugin_error.empty() ? "GPU 插件装载失败，已自动回退 CPU。" : plugin_error;
-        executed_device = "cpu";
-        request_lease.MarkExecuting(executed_device);
-        plugin_error.clear();
-        plugin_failure_kind = PluginFailureKind::kNone;
-        plugin_ok = pluginExecutor.Execute(
-            *catalog_entry,
-            static_cast<std::size_t>(acquire_result.item->slot_index),
-            infer_request.input_type,
-            infer_request.decoded_payload.normalized_payload,
-            infer_request.options,
-            executed_device,
-            request_id,
-            &plugin_result,
-            &plugin_error,
-            &plugin_failure_kind);
-        if (plugin_ok) {
-            pluginExecutor.RecordFallback(capability_name, executed_device, fallback_reason);
-        }
-    }
-    if (!plugin_ok) {
-        request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
-        auditLogger->Append(
-            {
-                "infer_failed",
-                "capability",
-                capability_name,
-                "failure",
-                request_id,
-                request_id,
-                -1.0,
-                plugin_error.empty() ? "能力插件执行失败。" : plugin_error,
-                {
-                    {"requested_device", requested_device},
-                    {"executed_device", executed_device},
-                    {"fallback_applied", requested_device != executed_device},
-                },
-            });
-        ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
-        return;
-    }
-    request_lease.MarkCompleted();
-    const double lifecycle_elapsed_ms = std::max(
-        static_cast<double>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - request_started_at)
-                .count()),
-        plugin_result.infer_time_ms);
-    const std::string sla_status =
-        has_request_deadline && lifecycle_elapsed_ms > static_cast<double>(infer_request.prefer_deadline_ms)
-            ? "deadline_exceeded"
-            : (has_request_deadline ? "ok" : "not_requested");
-    request_lease.MarkSlaStatus(sla_status);
-    RecordSlaMetric("infer", has_request_deadline, sla_status == "deadline_exceeded");
-    pluginExecutor.RecordLifecycleSample(capability_name, executed_device, lifecycle_elapsed_ms);
-
-    const std::string digest = Sha256Hex(
-        capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
-        infer_request.decoded_payload.normalized_payload + "|" + plugin_result.plugin_result.dump());
-
-    const nlohmann::json payload = {
-        {"request_id", request_id},
-        {"capability_name", capability_name},
-        {"model_version", catalog_entry->model_version},
-        {"backend_type", catalog_entry->backend_type},
-        {"plugin_target", catalog_entry->plugin_target},
-        {"device", executed_device},
-        {"requested_device", requested_device},
-        {"runtime_revision_id", catalog_entry->revision_id},
-        {"license_valid", true},
-        {"result", {
-            {"summary", capability_name + " 推理完成"},
-            {"digest", digest},
-            {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
-            {"input_type", infer_request.input_type},
-            {"payload_size", infer_request.decoded_payload.normalized_payload.size()},
-            {"input_metadata", infer_request.decoded_payload.metadata},
-            {"instance_id", request_lease.Item().instance_id},
-            {"fallback_applied", requested_device != executed_device},
-            {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
-            {"queue_wait_ms", acquire_result.queue_wait_ms},
-            {"queue_wait_timeout_ms", queue_wait_timeout_ms},
-            {"max_pending_request_count", max_pending_request_count},
-            {"deadline_ms", infer_request.prefer_deadline_ms},
-            {"sla_status", sla_status},
-            {"infer_time_ms", plugin_result.infer_time_ms},
-            {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
-            {"plugin_result", plugin_result.plugin_result},
-        }},
-    };
-
-    AppendJsonLine(
-        config.runtime_log_path,
-        {
-            {"event", "infer"},
-            {"request_id", request_id},
-            {"capability_name", capability_name},
-            {"requested_device", requested_device},
-            {"executed_device", executed_device},
-            {"fallback_applied", requested_device != executed_device},
-            {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
-            {"queue_wait_ms", acquire_result.queue_wait_ms},
-            {"queue_wait_timeout_ms", queue_wait_timeout_ms},
-            {"max_pending_request_count", max_pending_request_count},
-            {"deadline_ms", infer_request.prefer_deadline_ms},
-            {"sla_status", sla_status},
-            {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
-            {"runtime_revision_id", catalog_entry->revision_id},
-        });
-    auditLogger->Append(
-        {
-            "infer",
-            "capability",
-            capability_name,
-            "success",
-            request_id,
-            request_id,
-            lifecycle_elapsed_ms,
-            "",
-            {
-                {"requested_device", requested_device},
-                {"executed_device", executed_device},
-                {"fallback_applied", requested_device != executed_device},
-                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
-                {"instance_id", request_lease.Item().instance_id},
-                {"input_type", infer_request.input_type},
-                {"input_metadata", infer_request.decoded_payload.metadata},
-                {"queue_wait_ms", acquire_result.queue_wait_ms},
-                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
-                {"max_pending_request_count", max_pending_request_count},
-                {"deadline_ms", infer_request.prefer_deadline_ms},
-                {"sla_status", sla_status},
-                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
-            },
-        });
-
-    response.status = 200;
-    response.set_content(payload.dump(), kDefaultJsonContentType);
+    auto pending_execution = build_pending_execution(request_id, infer_request);
+    const auto outcome = execute_prepared_request(pending_execution, *acquire_result.item, true, acquire_result.queue_wait_ms);
+    apply_outcome(outcome);
 }
 
 std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(

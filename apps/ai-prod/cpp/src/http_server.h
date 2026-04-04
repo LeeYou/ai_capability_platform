@@ -7,6 +7,7 @@
 #include "license_manager.h"
 #include "plugin_executor.h"
 #include "proxy_config.h"
+#include "request_batcher.h"
 #include "request_tracker.h"
 #include "revision_store.h"
 #include "runtime_resource_scanner.h"
@@ -23,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class AiProdHttpServer {
@@ -34,6 +36,7 @@ public:
     void RecordEndpointMetric(const std::string& endpoint, int status_code, std::chrono::steady_clock::time_point started_at);
 
 private:
+    struct PendingBatchExecution;
     struct EndpointMetrics {
         int total_requests = 0;
         int successful_requests = 0;
@@ -61,6 +64,14 @@ private:
         bool rollback);
     void HandleLicenseStatusRequest(const httplib::Request& request, httplib::Response& response);
     void HandleLicenseReloadRequest(const httplib::Request& request, httplib::Response& response);
+    int ResolveBatchWaitTimeoutMs(const CapabilityCatalogEntry& entry) const;
+    void CompletePendingBatchExecution(
+        const std::shared_ptr<PendingBatchExecution>& pending_execution,
+        const nlohmann::json& payload,
+        int status_code);
+    nlohmann::json BuildBatchCapabilityMetrics(
+        const CapabilityCatalogEntry& entry,
+        int batch_wait_timeout_ms) const;
     bool EnsureRuntimeReady();
     bool BootstrapRuntime(const std::string& request_id, std::string* error_message);
     std::optional<nlohmann::json> ExecuteRuntimeTransition(
@@ -84,9 +95,12 @@ private:
     std::map<std::string, std::shared_ptr<InstancePool>> instancePools;
     LicenseManager licenseManager;
     PluginExecutor pluginExecutor;
+    RequestBatcher requestBatcher;
     std::shared_ptr<InFlightRequestTracker> requestTracker;
     RuntimeSnapshotManager snapshotManager;
     std::unique_ptr<AuditLogger> auditLogger;
+    mutable std::mutex pendingBatchMutex;
+    std::unordered_map<std::string, std::shared_ptr<PendingBatchExecution>> pendingBatchExecutions;
     mutable std::mutex runtimeStateMutex;
     mutable std::mutex metricsMutex;
     std::mutex runtimeTransitionMutex;

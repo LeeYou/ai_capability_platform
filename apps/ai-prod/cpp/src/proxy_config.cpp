@@ -97,6 +97,10 @@ ProxyConfig load_proxy_config_from_env() {
         "AI_PROD_CPP_INFER_QUEUE_MAX_PENDING_REQUESTS",
         config.infer_queue_max_pending_requests,
         1);
+    config.infer_batch_wait_timeout_ms = read_int_env(
+        "AI_PROD_CPP_INFER_BATCH_WAIT_TIMEOUT_MS",
+        config.infer_batch_wait_timeout_ms,
+        0);
     config.infer_request_max_deadline_ms = read_int_env(
         "AI_PROD_CPP_INFER_REQUEST_MAX_DEADLINE_MS",
         config.infer_request_max_deadline_ms,

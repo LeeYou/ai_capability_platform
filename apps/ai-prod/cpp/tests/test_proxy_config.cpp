@@ -23,6 +23,7 @@ void clear_env() {
     unsetenv("AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS");
     unsetenv("AI_PROD_CPP_INFER_QUEUE_WAIT_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_INFER_QUEUE_MAX_PENDING_REQUESTS");
+    unsetenv("AI_PROD_CPP_INFER_BATCH_WAIT_TIMEOUT_MS");
     unsetenv("AI_PROD_CPP_INFER_REQUEST_MAX_DEADLINE_MS");
 }
 
@@ -64,6 +65,7 @@ int main() {
     setenv("AI_PROD_CPP_SNAPSHOT_MAX_AGE_SECONDS", "45", 1);
     setenv("AI_PROD_CPP_INFER_QUEUE_WAIT_TIMEOUT_MS", "345", 1);
     setenv("AI_PROD_CPP_INFER_QUEUE_MAX_PENDING_REQUESTS", "12", 1);
+    setenv("AI_PROD_CPP_INFER_BATCH_WAIT_TIMEOUT_MS", "23", 1);
     setenv("AI_PROD_CPP_INFER_REQUEST_MAX_DEADLINE_MS", "4567", 1);
 
     {
@@ -85,6 +87,7 @@ int main() {
         if (!expect(config.snapshot_max_age_seconds == 45, "snapshot max age mismatch")) return 1;
         if (!expect(config.infer_queue_wait_timeout_ms == 345, "infer queue wait timeout mismatch")) return 1;
         if (!expect(config.infer_queue_max_pending_requests == 12, "infer queue max pending mismatch")) return 1;
+        if (!expect(config.infer_batch_wait_timeout_ms == 23, "infer batch wait timeout mismatch")) return 1;
         if (!expect(config.infer_request_max_deadline_ms == 4567, "infer request max deadline mismatch")) return 1;
         if (!expect(build_backend_base_url(config) == "http://127.0.0.2:26104", "backend base url mismatch")) return 1;
     }
