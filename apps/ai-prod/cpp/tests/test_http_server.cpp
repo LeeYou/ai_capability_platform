@@ -798,12 +798,12 @@ int main(int argc, char** argv) {
     }
 
     std::filesystem::remove(snapshot_path);
-    const auto fallback_health_result = proxy_client.Get("/api/v1/health");
-    if (!Expect(fallback_health_result && fallback_health_result->status == 503, "health route should reject missing runtime snapshot")) {
+    const auto missing_snapshot_health_result = proxy_client.Get("/api/v1/health");
+    if (!Expect(missing_snapshot_health_result && missing_snapshot_health_result->status == 503, "health route should reject missing runtime snapshot")) {
         return 1;
     }
-    const auto fallback_health_payload = nlohmann::json::parse(fallback_health_result->body);
-    if (!Expect(fallback_health_payload["status"] == "error", "health route should return structured error when snapshot is missing")) {
+    const auto missing_snapshot_health_payload = nlohmann::json::parse(missing_snapshot_health_result->body);
+    if (!Expect(missing_snapshot_health_payload["status"] == "error", "health route should return structured error when snapshot is missing")) {
         return 1;
     }
     const auto stale_catalog_result = proxy_client.Get("/api/v1/admin/catalog");

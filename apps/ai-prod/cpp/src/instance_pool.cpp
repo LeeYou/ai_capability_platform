@@ -1,6 +1,7 @@
 #include "instance_pool.h"
 
 #include <algorithm>
+#include <cassert>
 
 void InstancePool::Reset(const std::string& capability_name, int pool_size, bool gpu_available) {
     std::lock_guard<std::mutex> guard(mutex);
@@ -57,7 +58,8 @@ InstanceAcquireResult InstancePool::AcquireWithWait(std::chrono::milliseconds ti
     maxPendingCount = std::max(maxPendingCount, pendingCount);
 
     const auto cleanup_pending = [this]() {
-        pendingCount = std::max(0, pendingCount - 1);
+        assert(pendingCount > 0);
+        pendingCount -= 1;
     };
     while (true) {
         const auto now = std::chrono::steady_clock::now();
@@ -105,7 +107,9 @@ bool InstancePool::Release(std::size_t slot_index) {
         return false;
     }
     items[slot_index].in_use = false;
-    condition.notify_all();
+    if (pendingCount > 0 || IsIdleUnlocked()) {
+        condition.notify_all();
+    }
     return true;
 }
 
@@ -172,6 +176,11 @@ double InstancePool::GetAverageQueueWaitMs() const {
         return 0.0;
     }
     return static_cast<double>(totalQueueWaitMs) / static_cast<double>(queuedRequestCount);
+}
+
+std::int64_t InstancePool::GetTotalQueueWaitMs() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return totalQueueWaitMs;
 }
 
 int InstancePool::GetMaxQueueWaitMs() const {

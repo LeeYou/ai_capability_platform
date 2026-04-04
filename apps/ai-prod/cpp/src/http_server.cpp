@@ -719,13 +719,13 @@ nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const 
             queued_request_count = pool_it->second->GetQueuedRequestCount();
             avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
             max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
+            total_queue_wait_ms += static_cast<double>(pool_it->second->GetTotalQueueWaitMs());
         }
         total_pool_slots += total_size;
         total_busy_slots += busy_count;
         total_pending_requests += pending_count;
         total_queue_timeout_count += queue_timeout_count;
         total_queued_requests += queued_request_count;
-        total_queue_wait_ms += avg_queue_wait_ms * static_cast<double>(queued_request_count);
         global_max_queue_wait_ms = std::max(global_max_queue_wait_ms, max_queue_wait_ms);
         pool_metrics.push_back(
             {

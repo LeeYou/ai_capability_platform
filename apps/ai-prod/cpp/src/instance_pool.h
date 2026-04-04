@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -48,6 +49,7 @@ public:
     int GetQueueTimeoutCount() const;
     int GetQueuedRequestCount() const;
     double GetAverageQueueWaitMs() const;
+    std::int64_t GetTotalQueueWaitMs() const;
     int GetMaxQueueWaitMs() const;
     int GetTotalSize() const;
     std::vector<InstancePoolItem> Snapshot() const;
