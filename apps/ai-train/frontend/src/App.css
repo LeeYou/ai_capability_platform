@@ -49,6 +49,58 @@
   padding: 32px;
 }
 
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tab-button,
+.primary-button,
+.button-row button,
+.list-item-button,
+input,
+textarea {
+  font: inherit;
+}
+
+.tab-button,
+.primary-button,
+.button-row button,
+.list-item-button {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.tab-button,
+.button-row button {
+  padding: 8px 14px;
+}
+
+.primary-button {
+  padding: 10px 16px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.tab-button.active,
+.list-item-button.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
 .panel,
 .sub-panel {
   padding: 24px;
@@ -135,6 +187,93 @@
   gap: 24px;
 }
 
+.split-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.list-panel,
+.detail-panel {
+  min-width: 0;
+}
+
+.list-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.list-item-button {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  text-align: left;
+}
+
+.sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.sample-card,
+.sub-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.meta-text,
+.success-text {
+  margin-top: 12px;
+}
+
+.success-text {
+  color: #1d8348;
+}
+
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.log-box,
+.json-box {
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: #1f2430;
+  color: #f5f7ff;
+  overflow-x: auto;
+  font: 14px/1.5 var(--mono);
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input,
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+}
+
 .data-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -172,5 +311,9 @@ th {
 
   .content {
     padding: 20px;
+  }
+
+  .split-layout {
+    grid-template-columns: 1fr;
   }
 }

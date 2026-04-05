@@ -34,9 +34,47 @@ class TrainingTaskSummary:
     workspace_path: str | None
     started_at: str | None
     completed_at: str | None
+    latest_logs: list[str]
+    execution_plan: dict[str, object] | None
+    result_summary: dict[str, object] | None
 
 
-def _to_summary(task: TrainingTaskModel) -> TrainingTaskSummary:
+def _result_summary_path(training_jobs_root: Path, task_id: int) -> Path:
+    return _workspace_dir(training_jobs_root, task_id) / "result_summary.json"
+
+
+def _execution_plan_path(training_jobs_root: Path, task_id: int) -> Path:
+    return _workspace_dir(training_jobs_root, task_id) / "execution_plan.json"
+
+
+def _read_json_if_exists(path: Path) -> dict[str, object] | None:
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else None
+
+
+def _read_latest_logs(task: TrainingTaskModel, tail_lines: int) -> list[str]:
+    if not task.log_path:
+        return []
+    log_path = Path(task.log_path)
+    if not log_path.exists():
+        return []
+    lines = [line.rstrip("\n") for line in log_path.read_text(encoding="utf-8").splitlines()]
+    return lines[-tail_lines:]
+
+
+def _to_summary(
+    task: TrainingTaskModel,
+    *,
+    training_jobs_root: Path | None = None,
+    tail_lines: int = 20,
+) -> TrainingTaskSummary:
+    execution_plan = None
+    result_summary = None
+    if training_jobs_root is not None:
+        execution_plan = _read_json_if_exists(_execution_plan_path(training_jobs_root, task.id))
+        result_summary = _read_json_if_exists(_result_summary_path(training_jobs_root, task.id))
     return TrainingTaskSummary(
         task_id=task.id,
         capability_name=task.capability.capability_name,
@@ -51,6 +89,9 @@ def _to_summary(task: TrainingTaskModel) -> TrainingTaskSummary:
         workspace_path=task.workspace_path,
         started_at=task.started_at.isoformat() if task.started_at else None,
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
+        latest_logs=_read_latest_logs(task, tail_lines),
+        execution_plan=execution_plan,
+        result_summary=result_summary,
     )
 
 
@@ -159,6 +200,17 @@ def get_training_task(session: Session, task_id: int) -> TrainingTaskSummary:
     return _to_summary(task)
 
 
+def get_training_task_detail(
+    session: Session,
+    training_jobs_root: Path,
+    task_id: int,
+) -> TrainingTaskSummary:
+    task = session.get(TrainingTaskModel, task_id)
+    if task is None:
+        raise TrainingTaskNotFoundError("训练任务不存在。")
+    return _to_summary(task, training_jobs_root=training_jobs_root)
+
+
 def update_training_task_status(session: Session, task_id: int, status: str) -> TrainingTaskSummary:
     task = session.get(TrainingTaskModel, task_id)
     if task is None:
@@ -222,6 +274,7 @@ def prepare_training_workspace(
     workspace_dir = _workspace_dir(training_jobs_root, task.id)
     config_path = workspace_dir / "train_config.json"
     script_path = workspace_dir / "run_training.sh"
+    execution_plan_path = workspace_dir / "execution_plan.json"
     train_params = json.loads(task.train_params_json) if task.train_params_json else {}
     config_payload = {
         "task_id": task.id,
@@ -249,8 +302,65 @@ def prepare_training_workspace(
         encoding="utf-8",
     )
     script_path.chmod(0o755)
+    execution_plan = {
+        "container_image": "agilestar/ai-train:cuda11.8",
+        "entrypoint": str(script_path.resolve()),
+        "workspace_dir": str(workspace_dir.resolve()),
+        "resource_profile": "gpu" if task.backend_type.lower() == "gpu" else "cpu",
+        "mounts": {
+            "dataset": task.dataset_binding.dataset_path,
+            "workspace": str(workspace_dir.resolve()),
+            "logs": task.log_path,
+        },
+        "environment": {
+            "AI_TRAIN_TASK_ID": str(task.id),
+            "AI_TRAIN_CAPABILITY": task.capability.capability_name,
+            "AI_TRAIN_BACKEND_TYPE": task.backend_type,
+        },
+        "command": [
+            "/bin/bash",
+            str(script_path.resolve()),
+        ],
+    }
+    execution_plan_path.write_text(json.dumps(execution_plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
     task.workspace_path = str(workspace_dir.resolve())
     session.commit()
     session.refresh(task)
-    return _to_summary(task)
+    return _to_summary(task, training_jobs_root=training_jobs_root)
+
+
+def record_training_task_result(
+    session: Session,
+    training_jobs_root: Path,
+    task_id: int,
+    result_summary: dict[str, object],
+) -> TrainingTaskSummary:
+    task = session.get(TrainingTaskModel, task_id)
+    if task is None:
+        raise TrainingTaskNotFoundError("训练任务不存在。")
+    if not result_summary:
+        raise ValueError("result_summary 不能为空。")
+
+    summary_path = _result_summary_path(training_jobs_root, task.id)
+    payload = dict(result_summary)
+    payload.setdefault("task_id", task.id)
+    payload.setdefault("capability_name", task.capability.capability_name)
+    payload.setdefault("task_name", task.task_name)
+    payload.setdefault("backend_type", task.backend_type)
+    payload.setdefault("recorded_at", datetime.now(UTC).isoformat())
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return _to_summary(task, training_jobs_root=training_jobs_root)
+
+
+def get_training_task_log_snapshot(
+    session: Session,
+    training_jobs_root: Path,
+    task_id: int,
+    *,
+    tail_lines: int = 50,
+) -> TrainingTaskSummary:
+    task = session.get(TrainingTaskModel, task_id)
+    if task is None:
+        raise TrainingTaskNotFoundError("训练任务不存在。")
+    return _to_summary(task, training_jobs_root=training_jobs_root, tail_lines=tail_lines)

@@ -56,6 +56,8 @@ class AnnotationTaskItem(BaseModel):
     sample_total: int = Field(description="样本总数")
     labeled_count: int = Field(description="已标注数量")
     result_path: str | None = Field(default=None, description="结果文件路径")
+    completion_ratio: float = Field(default=0.0, description="标注完成比例")
+    sample_items: list["AnnotationSampleItem"] = Field(default_factory=list, description="样本级标注详情")
 
 
 class AnnotationTaskListResponse(BaseModel):
@@ -68,8 +70,20 @@ class CreateAnnotationTaskRequest(BaseModel):
     sample_total: int = Field(ge=1, description="待标注样本总数")
 
 
+class AnnotationSampleItem(BaseModel):
+    sample_id: str = Field(min_length=1, description="样本标识")
+    status: str = Field(description="样本状态")
+    annotation: dict[str, Any] | None = Field(default=None, description="样本标注结果")
+    updated_at: str | None = Field(default=None, description="最近更新时间")
+
+
 class SubmitAnnotationTaskRequest(BaseModel):
     annotations: list[dict[str, Any]] = Field(default_factory=list, description="标注结果列表")
+
+
+class UpdateAnnotationSamplesRequest(BaseModel):
+    annotations: list[dict[str, Any]] = Field(default_factory=list, description="待保存的样本标注列表")
+    mark_submitted: bool = Field(default=False, description="是否将本次批量更新视为提交动作")
 
 
 class TrainingTaskItem(BaseModel):
@@ -86,6 +100,9 @@ class TrainingTaskItem(BaseModel):
     workspace_path: str | None = Field(default=None, description="训练工作区路径")
     started_at: str | None = Field(default=None, description="开始时间")
     completed_at: str | None = Field(default=None, description="完成时间")
+    latest_logs: list[str] = Field(default_factory=list, description="最近日志片段")
+    execution_plan: dict[str, Any] | None = Field(default=None, description="训练执行计划")
+    result_summary: dict[str, Any] | None = Field(default=None, description="训练结果摘要")
 
 
 class TrainingTaskListResponse(BaseModel):
@@ -109,6 +126,19 @@ class AppendTrainingTaskLogRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000, description="日志内容")
 
 
+class RecordTrainingTaskResultRequest(BaseModel):
+    result_summary: dict[str, Any] = Field(default_factory=dict, description="训练结果摘要")
+
+
+class TrainingTaskLogSnapshot(BaseModel):
+    task_id: int = Field(description="训练任务 ID")
+    status: str = Field(description="训练任务状态")
+    log_path: str | None = Field(default=None, description="日志文件路径")
+    latest_logs: list[str] = Field(default_factory=list, description="最近日志片段")
+    execution_plan: dict[str, Any] | None = Field(default=None, description="训练执行计划")
+    result_summary: dict[str, Any] | None = Field(default=None, description="训练结果摘要")
+
+
 class ModelArtifactItem(BaseModel):
     artifact_id: int = Field(description="模型产物 ID")
     capability_name: str = Field(description="能力标识")
@@ -119,6 +149,8 @@ class ModelArtifactItem(BaseModel):
     backend_type: str = Field(description="执行后端")
     checksum: str = Field(description="校验值")
     status: str = Field(description="产物状态")
+    manifest_preview: dict[str, Any] | None = Field(default=None, description="manifest 预览")
+    delivery_metadata: dict[str, Any] | None = Field(default=None, description="面向 ai-test / ai-builder 的交付元数据")
 
 
 class ModelArtifactListResponse(BaseModel):

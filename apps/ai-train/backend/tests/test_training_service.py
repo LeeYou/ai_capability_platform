@@ -12,9 +12,12 @@ from app.services.registry_service import bind_dataset_to_capability, initialize
 from app.services.training_service import (
     append_training_task_log,
     create_training_task,
+    get_training_task_detail,
+    get_training_task_log_snapshot,
     get_training_task,
     list_training_tasks,
     prepare_training_workspace,
+    record_training_task_result,
     update_training_task_status,
 )
 
@@ -186,6 +189,64 @@ class TrainingServiceTestCase(unittest.TestCase):
         workspace = Path(prepared.workspace_path)
         self.assertTrue((workspace / "train_config.json").is_file())
         self.assertTrue((workspace / "run_training.sh").is_file())
+        self.assertTrue((workspace / "execution_plan.json").is_file())
+
+    def test_training_task_log_snapshot_and_result_summary(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "invoice_extract").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="invoice_extract", display_name="Invoice Extract")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="invoice_extract",
+                dataset_path="invoice_extract",
+            )
+            created = create_training_task(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                capability_name="invoice_extract",
+                task_name="票据训练",
+                framework="pytorch",
+                backend_type="gpu",
+                annotation_task_id=None,
+                train_params={"epochs": 2},
+            )
+            prepare_training_workspace(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+            )
+            update_training_task_status(session, created.task_id, "running")
+            append_training_task_log(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                task_id=created.task_id,
+                message="epoch=1 acc=0.91",
+            )
+            record_training_task_result(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+                result_summary={"best_metric": 0.91, "exported_files": ["weights.bin"]},
+            )
+            detail = get_training_task_detail(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+            )
+            snapshot = get_training_task_log_snapshot(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+            )
+
+        self.assertTrue(detail.execution_plan)
+        self.assertEqual(detail.execution_plan["resource_profile"], "gpu")
+        self.assertEqual(detail.result_summary["best_metric"], 0.91)
+        self.assertTrue(snapshot.latest_logs)
+        self.assertIn("epoch=1 acc=0.91", "\n".join(snapshot.latest_logs))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -27,6 +28,45 @@ class AnnotationTaskSummary:
     sample_total: int
     labeled_count: int
     result_path: str | None
+    sample_items: list[dict[str, object]]
+
+
+def _default_sample_items(task: AnnotationTaskModel) -> list[dict[str, object]]:
+    return [
+        {
+            "sample_id": f"sample_{index}",
+            "status": "pending",
+            "annotation": None,
+            "updated_at": None,
+        }
+        for index in range(1, task.sample_total + 1)
+    ]
+
+
+def _build_payload(task: AnnotationTaskModel, sample_items: list[dict[str, object]]) -> dict[str, object]:
+    annotations = [item["annotation"] for item in sample_items if isinstance(item.get("annotation"), dict)]
+    labeled_count = len(annotations)
+    return {
+        "task_id": task.id,
+        "capability_name": task.capability.capability_name,
+        "task_name": task.task_name,
+        "dataset_path": task.dataset_binding.dataset_path,
+        "sample_total": task.sample_total,
+        "labeled_count": labeled_count,
+        "annotations": annotations,
+        "sample_items": sample_items,
+    }
+
+
+def _load_payload(annotation_tasks_root: Path, task: AnnotationTaskModel) -> dict[str, object]:
+    result_path = _annotation_result_path(annotation_tasks_root, task.id)
+    if not result_path.exists():
+        return _build_payload(task, _default_sample_items(task))
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    sample_items = payload.get("sample_items")
+    if not isinstance(sample_items, list):
+        sample_items = _default_sample_items(task)
+    return _build_payload(task, [item for item in sample_items if isinstance(item, dict)])
 
 
 def _annotation_result_path(annotation_tasks_root: Path, task_id: int) -> Path:
@@ -41,6 +81,9 @@ def _validate_annotations_payload(
     for index, item in enumerate(annotations):
         if not isinstance(item, dict) or not item:
             raise ValueError(f"annotations[{index}] 必须为非空对象。")
+        sample_id = item.get("sample_id")
+        if not isinstance(sample_id, str) or not sample_id.strip():
+            raise ValueError(f"annotations[{index}] 缺失 sample_id。")
         if any(not isinstance(key, str) or not key.strip() for key in item):
             raise ValueError(f"annotations[{index}] 包含非法字段名。")
 
@@ -65,6 +108,7 @@ def _to_summary(task: AnnotationTaskModel) -> AnnotationTaskSummary:
         sample_total=task.sample_total,
         labeled_count=task.labeled_count,
         result_path=task.result_path,
+        sample_items=[],
     )
 
 
@@ -115,35 +159,121 @@ def get_annotation_task(session: Session, task_id: int) -> AnnotationTaskSummary
     return _to_summary(task)
 
 
+def get_annotation_task_detail(
+    session: Session,
+    annotation_tasks_root: Path,
+    task_id: int,
+) -> AnnotationTaskSummary:
+    task = session.get(AnnotationTaskModel, task_id)
+    if task is None:
+        raise AnnotationTaskNotFoundError("标注任务不存在。")
+    payload = _load_payload(annotation_tasks_root, task)
+    summary = _to_summary(task)
+    return AnnotationTaskSummary(
+        task_id=summary.task_id,
+        capability_name=summary.capability_name,
+        task_name=summary.task_name,
+        dataset_path=summary.dataset_path,
+        status=summary.status,
+        sample_total=summary.sample_total,
+        labeled_count=summary.labeled_count,
+        result_path=summary.result_path,
+        sample_items=[item for item in payload["sample_items"] if isinstance(item, dict)],
+    )
+
+
+def update_annotation_task_samples(
+    session: Session,
+    annotation_tasks_root: Path,
+    task_id: int,
+    annotations: list[dict[str, object]],
+    *,
+    mark_submitted: bool,
+) -> AnnotationTaskSummary:
+    task = session.get(AnnotationTaskModel, task_id)
+    if task is None:
+        raise AnnotationTaskNotFoundError("标注任务不存在。")
+    _validate_annotations_payload(task, annotations)
+    payload = _load_payload(annotation_tasks_root, task)
+    sample_items = [item for item in payload["sample_items"] if isinstance(item, dict)]
+    item_map = {
+        str(item.get("sample_id")): item
+        for item in sample_items
+        if isinstance(item.get("sample_id"), str) and str(item.get("sample_id"))
+    }
+    if len(item_map) < task.sample_total:
+        for index in range(1, task.sample_total + 1):
+            sample_id = f"sample_{index}"
+            item_map.setdefault(
+                sample_id,
+                {
+                    "sample_id": sample_id,
+                    "status": "pending",
+                    "annotation": None,
+                    "updated_at": None,
+                },
+            )
+    for index, item in enumerate(annotations):
+        sample_id = str(item["sample_id"]).strip()
+        if sample_id not in item_map:
+            placeholder_key = next(
+                (
+                    key
+                    for key, current in item_map.items()
+                    if key.startswith("sample_")
+                    and current.get("annotation") is None
+                    and current.get("status") == "pending"
+                ),
+                None,
+            )
+            if placeholder_key is not None:
+                target = item_map.pop(placeholder_key)
+                target["sample_id"] = sample_id
+                item_map[sample_id] = target
+            elif len(item_map) < task.sample_total:
+                item_map[sample_id] = {
+                    "sample_id": sample_id,
+                    "status": "pending",
+                    "annotation": None,
+                    "updated_at": None,
+                }
+            else:
+                raise ValueError(f"annotations[{index}] 的 sample_id 超出当前任务样本范围。")
+        target = item_map[sample_id]
+        annotation_payload = {key: value for key, value in item.items() if key != "sample_id"}
+        target["annotation"] = annotation_payload
+        target["status"] = "submitted" if mark_submitted else "labeled"
+        target["updated_at"] = datetime.now(UTC).isoformat()
+
+    ordered_items = sorted(item_map.values(), key=lambda current: str(current.get("sample_id")))
+    next_payload = _build_payload(task, ordered_items)
+    labeled_count = int(next_payload["labeled_count"])
+    result_path = _annotation_result_path(annotation_tasks_root, task.id)
+    result_path.write_text(json.dumps(next_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    task.result_path = str(result_path.resolve())
+    task.labeled_count = labeled_count
+    if labeled_count == 0:
+        task.status = "pending"
+    elif mark_submitted and labeled_count >= task.sample_total:
+        task.status = "completed"
+    else:
+        task.status = "annotating"
+    session.commit()
+    session.refresh(task)
+    return get_annotation_task_detail(session, annotation_tasks_root, task.id)
+
+
 def submit_annotation_task_result(
     session: Session,
     annotation_tasks_root: Path,
     task_id: int,
     annotations: list[dict[str, object]],
 ) -> AnnotationTaskSummary:
-    task = session.get(AnnotationTaskModel, task_id)
-    if task is None:
-        raise AnnotationTaskNotFoundError("标注任务不存在。")
-    labeled_count = _validate_annotations_payload(task, annotations)
-
-    result_path = _annotation_result_path(annotation_tasks_root, task.id)
-    payload = {
-        "task_id": task.id,
-        "capability_name": task.capability.capability_name,
-        "task_name": task.task_name,
-        "dataset_path": task.dataset_binding.dataset_path,
-        "sample_total": task.sample_total,
-        "labeled_count": labeled_count,
-        "annotations": annotations,
-    }
-    result_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    return update_annotation_task_samples(
+        session=session,
+        annotation_tasks_root=annotation_tasks_root,
+        task_id=task_id,
+        annotations=annotations,
+        mark_submitted=True,
     )
-
-    task.result_path = str(result_path.resolve())
-    task.labeled_count = labeled_count
-    task.status = "completed" if labeled_count >= task.sample_total else "annotating"
-    session.commit()
-    session.refresh(task)
-    return _to_summary(task)

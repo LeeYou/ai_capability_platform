@@ -107,6 +107,12 @@ class ModelServiceTestCase(unittest.TestCase):
         self.assertEqual(manifest["capability_name"], "ocr_review")
         self.assertEqual(manifest["source_train_task_id"], training_task.task_id)
         self.assertEqual(manifest["checksum"], created.checksum)
+        self.assertIn("preprocessing", manifest)
+        self.assertIn("labels", manifest)
+        self.assertIn("delivery_metadata", manifest)
+        self.assertTrue((Path(created.artifact_path) / "preprocess.json").is_file())
+        self.assertTrue((Path(created.artifact_path) / "labels.json").is_file())
+        self.assertTrue((Path(created.artifact_path) / "validation" / "acceptance_checklist.json").is_file())
 
     def test_create_model_artifact_rejects_duplicate_version(self) -> None:
         datasets_root = get_settings().datasets_root

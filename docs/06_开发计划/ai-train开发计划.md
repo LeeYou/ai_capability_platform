@@ -16,9 +16,9 @@
 | T6 | 实现模型产物管理与查询 API | 已完成 |
 | T7 | 实现 CUDA 11.8 训练镜像 | 已完成 |
 | T8 | 首期联调与验收 | 已完成 |
-| T9 | 标注台与训练台交互增强 | 未开始 |
-| T10 | 模型包内容与交付 manifest 进一步标准化 | 未开始 |
-| T11 | 与 ai-test / ai-builder 的交付元数据收敛 | 未开始 |
+| T9 | 标注台与训练台交互增强 | 已完成 |
+| T10 | 模型包内容与交付 manifest 进一步标准化 | 已完成 |
+| T11 | 与 ai-test / ai-builder 的交付元数据收敛 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -35,13 +35,15 @@
 ### 4.2 进行中
 
 1. 当前阶段已明确 ai-train 后续重点转向“更专业的内部标注/训练 UI”和“更严格的交付模型包标准化”。
+2. 当前已完成 T9：后端已补齐标注任务样本级详情、批量保存/批量提交接口，前端管理台已升级为更专业的标注台，并支持样本级编辑与批量提交。
+3. 当前已完成 T9：训练台已补齐日志轮询、训练执行计划展示与训练结果摘要回显，前端可直接查看训练任务最近日志与执行元数据。
+4. 当前已完成 T10：模型产物登记已补齐 `preprocessing`、`thresholds`、`labels`、`validation` 等标准 manifest 字段，并自动生成 `preprocess.json`、`labels.json`、`validation/acceptance_checklist.json` 等模型包内容。
+5. 当前已完成 T11：模型 manifest 已补齐面向 ai-test / ai-builder 的 `delivery_metadata`，并同步更新 shared `manifest_model.json` schema，进一步收敛交付元数据接口。
 
 ### 4.3 未完成
 
-1. 更细粒度标注交互与任务协作能力未完成。
-2. 模型包与交付 manifest 的字段约束仍需继续收敛。
-3. 与 ai-builder、ai-test 的交付元数据联动还需增强。
+1. ai-train 模块开发计划项已全部完成；后续若继续增强，将转入跨模块联调与持续优化阶段。
 
 ### 4.4 阶段小结
 
-ai-train 基础功能已经具备，但后续更重要的是把它打磨成真正的内部工业级生产工具，而不是只停留在基础工程骨架层面。
+ai-train 当前已完成 T9/T10/T11：在既有能力注册、数据集绑定、标注任务、训练任务、模型产物与训练工作区准备基础上，后端已补齐标注任务样本级详情、批量保存/批量提交接口，以及训练日志快照、执行计划与训练结果摘要回显；前端管理台也已升级为更专业的标注台、训练台、模型管理视图。同时模型产物 manifest 已进一步标准化，补齐 `preprocessing`、`thresholds`、`labels`、`validation` 与 `delivery_metadata` 字段，并自动生成辅助文件与 shared schema，对 ai-test / ai-builder 的交付元数据查询形成统一输入。至此 ai-train 当前模块开发计划已全部完成。
