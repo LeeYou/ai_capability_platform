@@ -1,0 +1,28 @@
+{
+  "package_id": 301,
+  "package_name": "face_detect_sdk_release",
+  "capability_name": "face_detect",
+  "model_version": "v1_0_0",
+  "source_document": "docs/README_集成说明.md",
+  "requested_targets": [
+    "linux_x86_64",
+    "windows_x86_64"
+  ],
+  "sections": [
+    {
+      "section_name": "交付目录核对",
+      "items": [
+        {
+          "item_id": "S01-I01",
+          "description": "核对 sdk_linux_x86_64 目录齐全",
+          "status": "pending"
+        },
+        {
+          "item_id": "S01-I02",
+          "description": "核对 sdk_windows_x86_64 目录齐全",
+          "status": "pending"
+        }
+      ]
+    }
+  ]
+}

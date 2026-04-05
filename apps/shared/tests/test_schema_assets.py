@@ -69,6 +69,13 @@ class SharedSchemaAssetsTestCase(unittest.TestCase):
             "manifest_sdk.example.json": "manifest_sdk.json",
             "license.example.json": "license.json",
             "capability_metadata.example.json": "capability_metadata.json",
+            "checksum_entry.example.json": "checksum_entry.json",
+            "acceptance_checklist.example.json": "acceptance_checklist.json",
+            "version_manifest.example.json": "version_manifest.json",
+            "delivery_summary.example.json": "delivery_summary.json",
+            "mount_template.example.json": "mount_template.json",
+            "tools_bundle.example.json": "tools_bundle.json",
+            "docs_bundle.example.json": "docs_bundle.json",
         }
         for example_name, schema_name in example_to_schema.items():
             schema = _load_json(SCHEMAS_ROOT / schema_name)

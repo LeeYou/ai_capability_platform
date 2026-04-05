@@ -1,0 +1,20 @@
+{
+  "template_directories": [
+    "data",
+    "datasets",
+    "models",
+    "license",
+    "libs",
+    "configs",
+    "logs",
+    "exports"
+  ],
+  "scripts": [
+    "scripts/init_host_root.sh",
+    "scripts/run_prod_stack.sh"
+  ],
+  "config_files": [
+    "configs/prod_defaults.env",
+    "configs/platform.env.example"
+  ]
+}

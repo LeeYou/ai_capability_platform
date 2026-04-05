@@ -19,9 +19,52 @@ from app.services.sdk_service import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SHARED_SCHEMAS_ROOT = REPO_ROOT / "apps" / "shared" / "schemas"
+
+
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _load_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_matches_schema(test_case: unittest.TestCase, schema: dict[str, object], payload: object, *, path: str = "$") -> None:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        test_case.assertIsInstance(payload, dict, f"{path} 必须为对象")
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        assert isinstance(payload, dict)
+        for key in required:
+            test_case.assertIn(key, payload, f"{path} 缺少字段 {key}")
+        for key, property_schema in properties.items():
+            if key in payload and isinstance(property_schema, dict):
+                _assert_matches_schema(test_case, property_schema, payload[key], path=f"{path}.{key}")
+        return
+
+    if schema_type == "array":
+        test_case.assertIsInstance(payload, list, f"{path} 必须为数组")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(payload):
+                _assert_matches_schema(test_case, item_schema, item, path=f"{path}[{index}]")
+        return
+
+    if schema_type == "string":
+        test_case.assertIsInstance(payload, str, f"{path} 必须为字符串")
+        return
+
+    if schema_type == "integer":
+        test_case.assertIsInstance(payload, int, f"{path} 必须为整数")
+        return
+
+    if schema_type == "boolean":
+        test_case.assertIsInstance(payload, bool, f"{path} 必须为布尔值")
+        return
 
 
 def _prepare_builder_output(host_root: Path, *, capability_name: str, model_version: str, target_name: str, jni_enabled: bool) -> None:
@@ -125,9 +168,24 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.md").is_file())
         self.assertEqual(package_manifest["version_manifest_path"], "version_manifest.json")
         self.assertEqual(package_manifest["delivery_summary"]["target_count"], 2)
-        version_manifest = json.loads((Path(payload["package_root_path"]) / "version_manifest.json").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(package_manifest["delivery_summary"]["acceptance_section_count"], 3)
+        acceptance_checklist = _load_json(Path(payload["package_root_path"]) / "acceptance_checklist.json")
+        self.assertGreaterEqual(len(acceptance_checklist["sections"]), 3)
+        version_manifest = _load_json(Path(payload["package_root_path"]) / "version_manifest.json")
+        self.assertEqual(version_manifest["delivery_targets"], ["linux_x86_64", "windows_x86_64"])
         self.assertEqual(len(version_manifest["sdk_items"]), 2)
         self.assertGreaterEqual(len(version_manifest["delivery_checksums"]), 2)
+        self.assertIn("docs_bundle", version_manifest)
+        self.assertIn("tools_bundle", version_manifest)
+        self.assertIn("checksum", version_manifest["delivery_checksums"][0])
+        self.assertNotIn("sha256", version_manifest["delivery_checksums"][0])
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "acceptance_checklist.json"), acceptance_checklist)
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "version_manifest.json"), version_manifest)
+        _assert_matches_schema(
+            self,
+            _load_json(SHARED_SCHEMAS_ROOT / "delivery_summary.json"),
+            _load_json(Path(payload["package_root_path"]) / "delivery_summary.json"),
+        )
 
     def test_create_sdk_package_with_jni_outputs_java_and_jni_files(self) -> None:
         with get_session_factory()() as session:
@@ -156,6 +214,7 @@ class SdkServiceTestCase(unittest.TestCase):
         delivery_summary = json.loads((Path(payload["package_root_path"]) / "delivery_summary.json").read_text(encoding="utf-8"))
         self.assertTrue(delivery_summary["jni_enabled"])
         self.assertEqual(delivery_summary["target_count"], 1)
+        self.assertGreaterEqual(delivery_summary["acceptance_section_count"], 2)
 
     def test_audit_logs_and_target_listing(self) -> None:
         with get_session_factory()() as session:

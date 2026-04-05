@@ -592,9 +592,138 @@ def _write_checksums(root_dir: Path) -> None:
 def _delivery_file_entry(path: Path, package_root: Path) -> dict[str, object]:
     return {
         "path": str(path.relative_to(package_root)),
-        "sha256": _sha256_file(path),
+        "checksum": _sha256_file(path),
         "size_bytes": path.stat().st_size,
     }
+
+
+def _sdk_docs_bundle(package_targets: list[dict[str, object]]) -> dict[str, object]:
+    documents: list[str] = []
+    for target in package_targets:
+        sdk_dir_name = STANDARD_SDK_DIR_NAMES[str(target["target_name"])]
+        for document_name in (
+            "README_集成说明.md",
+            "ERROR_CODES.md",
+            "ACCEPTANCE_CHECKLIST.md",
+            "DEPLOYMENT_GUIDE.md",
+            "LICENSE_TOOL.md",
+        ):
+            documents.append(f"{sdk_dir_name}/docs/{document_name}")
+    return {"documents": documents}
+
+
+def _sdk_tools_bundle(package_targets: list[dict[str, object]]) -> dict[str, object]:
+    validation_scripts: list[str] = []
+    license_tool_manifests: list[str] = []
+    for target in package_targets:
+        sdk_dir_name = STANDARD_SDK_DIR_NAMES[str(target["target_name"])]
+        validation_scripts.append(f"{sdk_dir_name}/validation/verify_sdk_package.py")
+        license_tool_manifests.append(f"{sdk_dir_name}/tools/license_tool/manifest.json")
+    return {
+        "validation_scripts": validation_scripts,
+        "license_tool_manifests": license_tool_manifests,
+    }
+
+
+def _create_sdk_acceptance_checklist(
+    package_root: Path,
+    *,
+    package_id: int,
+    package_name: str,
+    capability_name: str,
+    model_version: str,
+    requested_targets: list[str],
+    jni_enabled: bool,
+) -> dict[str, object]:
+    sections: list[dict[str, object]] = [
+        {
+            "section_name": "交付概览",
+            "items": [
+                {
+                    "item_id": "S01-I01",
+                    "description": f"确认 package_name=`{package_name}` 与 capability/model 组合正确",
+                    "status": "pending",
+                },
+                {
+                    "item_id": "S01-I02",
+                    "description": f"确认交付目标覆盖：{', '.join(requested_targets)}",
+                    "status": "pending",
+                },
+                {
+                    "item_id": "S01-I03",
+                    "description": f"确认 JNI 交付状态：{'启用' if jni_enabled else '关闭'}",
+                    "status": "pending",
+                },
+            ],
+        }
+    ]
+    required_paths = [
+        "lib",
+        "include",
+        "models",
+        "licenses",
+        "docs",
+        "examples",
+        "tools/license_tool/manifest.json",
+        "validation/verify_sdk_package.py",
+        "manifest/manifest.json",
+        "checksums.txt",
+    ]
+    for section_index, target_name in enumerate(requested_targets, start=2):
+        items = [
+            {
+                "item_id": f"S{section_index:02d}-I{item_index:02d}",
+                "description": f"`{STANDARD_SDK_DIR_NAMES[target_name]}/{relative_path}` 已生成并可读",
+                "status": "pending",
+            }
+            for item_index, relative_path in enumerate(required_paths, start=1)
+        ]
+        if jni_enabled:
+            items.append(
+                {
+                    "item_id": f"S{section_index:02d}-I{len(items) + 1:02d}",
+                    "description": f"`{STANDARD_SDK_DIR_NAMES[target_name]}/jni` 与 Java 示例已生成",
+                    "status": "pending",
+                }
+            )
+        sections.append({"section_name": f"目标平台 `{target_name}`", "items": items})
+    final_section_index = len(sections) + 1
+    sections.append(
+        {
+            "section_name": "现场验收",
+            "items": [
+                {
+                    "item_id": f"S{final_section_index:02d}-I01",
+                    "description": "按 `version_manifest.json` 核对关键文件与 checksum。",
+                    "status": "pending",
+                },
+                {
+                    "item_id": f"S{final_section_index:02d}-I02",
+                    "description": "在目标环境执行 `validation/verify_sdk_package.py`。",
+                    "status": "pending",
+                },
+                {
+                    "item_id": f"S{final_section_index:02d}-I03",
+                    "description": "构建并运行 `tools/license_tool`，完成授权校验留痕。",
+                    "status": "pending",
+                },
+            ],
+        }
+    )
+    checklist = {
+        "package_id": package_id,
+        "package_name": package_name,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "source_document": "docs/README_集成说明.md",
+        "requested_targets": requested_targets,
+        "sections": sections,
+    }
+    _write_text(
+        package_root / "acceptance_checklist.json",
+        json.dumps(checklist, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return checklist
 
 
 def _create_version_manifest(
@@ -632,6 +761,7 @@ def _create_version_manifest(
         "capability_name": capability_name,
         "model_version": model_version,
         "requested_targets": requested_targets,
+        "delivery_targets": requested_targets,
         "jni_enabled": jni_enabled,
         "sdk_items": [
             {
@@ -645,6 +775,8 @@ def _create_version_manifest(
             for target in package_targets
         ],
         "delivery_checksums": checksum_entries,
+        "docs_bundle": _sdk_docs_bundle(package_targets),
+        "tools_bundle": _sdk_tools_bundle(package_targets),
     }
     _write_text(
         package_root / "version_manifest.json",
@@ -673,7 +805,7 @@ def _create_delivery_summary(
         "requested_targets": requested_targets,
         "jni_enabled": jni_enabled,
         "target_count": len(requested_targets),
-        "check_target_count": len(acceptance_checklist.get("targets", [])),
+        "acceptance_section_count": len(acceptance_checklist.get("sections", [])),
         "delivery_files": [
             "acceptance_checklist.json",
             "version_manifest.json",
@@ -1027,40 +1159,15 @@ def create_sdk_package(
             ]
         ),
     )
-    _write_text(
-        package_root / "acceptance_checklist.json",
-        json.dumps(
-            {
-                "package_id": package.id,
-                "package_name": safe_package_name,
-                "capability_name": safe_capability_name,
-                "model_version": safe_model_version,
-                "targets": [
-                    {
-                        "target_name": item["target_name"],
-                        "sdk_dir_name": STANDARD_SDK_DIR_NAMES[str(item["target_name"])],
-                        "required_paths": [
-                            "lib",
-                            "include",
-                            "models",
-                            "licenses",
-                            "docs",
-                            "examples",
-                            "tools/license_tool/manifest.json",
-                            "validation/verify_sdk_package.py",
-                            "manifest/manifest.json",
-                            "checksums.txt",
-                        ],
-                    }
-                    for item in package_targets
-                ],
-            },
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        ),
+    acceptance_checklist = _create_sdk_acceptance_checklist(
+        package_root,
+        package_id=package.id,
+        package_name=safe_package_name,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        requested_targets=sorted(set(normalized_targets)),
+        jni_enabled=jni_enabled,
     )
-    acceptance_checklist = json.loads((package_root / "acceptance_checklist.json").read_text(encoding="utf-8"))
     version_manifest = _create_version_manifest(
         package_root,
         package_id=package.id,

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "交付验收清单",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "model_version",
+    "source_document",
+    "sections"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "integer"
+    },
+    "package_id": {
+      "type": "integer"
+    },
+    "package_name": {
+      "type": "string"
+    },
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "source_document": {
+      "type": "string"
+    },
+    "requested_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "section_name",
+          "items"
+        ],
+        "properties": {
+          "section_name": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "item_id",
+                "description",
+                "status"
+              ],
+              "properties": {
+                "item_id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

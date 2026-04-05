@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "交付工具清单",
+  "type": "object",
+  "required": [
+    "validation_scripts"
+  ],
+  "properties": {
+    "validation_scripts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ops_scripts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "license_tool": {
+      "type": "object",
+      "required": [
+        "version",
+        "root",
+        "manifest_path",
+        "documents"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "manifest_path": {
+          "type": "string"
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "license_tool_manifests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

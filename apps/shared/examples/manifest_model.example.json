@@ -6,5 +6,40 @@
   "backend_type": "onnxruntime",
   "artifact_path": "/data/ai_capability_platform/models/face_detect/v1_0_0",
   "status": "ready",
-  "checksum": "checksum-demo-model"
+  "checksum": "checksum-demo-model",
+  "preprocessing": {
+    "input_type": "image",
+    "resize": {
+      "width": 640,
+      "height": 640
+    },
+    "normalize": {
+      "mean": [0.485, 0.456, 0.406],
+      "std": [0.229, 0.224, 0.225]
+    }
+  },
+  "thresholds": {
+    "score_threshold": 0.5,
+    "nms_threshold": 0.45
+  },
+  "labels": [
+    "face"
+  ],
+  "validation": {
+    "artifacts": [
+      "validation/acceptance_checklist.json",
+      "validation/baseline_metrics.json"
+    ]
+  },
+  "delivery_metadata": {
+    "ai_test": {
+      "acceptance_task_id": 301
+    },
+    "ai_builder": {
+      "recommended_targets": ["linux_x86_64", "windows_x86_64"]
+    },
+    "training_summary": {
+      "dataset_version": "2026_04_01"
+    }
+  }
 }

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "交付版本清单",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "model_version",
+    "delivery_targets",
+    "sdk_items",
+    "delivery_checksums"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "integer"
+    },
+    "package_id": {
+      "type": "integer"
+    },
+    "package_name": {
+      "type": "string"
+    },
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "issue_record_id": {
+      "type": "integer"
+    },
+    "customer_code": {
+      "type": "string"
+    },
+    "capability_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version_constraints": {
+      "type": "object"
+    },
+    "requested_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "delivery_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "jni_enabled": {
+      "type": "boolean"
+    },
+    "sdk_items": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "delivery_checksums": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "checksum",
+          "size_bytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "docker_bundle": {
+      "type": "object"
+    },
+    "docs_bundle": {
+      "type": "object"
+    },
+    "tools_bundle": {
+      "type": "object"
+    }
+  }
+}
