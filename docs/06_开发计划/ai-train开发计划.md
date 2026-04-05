@@ -39,6 +39,7 @@
 3. 当前已完成 T9：训练台已补齐日志轮询、训练执行计划展示与训练结果摘要回显，前端可直接查看训练任务最近日志与执行元数据。
 4. 当前已完成 T10：模型产物登记已补齐 `preprocessing`、`thresholds`、`labels`、`validation` 等标准 manifest 字段，并自动生成 `preprocess.json`、`labels.json`、`validation/acceptance_checklist.json` 等模型包内容。
 5. 当前已完成 T11：模型 manifest 已补齐面向 ai-test / ai-builder 的 `delivery_metadata`，并同步更新 shared `manifest_model.json` schema，进一步收敛交付元数据接口。
+6. 当前已结合总体计划 R7 第二轮，对前端补齐跨模块联调导航入口、当前模块标识与联调复审清单展示，便于训练侧与测试/构建/交付链路统一联调。
 
 ### 4.3 未完成
 
@@ -46,4 +47,4 @@
 
 ### 4.4 阶段小结
 
-ai-train 当前已完成 T9/T10/T11：在既有能力注册、数据集绑定、标注任务、训练任务、模型产物与训练工作区准备基础上，后端已补齐标注任务样本级详情、批量保存/批量提交接口，以及训练日志快照、执行计划与训练结果摘要回显；前端管理台也已升级为更专业的标注台、训练台、模型管理视图。同时模型产物 manifest 已进一步标准化，补齐 `preprocessing`、`thresholds`、`labels`、`validation` 与 `delivery_metadata` 字段，并自动生成辅助文件与 shared schema，对 ai-test / ai-builder 的交付元数据查询形成统一输入。至此 ai-train 当前模块开发计划已全部完成。
+ai-train 当前已完成 T9/T10/T11：在既有能力注册、数据集绑定、标注任务、训练任务、模型产物与训练工作区准备基础上，后端已补齐标注任务样本级详情、批量保存/批量提交接口，以及训练日志快照、执行计划与训练结果摘要回显；前端管理台也已升级为更专业的标注台、训练台、模型管理视图，并在本轮进一步补齐跨模块联调导航入口与联调复审清单展示。同时模型产物 manifest 已进一步标准化，补齐 `preprocessing`、`thresholds`、`labels`、`validation` 与 `delivery_metadata` 字段，并自动生成辅助文件与 shared schema，对 ai-test / ai-builder 的交付元数据查询形成统一输入。至此 ai-train 当前模块开发计划已全部完成。
