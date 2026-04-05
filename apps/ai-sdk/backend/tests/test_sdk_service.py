@@ -120,6 +120,14 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertTrue(package_manifest["delivery_package_alignment"])
         self.assertEqual(package_manifest["stage_status"]["S9"], "completed")
         self.assertTrue((Path(payload["package_root_path"]) / "acceptance_checklist.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "version_manifest.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.md").is_file())
+        self.assertEqual(package_manifest["version_manifest_path"], "version_manifest.json")
+        self.assertEqual(package_manifest["delivery_summary"]["target_count"], 2)
+        version_manifest = json.loads((Path(payload["package_root_path"]) / "version_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(version_manifest["sdk_items"]), 2)
+        self.assertGreaterEqual(len(version_manifest["delivery_checksums"]), 2)
 
     def test_create_sdk_package_with_jni_outputs_java_and_jni_files(self) -> None:
         with get_session_factory()() as session:
@@ -145,6 +153,9 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(target["output_dir"]) / "docs" / "ACCEPTANCE_CHECKLIST.md").is_file())
         self.assertTrue((Path(target["output_dir"]) / "docs" / "DEPLOYMENT_GUIDE.md").is_file())
         self.assertTrue((Path(target["output_dir"]) / "docs" / "LICENSE_TOOL.md").is_file())
+        delivery_summary = json.loads((Path(payload["package_root_path"]) / "delivery_summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(delivery_summary["jni_enabled"])
+        self.assertEqual(delivery_summary["target_count"], 1)
 
     def test_audit_logs_and_target_listing(self) -> None:
         with get_session_factory()() as session:

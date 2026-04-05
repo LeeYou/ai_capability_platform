@@ -10,7 +10,8 @@
 4. 自动复制模型包、license、头文件、动态库与可选 JNI 产物
 5. 自动生成接入说明、错误码说明、部署说明、验收清单、C/C++ 示例与 Java 示例
 6. 自动附带 `tools/license_tool` source bundle、`validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`
-7. 记录包任务、目标、产物与审计日志
+7. 自动生成 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`
+8. 记录包任务、目标、产物与审计日志
 
 ## 本地运行
 

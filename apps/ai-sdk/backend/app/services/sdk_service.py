@@ -589,6 +589,144 @@ def _write_checksums(root_dir: Path) -> None:
     _write_text(root_dir / "checksums.txt", "\n".join(lines) + ("\n" if lines else ""))
 
 
+def _delivery_file_entry(path: Path, package_root: Path) -> dict[str, object]:
+    return {
+        "path": str(path.relative_to(package_root)),
+        "sha256": _sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _create_version_manifest(
+    package_root: Path,
+    *,
+    package_id: int,
+    package_name: str,
+    capability_name: str,
+    model_version: str,
+    requested_targets: list[str],
+    jni_enabled: bool,
+    package_targets: list[dict[str, object]],
+) -> dict[str, object]:
+    checksum_entries: list[dict[str, object]] = []
+    for target in package_targets:
+        output_dir = Path(str(target["output_dir"]))
+        for relative_path in (
+            "manifest/manifest.json",
+            "checksums.txt",
+            "docs/README_集成说明.md",
+            "docs/ERROR_CODES.md",
+            "docs/ACCEPTANCE_CHECKLIST.md",
+            "docs/DEPLOYMENT_GUIDE.md",
+            "docs/LICENSE_TOOL.md",
+            "tools/license_tool/manifest.json",
+            "validation/verify_sdk_package.py",
+        ):
+            file_path = output_dir / relative_path
+            if file_path.is_file():
+                checksum_entries.append(_delivery_file_entry(file_path, package_root))
+
+    version_manifest = {
+        "package_id": package_id,
+        "package_name": package_name,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "requested_targets": requested_targets,
+        "jni_enabled": jni_enabled,
+        "sdk_items": [
+            {
+                "target_name": target["target_name"],
+                "sdk_dir_name": STANDARD_SDK_DIR_NAMES[str(target["target_name"])],
+                "binary_path": target["binary_path"],
+                "manifest_path": target["manifest_path"],
+                "download_archive_path": target["download_archive_path"],
+                "checksum": target["checksum"],
+            }
+            for target in package_targets
+        ],
+        "delivery_checksums": checksum_entries,
+    }
+    _write_text(
+        package_root / "version_manifest.json",
+        json.dumps(version_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return version_manifest
+
+
+def _create_delivery_summary(
+    package_root: Path,
+    *,
+    package_id: int,
+    package_name: str,
+    capability_name: str,
+    model_version: str,
+    requested_targets: list[str],
+    jni_enabled: bool,
+    acceptance_checklist: dict[str, object],
+    version_manifest: dict[str, object],
+) -> dict[str, object]:
+    summary = {
+        "package_id": package_id,
+        "package_name": package_name,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "requested_targets": requested_targets,
+        "jni_enabled": jni_enabled,
+        "target_count": len(requested_targets),
+        "check_target_count": len(acceptance_checklist.get("targets", [])),
+        "delivery_files": [
+            "acceptance_checklist.json",
+            "version_manifest.json",
+            "delivery_summary.json",
+            "delivery_summary.md",
+        ],
+        "delivery_directories": sorted(item.name for item in package_root.iterdir() if item.is_dir()),
+        "recommended_steps": [
+            "核对 acceptance_checklist.json 并按目标平台逐项验收。",
+            "核对 version_manifest.json 中 capability/model/target/checksum 是否与现场交付一致。",
+            "进入对应 sdk_* 目录执行 validation/verify_sdk_package.py 快速校验目录完整性。",
+            "参考 docs/ 与 examples/ 完成 SDK 接入、license_tool 构建与验收留痕。",
+        ],
+        "version_manifest_path": "version_manifest.json",
+        "checksum_entry_count": len(version_manifest.get("delivery_checksums", [])),
+    }
+    _write_text(
+        package_root / "delivery_summary.json",
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    _write_text(
+        package_root / "delivery_summary.md",
+        "\n".join(
+            [
+                "# delivery_summary",
+                "",
+                f"- package_id: {package_id}",
+                f"- package_name: {package_name}",
+                f"- capability_name: {capability_name}",
+                f"- model_version: {model_version}",
+                f"- requested_targets: {', '.join(requested_targets)}",
+                f"- jni_enabled: {jni_enabled}",
+                f"- checksum_entry_count: {len(version_manifest.get('delivery_checksums', []))}",
+                "",
+                "## 交付物摘要",
+                "",
+                "- 已生成验收清单：`acceptance_checklist.json`",
+                "- 已生成版本清单：`version_manifest.json`",
+                "- 已生成交付摘要：`delivery_summary.json` / `delivery_summary.md`",
+                "",
+                "## 推荐下一步",
+                "",
+                "1. 按 acceptance_checklist.json 核对每个 sdk_* 目录。",
+                "2. 按 version_manifest.json 复核目标平台、关键文件与 checksum。",
+                "3. 在目标环境构建并运行 tools/license_tool。",
+                "4. 参考 docs/ 与 examples/ 完成接入演练并归档结果。",
+                "",
+            ]
+        ),
+    )
+    return summary
+
+
 def _register_artifact(
     session: Session,
     *,
@@ -922,7 +1060,31 @@ def create_sdk_package(
             sort_keys=True,
         ),
     )
+    acceptance_checklist = json.loads((package_root / "acceptance_checklist.json").read_text(encoding="utf-8"))
+    version_manifest = _create_version_manifest(
+        package_root,
+        package_id=package.id,
+        package_name=safe_package_name,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        requested_targets=sorted(set(normalized_targets)),
+        jni_enabled=jni_enabled,
+        package_targets=package_targets,
+    )
+    delivery_summary = _create_delivery_summary(
+        package_root,
+        package_id=package.id,
+        package_name=safe_package_name,
+        capability_name=safe_capability_name,
+        model_version=safe_model_version,
+        requested_targets=sorted(set(normalized_targets)),
+        jni_enabled=jni_enabled,
+        acceptance_checklist=acceptance_checklist,
+        version_manifest=version_manifest,
+    )
     package_manifest_path = package_root / "package_manifest.json"
+    package_manifest["version_manifest_path"] = "version_manifest.json"
+    package_manifest["delivery_summary"] = delivery_summary
     _write_text(package_manifest_path, json.dumps(package_manifest, ensure_ascii=False, indent=2, sort_keys=True))
 
     package.status = "completed"

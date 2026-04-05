@@ -33,6 +33,7 @@
 
 1. 当前阶段已完成单机交付 SDK 标准化交付目录、工具、文档与验收一致性收口。
 2. 当前已完成与 ai-builder `delivery_package/` 的目录命名与验收物料对齐：SDK 包已按 `sdk_*` 标准目录输出，并附带 `tools/license_tool`、验收清单、部署说明与快速校验脚本。
+3. 当前已继续补齐 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，进一步对齐 ai-builder 摘要 schema 与交付复审入口。
 
 ### 4.3 未完成
 
@@ -40,4 +41,4 @@
 
 ### 4.4 阶段小结
 
-单机交付 SDK 已完成 S7/S8/S9：当前输出已按 `sdk_linux_x86_64` / `sdk_linux_aarch64` / `sdk_windows_x86` / `sdk_windows_x86_64` 等标准目录收敛，统一附带 `models/`、`licenses/`、`docs/`、`examples/`、`tools/license_tool`、`validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`，并将接入说明、错误码、部署说明、验收清单、示例工程与快速校验脚本纳入统一交付物，使 SDK 模块从“可打包”提升为“可直接交付、可标准验收、可稳定集成”。
+单机交付 SDK 已完成 S7/S8/S9：当前输出已按 `sdk_linux_x86_64` / `sdk_linux_aarch64` / `sdk_windows_x86` / `sdk_windows_x86_64` 等标准目录收敛，统一附带 `models/`、`licenses/`、`docs/`、`examples/`、`tools/license_tool`、`validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`，并进一步补齐 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，将接入说明、错误码、部署说明、验收清单、版本清单、交付摘要、示例工程与快速校验脚本纳入统一交付物，使 SDK 模块从“可打包”提升为“可直接交付、可标准验收、可稳定集成”。
