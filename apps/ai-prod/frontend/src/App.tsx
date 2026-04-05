@@ -65,9 +65,7 @@ type InferResponse = {
   }
 }
 
-type ListResponse<T> = {
-  items: T[]
-}
+type ListResponse<T> = { items: T[] }
 
 type HealthResponse = {
   status: string
@@ -97,15 +95,7 @@ type RuntimeMetrics = {
     busy_reject_count: number
     queue_timeout_count: number
   }
-  endpoint_metrics: Record<
-    string,
-    {
-      total_requests: number
-      successful_requests: number
-      failed_requests: number
-      p95_latency_ms: number
-    }
-  >
+  endpoint_metrics: Record<string, { total_requests: number; successful_requests: number; failed_requests: number; p95_latency_ms: number }>
 }
 
 type DashboardState = {
@@ -126,12 +116,8 @@ const initialState: DashboardState = {
   operations: [],
 }
 
-const roadmapItems = [
-  '接入真实 C++ runtime 桥接与更丰富的输入抽象',
-  '补充活动版本指针与原子切换策略可视化',
-  '扩展多实例池调度、限流与更细粒度并发控制',
-  '与 ai-builder / SDK / 现场配置模板做交付联调',
-]
+const tabs = ['overview', 'catalog', 'control', 'revision'] as const
+type TabKey = (typeof tabs)[number]
 
 const runtimeApiPrefix = '/api/v1'
 const internalApiPrefix = '/internal'
@@ -155,9 +141,11 @@ async function fetchJson<T>(baseUrl: string, path: string, options?: RequestInit
 
 function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
+  const [activeTab, setActiveTab] = useState<TabKey>('overview')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedCapability, setSelectedCapability] = useState('')
+  const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(null)
   const [preferDevice, setPreferDevice] = useState<'auto' | 'gpu' | 'cpu'>('auto')
   const [payload, setPayload] = useState('{"image":"demo"}')
   const [inputType, setInputType] = useState<'json' | 'image' | 'video' | 'pdf'>('json')
@@ -176,17 +164,9 @@ function App() {
         fetchJson<ListResponse<RuntimeRevisionItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/revisions`),
         fetchJson<ListResponse<RuntimeOperationItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/operations`),
       ])
-      setDashboard({
-        health,
-        capabilities: capabilities.items,
-        licenseStatus,
-        runtimeMetrics,
-        revisions: revisions.items,
-        operations: operations.items,
-      })
-      if (!selectedCapability && capabilities.items.length > 0) {
-        setSelectedCapability(capabilities.items[0].capability_name)
-      }
+      setDashboard({ health, capabilities: capabilities.items, licenseStatus, runtimeMetrics, revisions: revisions.items, operations: operations.items })
+      setSelectedCapability((current) => current || capabilities.items[0]?.capability_name || '')
+      setSelectedRevisionId((current) => current ?? revisions.items[0]?.revision_id ?? null)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载失败')
     } finally {
@@ -196,41 +176,16 @@ function App() {
 
   useEffect(() => {
     void loadDashboard()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const selectedCapabilityDetail = dashboard.capabilities.find((item) => item.capability_name === selectedCapability) ?? null
 
   const overviewCards = useMemo(
     () => [
-      {
-        title: '能力数量',
-        value: dashboard.health?.capability_count ?? 0,
-        description: '当前 runtime 装载并可对外提供推理服务的能力数。',
-      },
-      {
-        title: '当前 revision',
-        value: dashboard.health?.runtime_revision_id ?? 0,
-        description: '读写隔离下的活动 runtime 版本编号。',
-      },
-      {
-        title: 'license 状态',
-        value: dashboard.licenseStatus?.valid ? '通过' : '失败',
-        description: dashboard.licenseStatus?.reason ?? '尚未检查',
-      },
-      {
-        title: '操作记录',
-        value: dashboard.operations.length,
-        description: '跟踪 reload / rollback 与运行时关键操作。',
-      },
-      {
-        title: '累计请求',
-        value: dashboard.runtimeMetrics?.request_summary.capability_total_requests ?? 0,
-        description: '按 capability 聚合的累计请求数。',
-      },
-      {
-        title: '池利用率',
-        value: `${Math.round((dashboard.runtimeMetrics?.pool_summary.utilization_ratio ?? 0) * 100)}%`,
-        description: '当前实例池 busy / total 槽位利用率。',
-      },
+      { title: '能力数量', value: dashboard.health?.capability_count ?? 0, description: '当前可对外提供推理能力数量。' },
+      { title: '活动 revision', value: dashboard.health?.runtime_revision_id ?? 0, description: '当前运行态版本编号。' },
+      { title: '累计请求', value: dashboard.runtimeMetrics?.request_summary.capability_total_requests ?? 0, description: '聚合能力请求总量。' },
+      { title: '池利用率', value: `${Math.round((dashboard.runtimeMetrics?.pool_summary.utilization_ratio ?? 0) * 100)}%`, description: 'busy / total 槽位利用率。' },
     ],
     [dashboard],
   )
@@ -254,8 +209,8 @@ function App() {
       setInferResult(result)
       setActionMessage(`推理完成，请求 ID：${result.request_id}`)
       await loadDashboard()
-    } catch (inferError) {
-      setActionMessage(inferError instanceof Error ? inferError.message : '推理失败')
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '推理失败')
     }
   }
 
@@ -271,8 +226,8 @@ function App() {
       })
       setActionMessage(`${action} 已完成`)
       await loadDashboard()
-    } catch (actionError) {
-      setActionMessage(actionError instanceof Error ? actionError.message : `${action} 失败`)
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : `${action} 失败`)
     }
   }
 
@@ -281,40 +236,38 @@ function App() {
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
-          <div className="title-row">
-            <h1>ai-prod 内部测试验收外壳</h1>
-            <span className="badge badge-warning">INTERNAL ONLY</span>
-          </div>
-          <p>
-            当前页面仅供内部研发、联调与人工验收使用；生产主链路由 C++ HTTP 服务承载，本外壳负责聚合 runtime
-            状态查询、版本切换入口与在线验收测试能力。
-          </p>
+          <h1>ai-prod 专业运行控制台</h1>
+          <p>围绕 capability 目录、运行指标、在线验收与 revision 切换统一呈现内部测试验收外壳。</p>
         </div>
         <div className="hero-panel">
-          <div>
-            <span className="label">服务端口</span>
-            <strong>26004</strong>
-          </div>
-          <div>
-            <span className="label">外壳定位</span>
-            <strong>Python / React 内部验收外壳</strong>
-          </div>
-          <div>
-            <span className="label">生产主链路</span>
-            <strong>C++ HTTP 服务（26004）</strong>
-          </div>
+          <div><span className="label">服务端口</span><strong>26004</strong></div>
+          <div><span className="label">生产主链路</span><strong>C++ HTTP Runtime</strong></div>
+          <div><span className="label">当前阶段</span><strong>R7 专业化增强</strong></div>
         </div>
       </header>
 
       <main className="content">
         <section className="panel">
           <div className="section-header">
-            <h2>运行概览</h2>
-            <span className="badge">P12 内部验收外壳</span>
+            <h2>运行工作台</h2>
+            <div className="toolbar">
+              <div className="tab-list">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab}
+                    className={`tab-button${activeTab === tab ? ' active' : ''}`}
+                    onClick={() => setActiveTab(tab)}
+                  >
+                    {tab === 'overview' ? '概览' : tab === 'catalog' ? '能力目录' : tab === 'control' ? '在线控制' : '修订与操作'}
+                  </button>
+                ))}
+              </div>
+              <button className="action-button" onClick={() => void loadDashboard()}>刷新数据</button>
+            </div>
           </div>
           {loading && <p className="info-text">正在加载 ai-prod 当前数据...</p>}
-          {error && <p className="error-text">数据加载失败：{error}</p>}
-          {actionMessage && <p className="info-text">{actionMessage}</p>}
+          {error && <p className="error-text">{error}</p>}
+          {actionMessage && <p className="success-text">{actionMessage}</p>}
           <div className="card-grid">
             {overviewCards.map((card) => (
               <article key={card.title} className="card">
@@ -326,260 +279,128 @@ function App() {
           </div>
         </section>
 
-        <section className="panel">
-          <div className="section-header">
-            <h2>能力与授权状态</h2>
-            <span className="badge badge-muted">真实查询接口</span>
-          </div>
-          <div className="table-grid">
+        {activeTab === 'overview' && (
+          <section className="panel split-layout">
+            <article className="sub-panel">
+              <h3>License 状态</h3>
+              <pre className="json-block">{JSON.stringify(dashboard.licenseStatus, null, 2)}</pre>
+            </article>
+            <article className="sub-panel">
+              <h3>Endpoint 指标</h3>
+              <pre className="json-block">{JSON.stringify(dashboard.runtimeMetrics?.endpoint_metrics ?? {}, null, 2)}</pre>
+            </article>
+          </section>
+        )}
+
+        {activeTab === 'catalog' && (
+          <section className="panel split-layout">
             <article className="sub-panel">
               <h3>能力列表</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>能力</th>
-                    <th>模型版本</th>
-                    <th>插件目标</th>
-                    <th>max_batch_size</th>
-                    <th>queue_wait_timeout_ms</th>
-                    <th>max_pending_request_count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.capabilities.map((item) => (
-                    <tr key={item.capability_name}>
-                      <td>{item.capability_name}</td>
-                      <td>{item.model_version}</td>
-                      <td>{item.plugin_target}</td>
-                      <td>{item.max_batch_size}</td>
-                      <td>{item.queue_wait_timeout_ms}</td>
-                      <td>{item.max_pending_request_count}</td>
-                    </tr>
-                  ))}
-                  {dashboard.capabilities.length === 0 && (
-                    <tr>
-                      <td colSpan={6}>暂无已装载能力</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </article>
-
-            <article className="sub-panel">
-              <h3>license 状态</h3>
-              <p className={dashboard.licenseStatus?.valid ? 'success-text' : 'error-text'}>
-                {dashboard.licenseStatus?.reason ?? '暂无数据'}
-              </p>
-              <ul>
-                <li>客户编号：{dashboard.licenseStatus?.customer_code ?? '未知'}</li>
-                <li>活动 revision：{dashboard.licenseStatus?.runtime_revision_id ?? '无'}</li>
-                <li>能力范围：{dashboard.licenseStatus?.capability_scope.join(', ') || '全部'}</li>
-                <li>检查时间：{dashboard.licenseStatus?.checked_at_cst ?? '未检查'}</li>
-              </ul>
-            </article>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="section-header">
-            <h2>运行时指标</h2>
-            <span className="badge badge-muted">/api/v1/admin/metrics</span>
-          </div>
-          <div className="table-grid">
-            <article className="sub-panel">
-              <h3>总体指标</h3>
-              <ul>
-                <li>运行时长：{dashboard.runtimeMetrics?.uptime_seconds ?? 0}s</li>
-                <li>活动请求：{dashboard.runtimeMetrics?.active_request_count ?? 0}</li>
-                <li>当前 revision：{dashboard.runtimeMetrics?.runtime_revision_id ?? '无'}</li>
-                <li>实例池总槽位：{dashboard.runtimeMetrics?.pool_summary.total_pool_slots ?? 0}</li>
-                <li>繁忙槽位：{dashboard.runtimeMetrics?.pool_summary.busy_pool_slots ?? 0}</li>
-                <li>排队请求：{dashboard.runtimeMetrics?.pool_summary.pending_request_count ?? 0}</li>
-                <li>失败请求：{dashboard.runtimeMetrics?.request_summary.capability_failed_requests ?? 0}</li>
-                <li>排队成功：{dashboard.runtimeMetrics?.request_summary.queued_request_count ?? 0}</li>
-                <li>平均排队等待：{dashboard.runtimeMetrics?.request_summary.avg_queue_wait_ms ?? 0}ms</li>
-                <li>最长排队等待：{dashboard.runtimeMetrics?.request_summary.max_queue_wait_ms ?? 0}ms</li>
-                <li>繁忙拒绝：{dashboard.runtimeMetrics?.request_summary.busy_reject_count ?? 0}</li>
-                <li>排队超时：{dashboard.runtimeMetrics?.request_summary.queue_timeout_count ?? 0}</li>
-              </ul>
+              <div className="list-stack">
+                {dashboard.capabilities.map((item) => (
+                  <button
+                    key={item.capability_name}
+                    className={`list-item-button${selectedCapability === item.capability_name ? ' active' : ''}`}
+                    onClick={() => setSelectedCapability(item.capability_name)}
+                  >
+                    <strong>{item.capability_name}</strong>
+                    <span>{item.model_version}</span>
+                    <span>{item.backend_type}</span>
+                  </button>
+                ))}
+              </div>
             </article>
             <article className="sub-panel">
-              <h3>接口延迟摘要</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>接口</th>
-                    <th>请求数</th>
-                    <th>失败数</th>
-                    <th>P95 延迟</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(dashboard.runtimeMetrics?.endpoint_metrics ?? {}).map(([endpoint, metrics]) => (
-                    <tr key={endpoint}>
-                      <td>{endpoint}</td>
-                      <td>{metrics.total_requests}</td>
-                      <td>{metrics.failed_requests}</td>
-                      <td>{metrics.p95_latency_ms} ms</td>
-                    </tr>
-                  ))}
-                  {Object.keys(dashboard.runtimeMetrics?.endpoint_metrics ?? {}).length === 0 && (
-                    <tr>
-                      <td colSpan={4}>暂无运行时指标</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              <h3>能力详情</h3>
+              <pre className="json-block">{JSON.stringify(selectedCapabilityDetail, null, 2)}</pre>
             </article>
-          </div>
-        </section>
+          </section>
+        )}
 
-        <section className="panel">
-          <div className="section-header">
-            <h2>reload / rollback</h2>
-            <span className="badge badge-muted">内部验收切换入口</span>
-          </div>
-          <div className="table-grid">
+        {activeTab === 'control' && (
+          <section className="panel split-layout">
             <article className="sub-panel">
-              <h3>revision 列表</h3>
-              <button className="action-button" onClick={() => void handleRuntimeAction('reload')}>
-                立即 reload
-              </button>
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>动作</th>
-                    <th>能力数</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.revisions.map((item) => (
-                    <tr key={item.revision_id}>
-                      <td>{item.revision_id}</td>
-                      <td>{item.action}</td>
-                      <td>{item.capability_names.length}</td>
-                      <td>
-                        <button
-                          className="link-button"
-                          onClick={() => void handleRuntimeAction('rollback', item.revision_id)}
-                        >
-                          回滚到此版本
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="section-header">
+                <h3>在线推理验收</h3>
+                <div className="button-row">
+                  <button onClick={() => void handleRuntimeAction('reload')}>执行 reload</button>
+                  <button onClick={() => void handleRuntimeAction('rollback', selectedRevisionId ?? undefined)}>回滚到选中 revision</button>
+                </div>
+              </div>
+              <div className="form-grid">
+                <label>
+                  能力
+                  <select value={selectedCapability} onChange={(event) => setSelectedCapability(event.target.value)}>
+                    <option value="">请选择能力</option>
+                    {dashboard.capabilities.map((item) => <option key={item.capability_name} value={item.capability_name}>{item.capability_name}</option>)}
+                  </select>
+                </label>
+                <label>
+                  输入类型
+                  <select value={inputType} onChange={(event) => setInputType(event.target.value as 'json' | 'image' | 'video' | 'pdf')}>
+                    <option value="json">json</option>
+                    <option value="image">image</option>
+                    <option value="video">video</option>
+                    <option value="pdf">pdf</option>
+                  </select>
+                </label>
+                <label>
+                  设备偏好
+                  <select value={preferDevice} onChange={(event) => setPreferDevice(event.target.value as 'auto' | 'gpu' | 'cpu')}>
+                    <option value="auto">auto</option>
+                    <option value="gpu">gpu</option>
+                    <option value="cpu">cpu</option>
+                  </select>
+                </label>
+                <label className="full-width">Payload<textarea rows={8} value={payload} onChange={(event) => setPayload(event.target.value)} /></label>
+              </div>
+              <div className="button-row"><button className="action-button" onClick={() => void handleInfer()}>执行推理</button></div>
             </article>
+            <article className="sub-panel">
+              <h3>推理结果 / 指标摘要</h3>
+              <pre className="json-block">{JSON.stringify({ inferResult, requestSummary: dashboard.runtimeMetrics?.request_summary ?? null }, null, 2)}</pre>
+            </article>
+          </section>
+        )}
 
+        {activeTab === 'revision' && (
+          <section className="panel split-layout">
+            <article className="sub-panel">
+              <h3>Revision 列表</h3>
+              <div className="list-stack">
+                {dashboard.revisions.map((item) => (
+                  <button
+                    key={item.revision_id}
+                    className={`list-item-button${selectedRevisionId === item.revision_id ? ' active' : ''}`}
+                    onClick={() => setSelectedRevisionId(item.revision_id)}
+                  >
+                    <strong>#{item.revision_id}</strong>
+                    <span>{item.action} / {item.status}</span>
+                    <span>{item.capability_names.join(', ')}</span>
+                  </button>
+                ))}
+              </div>
+            </article>
             <article className="sub-panel">
               <h3>操作记录</h3>
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>动作</th>
-                    <th>状态</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.operations.map((item) => (
-                    <tr key={item.operation_id}>
-                      <td>{item.operation_id}</td>
-                      <td>{item.action}</td>
-                      <td>{item.status}</td>
-                    </tr>
-                  ))}
-                  {dashboard.operations.length === 0 && (
-                    <tr>
-                      <td colSpan={3}>暂无操作记录</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </article>
-          </div>
-        </section>
-
-        <section className="panel split">
-          <article className="sub-panel">
-            <h2>内置测试页</h2>
-            <p className="info-text">该页面仅用于内部验收，不作为客户生产调用入口。</p>
-            <div className="form-grid">
-              <label>
-                <span>能力</span>
-                <select value={selectedCapability} onChange={(event) => setSelectedCapability(event.target.value)}>
-                  {dashboard.capabilities.map((item) => (
-                    <option key={item.capability_name} value={item.capability_name}>
-                      {item.capability_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>输入类型</span>
-                <select value={inputType} onChange={(event) => setInputType(event.target.value as 'json' | 'image' | 'video' | 'pdf')}>
-                  <option value="json">json</option>
-                  <option value="image">image</option>
-                  <option value="video">video</option>
-                  <option value="pdf">pdf</option>
-                </select>
-              </label>
-              <label>
-                <span>设备偏好</span>
-                <select value={preferDevice} onChange={(event) => setPreferDevice(event.target.value as 'auto' | 'gpu' | 'cpu')}>
-                  <option value="auto">auto</option>
-                  <option value="gpu">gpu</option>
-                  <option value="cpu">cpu</option>
-                </select>
-              </label>
-              <label className="full-width">
-                <span>请求载荷</span>
-                <textarea value={payload} onChange={(event) => setPayload(event.target.value)} rows={8} />
-              </label>
-              <button className="action-button" onClick={() => void handleInfer()}>
-                执行推理
-              </button>
-            </div>
-          </article>
-
-          <article className="sub-panel">
-            <h2>推理结果</h2>
-            {inferResult ? (
-              <div className="result-block">
-                <p>请求 ID：{inferResult.request_id}</p>
-                <p>能力：{inferResult.capability_name}</p>
-                <p>模型版本：{inferResult.model_version}</p>
-                <p>设备：{inferResult.device}</p>
-                <pre>{JSON.stringify(inferResult.result, null, 2)}</pre>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>ID</th><th>动作</th><th>状态</th><th>Revision</th></tr></thead>
+                  <tbody>
+                    {dashboard.operations.map((item) => (
+                      <tr key={item.operation_id}>
+                        <td>{item.operation_id}</td>
+                        <td>{item.action}</td>
+                        <td>{item.status}</td>
+                        <td>{item.revision_id ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ) : (
-              <p>尚未执行推理。</p>
-            )}
-          </article>
-        </section>
-
-        <section className="panel split">
-          <article className="sub-panel">
-            <h2>实现说明</h2>
-            <ul>
-              <li>宿主机挂载目录优先，镜像基线目录兜底。</li>
-              <li>启动与推理时均执行 license 双层校验。</li>
-              <li>运行时按 revision 管理活动能力集合，支持 reload/rollback。</li>
-              <li>GPU 优先，GPU 不可用时自动回退 CPU。</li>
-            </ul>
-          </article>
-          <article className="sub-panel">
-            <h2>后续增强方向</h2>
-            <ul>
-              {roadmapItems.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </article>
-        </section>
+            </article>
+          </section>
+        )}
       </main>
     </div>
   )
