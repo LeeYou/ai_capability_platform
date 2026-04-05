@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import '../../../frontend-common/src/r7Workspace.css'
+import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
 
 type PlatformTargetItem = {
   target_name: string
@@ -109,6 +111,8 @@ type BuildFormState = {
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+const workspace = buildR7Workspace(import.meta.env, 'ai-builder')
+
 const tabs = ['overview', 'build', 'detail'] as const
 type TabKey = (typeof tabs)[number]
 
@@ -133,20 +137,6 @@ const initialBuildForm: BuildFormState = {
   requested_targets: '',
   jni_enabled: false,
 }
-
-const moduleLinks = [
-  { id: 'ai-train', title: 'ai-train', url: import.meta.env.VITE_AI_TRAIN_URL ?? 'http://127.0.0.1:26000', summary: '标注协作、训练回显、模型 manifest' },
-  { id: 'ai-test', title: 'ai-test', url: import.meta.env.VITE_AI_TEST_URL ?? 'http://127.0.0.1:26001', summary: '测试任务、验收基线、双视角报告' },
-  { id: 'ai-license-mgr', title: 'ai-license-mgr', url: import.meta.env.VITE_AI_LICENSE_MGR_URL ?? 'http://127.0.0.1:26002', summary: '密钥轮转、策略签发、license_tool' },
-  { id: 'ai-builder', title: 'ai-builder', url: import.meta.env.VITE_AI_BUILDER_URL ?? 'http://127.0.0.1:26003', summary: '构建任务、delivery_package、归档下载' },
-  { id: 'ai-prod', title: 'ai-prod', url: import.meta.env.VITE_AI_PROD_URL ?? 'http://127.0.0.1:26004', summary: '能力目录、在线控制台、revision 诊断' },
-] as const
-
-const integrationReviewItems = [
-  '统一核对五个模块入口是否可访问，并确认关键工作台能进入核心页面。',
-  '统一核对模型、授权、构建、运行、验收链路的字段命名与状态表达。',
-  '统一核对交付物、验收报告与运行诊断信息在跨模块联调中的跳转与留痕。',
-]
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -275,25 +265,45 @@ function App() {
             <span className="badge badge-muted">R7 第二轮</span>
           </div>
           <div className="module-grid">
-            {moduleLinks.map((item) => (
+            {workspace.moduleLinks.map((item) => (
               <a
                 key={item.id}
-                className={`module-link-card${item.id === 'ai-builder' ? ' active' : ''}`}
+                className={`module-link-card${item.isCurrent ? ' active' : ''}`}
                 href={item.url}
               >
                 <div className="module-link-header">
                   <strong>{item.title}</strong>
-                  <span className="module-tag">{item.id === 'ai-builder' ? '当前模块' : '联调入口'}</span>
+                  <span className="module-tag">{item.isCurrent ? '当前模块' : '联调入口'}</span>
                 </div>
                 <p>{item.summary}</p>
               </a>
             ))}
           </div>
           <ul className="module-checklist">
-            {integrationReviewItems.map((item) => (
+            {workspace.reviewItems.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
+        </section>
+        <section className="panel">
+          <div className="section-header">
+            <h2>总体联调复审</h2>
+            <span className="badge">R7 已完成</span>
+          </div>
+          <div className="review-grid">
+            {workspace.reviewSummary.map((item) => (
+              <article key={item.title} className="review-card">
+                <div className="module-link-header">
+                  <h3>{item.title}</h3>
+                  <span className="review-status">{item.status}</span>
+                </div>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+          <p className="module-note">
+            当前模块定位：{workspace.currentModule.title} / {workspace.currentModule.summary}
+          </p>
         </section>
         <section className="panel">
           <div className="section-header">
