@@ -21,6 +21,8 @@
 | L11 | 授权核心金标准测试向量与一致性基线 | 已完成 |
 | L12 | 稳定授权失败原因 / 细节字段收敛 | 已完成 |
 | L13 | Python / C++ / SDK / license_tool 跨模块回归链路 | 已完成 |
+| L14 | 授权平台字段（操作系统/最低系统版本/架构/应用名）设计与签发工具收口 | 已完成 |
+| L15 | 平台准入诊断契约与 ai-prod / ai-sdk 同步 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -41,11 +43,13 @@
 4. 当前已完成 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，形成跨模块基线。
 5. 当前已完成前端授权工作台增强：已展示稳定校验 code/细节，并补齐 diagnostics / vectors 导出入口。
 6. 当前已完成基线验证：ai-license-mgr backend unittest 与 frontend build/lint 均已通过。
+7. 当前已完成 L14：授权策略、签发载荷、签发记录、前端工作台与 `license_tool` source bundle 已统一新增 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 字段。
+8. 当前已完成 L15：稳定授权诊断契约已新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并已与 ai-prod / ai-sdk 交付物同步。
 
 ### 4.3 未完成
 
-1. 暂无；ai-license-mgr 模块当前轮 L11-L13 已全部完成，后续将转入 ai-prod / ai-sdk 侧的一致性继续收口。
+1. 暂无；ai-license-mgr 模块当前轮 L11-L15 已全部完成，后续如继续推进将转入新的授权增量计划。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 本轮已完成 L11-L13：一方面补齐授权金标准测试向量与统一诊断契约，形成硬件指纹、版本约束与 license 校验的统一基线；另一方面把校验接口与签发记录收敛为 `result` / `code` / `stage` / `details` 稳定字段，并将同一份契约和测试向量纳入 `license_tool` source bundle 发布物；同时新增 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，确保相同真实 license 在签发侧与运行侧得到一致结论。经后端单元测试与前端 build/lint 验证，当前 ai-license-mgr 模块本轮整改已完成。
+ai-license-mgr 本轮已完成 L11-L15：不仅延续了授权金标准测试向量、稳定诊断契约与 ai-prod Python 校验一致性回归基线，还进一步将 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段纳入策略、签发、校验、前端工作台与 `license_tool` source bundle；同时新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied` 稳定诊断结果码，并同步到 ai-prod / ai-sdk 契约与交付物。经 ai-license-mgr backend unittest 与 frontend build/lint 验证，当前模块本轮增量已完成。

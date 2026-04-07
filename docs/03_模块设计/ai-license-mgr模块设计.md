@@ -87,3 +87,17 @@
 1. RL-01
 2. RL-02
 3. RL-03
+
+### 10.4 平台字段增量设计
+
+1. 授权策略、签发载荷、签发记录与 `license_tool` 统一新增四个字段：`operating_system`、`min_operating_system_version`、`system_architecture`、`application_name`。
+2. 字段语义约束如下：
+   - `operating_system`：必填，枚举限定为 `windows / linux / android / ios`。
+   - `min_operating_system_version`：可选，空值表示不限制；运行态只做“当前系统版本 >= 最低系统版本”判断。
+   - `system_architecture`：可选，空值表示不限制；运行态按规范化后的架构别名做等值判断。
+   - `application_name`：必填，仅用于签发标识、审计与交付识别，不参与运行时准入拦截。
+3. 运行态诊断契约新增稳定结果码：`operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并分别对应 `operating_system`、`operating_system_version`、`system_architecture` 三个稳定 stage。
+4. `VALIDATION_VECTORS.json`、`LICENSE_DIAGNOSTICS.json`、README、错误码说明与 `license_tool` source bundle 必须同步携带上述字段和诊断契约，确保 ai-license-mgr / ai-prod / ai-sdk 三侧一致。
+5. 本增量按模块跟踪：
+   - L14：授权平台字段设计、策略/签发/前端/tool bundle 收口。
+   - L15：与 ai-prod / ai-sdk 平台准入诊断契约同步。

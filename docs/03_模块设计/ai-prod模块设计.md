@@ -107,3 +107,21 @@
 1. RP-01
 2. RP-02
 3. RP-03
+
+### 9.4 平台授权字段消费设计
+
+1. ai-prod Python / C++ runtime 统一消费 license 载荷中的 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 字段。
+2. 运行态上下文来源约定如下：
+   - `operating_system`：默认按宿主机自动探测，也支持环境变量覆盖。
+   - `operating_system_version`：默认按宿主机版本自动探测，也支持环境变量覆盖。
+   - `system_architecture`：默认按宿主机架构自动探测，也支持环境变量覆盖。
+   - `application_name`：默认取 `ai-prod` 或环境变量覆盖，仅用于输出标识，不参与准入校验。
+3. 准入策略约定如下：
+   - `operating_system` 必须等值匹配。
+   - `min_operating_system_version` 存在时，当前系统版本必须大于等于最低要求。
+   - `system_architecture` 存在时，当前系统架构必须匹配规范化后的目标值。
+   - `application_name` 只在状态输出、审计与交付识别中透传，不作为拦截条件。
+4. Python / C++ runtime 都必须输出一致的稳定诊断 code / stage / details，并把平台约束结果纳入 `/api/v1/license/status`、拒绝响应和审计日志。
+5. 本增量按模块跟踪：
+   - P39：平台授权字段消费、上下文采集与拒绝诊断收口。
+   - P40：与 ai-license-mgr / ai-sdk 平台授权契约及交付物一致性回归。
