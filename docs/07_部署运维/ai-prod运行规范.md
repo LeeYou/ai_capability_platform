@@ -71,21 +71,23 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 8. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
 9. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用，并确认返回 `queue_wait_ms`
 10. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
+11. 交付验收阶段必须完成一次公开链路 `reload -> infer -> rollback -> infer` 闭环，并确认 `runtime_revision_id` 按切换结果递增、切换后仍可成功推理
 
 ### 5.2 验收命令
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform
-python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004
+python3 apps/ai-prod/scripts/acceptance_check.py \
+  --base-url http://127.0.0.1:26004 \
+  --run-admin-checks \
+  --run-transition-checks
 ```
 
-如需在验收阶段同时检查 `license-reload`：
+如需单独执行公开健康检查，而暂不触发切换链路：
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform
-python3 apps/ai-prod/scripts/acceptance_check.py \
-  --base-url http://127.0.0.1:26004 \
-  --run-admin-checks
+python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004
 ```
 
 ## 6. 基础压测基线

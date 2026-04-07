@@ -80,6 +80,8 @@ ctest --test-dir build --output-on-failure
 3. 基础压测脚本：`/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/scripts/pressure_smoke.py`
 4. 运行规范文档：`/home/runner/work/ai_capability_platform/ai_capability_platform/docs/07_部署运维/ai-prod运行规范.md`
 
+当前交付验收脚本已补齐公开主链路的 `bootstrap / reload / infer / rollback` 端到端校验能力；可通过 `--run-admin-checks --run-transition-checks` 一次性验证 `license-reload`、`reload`、`rollback`、revision 切换与切换后的再次推理。
+
 可选环境变量：
 
 - `AI_PROD_CPP_BIND_HOST`

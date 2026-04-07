@@ -315,6 +315,17 @@ int main(int argc, char** argv) {
         proxy_thread.join();
         return 1;
     }
+    const auto reload_payload = nlohmann::json::parse(reload_result->body);
+    if (!Expect(reload_payload["revision"]["action"] == "reload", "reload should return reload revision payload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(reload_payload["revision"]["source_summary"]["admission_gate_failures"].size() == 1, "reload should expose gated capability failures")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
 
     const auto infer_after_reload = client.Post(
         "/api/v1/infer/face_detect",
@@ -369,6 +380,17 @@ int main(int argc, char** argv) {
         "{\"target_revision_id\":1}",
         "application/json");
     if (!Expect(rollback_result && rollback_result->status == 200, "rollback should restore bootstrap revision")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto rollback_payload = nlohmann::json::parse(rollback_result->body);
+    if (!Expect(rollback_payload["revision"]["action"] == "rollback", "rollback should return rollback revision payload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(rollback_payload["revision"]["rollback_of_revision_id"] == 1, "rollback should point back to bootstrap revision")) {
         proxy_server.Stop();
         proxy_thread.join();
         return 1;

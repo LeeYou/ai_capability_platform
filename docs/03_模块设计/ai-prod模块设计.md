@@ -94,6 +94,7 @@
 1. 已完成 runtime 对 ai-train 模型包 manifest、ai-builder 插件 manifest 与 builder 交付物关键字段的强校验与强消费：无效资源会在 bootstrap / reload 阶段被跳过并记录失败明细，模型/插件版本不一致的能力不会进入运行时。
 2. 已完成授权校验稳定诊断字段收敛：Python / C++ runtime 统一输出 `result / code / stage / details`，并与 `license_tool` / SDK 保持一致语义。
 3. 已完成 capability 级新增接入检查清单与运行时门禁：snapshot / admin catalog 会输出 `admission_checklist`，bootstrap / reload / rollback 会对 ABI、manifest、license、样本输入与运行时装载进行 capability 级门禁，未通过门禁的能力会写入 `source_summary.admission_gate_failures` 并被阻止进入运行时。
+4. 已完成公开主链路的端到端校验收口：`acceptance_check.py` 会通过 `/api/v1/*` 对外接口验证 bootstrap、license-reload、reload、infer、rollback、revision 切换与切换后的再次推理，不再依赖 Python `/internal/*` 作为交付验收入口。
 
 ### 9.2 与其他模块的关键契约
 

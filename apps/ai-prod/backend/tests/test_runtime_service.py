@@ -310,6 +310,17 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
             )
+            infer_after_reload = infer(
+                runtime_log_path=settings.runtime_log_path,
+                audit_log_path=settings.audit_log_path,
+                license_root=settings.license_root,
+                hardware_features=settings.hardware_features,
+                capability_name="face_detect",
+                input_type="json",
+                payload='{"image":"after-reload"}',
+                prefer_device="gpu",
+                options={},
+            )
             capabilities_after_reload = {item["capability_name"]: item for item in list_capabilities()}
             self.assertEqual(capabilities_after_reload["face_detect"]["model_version"], "v3_0_0")
             self.assertEqual(capabilities_after_reload["face_detect"]["max_batch_size"], 6)
@@ -331,11 +342,26 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
             )
+            infer_after_rollback = infer(
+                runtime_log_path=settings.runtime_log_path,
+                audit_log_path=settings.audit_log_path,
+                license_root=settings.license_root,
+                hardware_features=settings.hardware_features,
+                capability_name="face_detect",
+                input_type="json",
+                payload='{"image":"after-rollback"}',
+                prefer_device="gpu",
+                options={},
+            )
 
         self.assertGreater(reloaded["active_capability_count"], rolled_back["active_capability_count"])
         self.assertGreaterEqual(len(list_runtime_operations(session)), 2)
         revisions_after = list_runtime_revisions(session)
         self.assertEqual(revisions_after[-1]["action"], "rollback")
+        self.assertEqual(infer_after_reload["model_version"], "v3_0_0")
+        self.assertEqual(infer_after_reload["runtime_revision_id"], reloaded["revision"]["revision_id"])
+        self.assertEqual(infer_after_rollback["model_version"], "v1_0_0")
+        self.assertEqual(infer_after_rollback["runtime_revision_id"], rolled_back["revision"]["revision_id"])
         capabilities_after_rollback = {item["capability_name"]: item for item in list_capabilities()}
         self.assertEqual(capabilities_after_rollback["face_detect"]["model_version"], "v1_0_0")
         self.assertEqual(capabilities_after_rollback["face_detect"]["max_batch_size"], 4)
