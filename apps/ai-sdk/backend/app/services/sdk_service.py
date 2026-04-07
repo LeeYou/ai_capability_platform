@@ -458,8 +458,11 @@ public final class {class_name} {{
 
 def _copy_license_tool_bundle(destination_dir: Path) -> None:
     destination_dir.mkdir(parents=True, exist_ok=True)
+    destination_root = destination_dir.resolve()
     for relative_path, source_path in LICENSE_TOOL_SOURCE_FILES.items():
-        copy_to = destination_dir / relative_path
+        copy_to = (destination_root / relative_path).resolve()
+        if not (copy_to == destination_root or destination_root in copy_to.parents):
+            raise ValueError("license_tool source file destination is invalid.")
         copy_to.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, copy_to)
     _write_text(destination_dir / "VERSION", LICENSE_TOOL_VERSION + "\n")
