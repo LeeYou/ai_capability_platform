@@ -34,11 +34,20 @@ def _validate_runtime_capabilities_license(
     capabilities: dict[str, dict[str, Any]],
     license_root: Path,
     hardware_features: dict[str, str],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
     audit_log_path: Path,
     action: str,
     entity_id: str,
 ) -> dict[str, Any]:
-    license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+    license_status = validate_license_bundle(
+        license_root,
+        hardware_features=hardware_features,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
+    )
     capability_statuses: dict[str, dict[str, Any]] = {}
     for capability_name, capability in sorted(capabilities.items()):
         capability_license_status = validate_license_bundle(
@@ -46,6 +55,9 @@ def _validate_runtime_capabilities_license(
             hardware_features=hardware_features,
             capability_name=capability_name,
             product_version=str(capability["model_version"]),
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
         )
         capability_statuses[capability_name] = capability_license_status
         if not capability_license_status["valid"]:
@@ -624,6 +636,9 @@ def bootstrap_runtime(
     service_name: str,
     company_name: str,
     company_domain: str,
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         target_name = _platform_target_name()
@@ -632,6 +647,9 @@ def bootstrap_runtime(
             capabilities=capabilities,
             license_root=license_root,
             hardware_features=hardware_features,
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
             audit_log_path=audit_log_path,
             action="bootstrap",
             entity_id="bootstrap",
@@ -715,9 +733,18 @@ def get_license_status(
     *,
     license_root: Path,
     hardware_features: dict[str, str],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
     audit_log_path: Path | None = None,
 ) -> dict[str, Any]:
-    status = validate_license_bundle(license_root, hardware_features=hardware_features)
+    status = validate_license_bundle(
+        license_root,
+        hardware_features=hardware_features,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
+    )
     status["runtime_revision_id"] = _ACTIVE_REVISION_ID
     if audit_log_path is not None:
         append_audit_log(
@@ -747,6 +774,9 @@ def infer(
     payload: str,
     prefer_device: str,
     options: dict[str, Any],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         if capability_name not in _ACTIVE_CAPABILITIES:
@@ -757,6 +787,9 @@ def infer(
             hardware_features=hardware_features,
             capability_name=capability_name,
             product_version=str(capability["model_version"]),
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
         )
         if not license_status["valid"]:
             append_audit_log(
@@ -847,6 +880,9 @@ def reload_runtime(
     service_name: str,
     company_name: str,
     company_domain: str,
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         if action == "reload":
@@ -854,10 +890,13 @@ def reload_runtime(
             capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
             license_status = _validate_runtime_capabilities_license(
                 capabilities=capabilities,
-                license_root=license_root,
-                hardware_features=hardware_features,
-                audit_log_path=audit_log_path,
-                action="reload",
+                    license_root=license_root,
+                    hardware_features=hardware_features,
+                    operating_system=operating_system,
+                    operating_system_version=operating_system_version,
+                    system_architecture=system_architecture,
+                    audit_log_path=audit_log_path,
+                    action="reload",
                 entity_id="reload",
             )
             for capability_name, capability in capabilities.items():
@@ -907,6 +946,9 @@ def reload_runtime(
                 capabilities=selected,
                 license_root=license_root,
                 hardware_features=hardware_features,
+                operating_system=operating_system,
+                operating_system_version=operating_system_version,
+                system_architecture=system_architecture,
                 audit_log_path=audit_log_path,
                 action="rollback",
                 entity_id=str(target_revision_id),

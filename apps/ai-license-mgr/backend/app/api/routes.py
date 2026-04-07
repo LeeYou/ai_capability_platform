@@ -223,6 +223,10 @@ def create_license_policy_route(
             capability_scope=request.capability_scope,
             version_constraints=request.version_constraints,
             hardware_fingerprint=request.hardware_fingerprint,
+            operating_system=request.operating_system,
+            min_operating_system_version=request.min_operating_system_version,
+            system_architecture=request.system_architecture,
+            application_name=request.application_name,
             start_at_cst=request.start_at_cst,
             expire_at_cst=request.expire_at_cst,
             notes=request.notes,
@@ -298,6 +302,9 @@ def validate_license_route(
             hardware_fingerprint=request.hardware_fingerprint,
             capability_name=request.capability_name,
             product_version=request.product_version,
+            operating_system=request.operating_system,
+            operating_system_version=request.operating_system_version,
+            system_architecture=request.system_architecture,
         )
     except LicenseIssueNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

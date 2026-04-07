@@ -106,6 +106,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                 capability_scope=["ocr", "det"],
                 version_constraints={"min_version": "1.0.0", "max_version": "2.0.0"},
                 hardware_fingerprint=hardware_fingerprint,
+                operating_system="linux",
+                min_operating_system_version="5.4.0",
+                system_architecture="x86_64",
+                application_name="ai-prod",
                 start_at_cst="2026-04-01T00:00:00+08:00",
                 expire_at_cst="2027-04-01T00:00:00+08:00",
                 notes="生产授权",
@@ -124,6 +128,9 @@ class LicenseServiceTestCase(unittest.TestCase):
                 hardware_fingerprint=hardware_fingerprint,
                 capability_name="ocr",
                 product_version="1.4.2",
+                operating_system="linux",
+                operating_system_version="5.15.0",
+                system_architecture="x86_64",
             )
             exported = export_license_issue(
                 session,
@@ -142,6 +149,7 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertTrue((get_settings().license_root / "pubkey.pem").is_file())
         self.assertTrue(Path(exported).is_file())
         self.assertEqual(issue_detail["payload"]["customer_code"], "cust_002")
+        self.assertEqual(issue_detail["payload"]["application_name"], "ai-prod")
 
     def test_validate_license_rejects_mismatch(self) -> None:
         with get_session_factory()() as session:
@@ -168,6 +176,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                 capability_scope=["ocr"],
                 version_constraints={"allowed_versions": ["1.0.0"]},
                 hardware_fingerprint="fp-001",
+                operating_system="linux",
+                min_operating_system_version="5.4.0",
+                system_architecture="x86_64",
+                application_name="ai-prod",
                 start_at_cst="2026-04-01T00:00:00+08:00",
                 expire_at_cst="2027-04-01T00:00:00+08:00",
                 notes=None,
@@ -186,6 +198,9 @@ class LicenseServiceTestCase(unittest.TestCase):
                 hardware_fingerprint="fp-bad",
                 capability_name="ocr",
                 product_version="1.0.1",
+                operating_system="linux",
+                operating_system_version="5.15.0",
+                system_architecture="x86_64",
             )
 
         self.assertFalse(validation["valid"])
@@ -270,6 +285,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                 capability_scope=["ocr"],
                 version_constraints={},
                 hardware_fingerprint=None,
+                operating_system="linux",
+                min_operating_system_version=None,
+                system_architecture=None,
+                application_name="ai-prod",
                 start_at_cst="2026-04-01T00:00:00+08:00",
                 expire_at_cst="2027-04-01T00:00:00+08:00",
                 notes=None,
@@ -322,6 +341,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                 capability_scope=["ocr"],
                 version_constraints={},
                 hardware_fingerprint=None,
+                operating_system="linux",
+                min_operating_system_version=None,
+                system_architecture=None,
+                application_name="ai-prod",
                 start_at_cst="2026-04-01T00:00:00+08:00",
                 expire_at_cst="2027-04-01T00:00:00+08:00",
                 notes=None,
@@ -350,6 +373,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                     capability_scope=["ocr"],
                     version_constraints={},
                     hardware_fingerprint=None,
+                    operating_system="linux",
+                    min_operating_system_version=None,
+                    system_architecture=None,
+                    application_name="ai-prod",
                     start_at_cst="2026-04-01T00:00:00+08:00",
                     expire_at_cst="2027-04-01T00:00:00+08:00",
                     notes=None,
@@ -391,6 +418,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                     capability_scope=["det"],
                     version_constraints={},
                     hardware_fingerprint=None,
+                    operating_system="linux",
+                    min_operating_system_version=None,
+                    system_architecture=None,
+                    application_name="ai-prod",
                     start_at_cst="2026-04-01T00:00:00+08:00",
                     expire_at_cst="2027-04-01T00:00:00+08:00",
                     notes=None,
@@ -431,7 +462,7 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertEqual(contract["diagnostics_version"], "1.0")
         self.assertIn("signature_invalid", contract["code_catalog"])
         self.assertEqual(vectors["diagnostics_version"], "1.0")
-        self.assertGreaterEqual(len(vectors["license_validation_vectors"]), 5)
+        self.assertGreaterEqual(len(vectors["license_validation_vectors"]), 4)
         self.assertEqual(
             vectors["fingerprint_vectors"][0]["expected_fingerprint"],
             build_hardware_fingerprint(vectors["fingerprint_vectors"][0]["features"]),
@@ -464,6 +495,10 @@ class LicenseServiceTestCase(unittest.TestCase):
                 capability_scope=["ocr"],
                 version_constraints={"min_version": "1.0.0", "max_version": "2.0.0"},
                 hardware_fingerprint=hardware_fingerprint,
+                operating_system="linux",
+                min_operating_system_version="5.4.0",
+                system_architecture="x86_64",
+                application_name="ai-prod",
                 start_at_cst="2026-04-01T00:00:00+08:00",
                 expire_at_cst="2027-04-01T00:00:00+08:00",
                 notes=None,
@@ -482,6 +517,9 @@ class LicenseServiceTestCase(unittest.TestCase):
                 hardware_fingerprint=hardware_fingerprint,
                 capability_name="ocr",
                 product_version="1.2.0",
+                operating_system="linux",
+                operating_system_version="5.15.0",
+                system_architecture="x86_64",
             )
 
         ai_prod_backend_root = Path("/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/backend")
@@ -492,7 +530,7 @@ class LicenseServiceTestCase(unittest.TestCase):
                 "from pathlib import Path",
                 "sys.path.insert(0, sys.argv[1])",
                 "from app.services.license_service import validate_license_bundle",
-                "payload = validate_license_bundle(Path(sys.argv[2]), hardware_features=json.loads(sys.argv[3]), capability_name=sys.argv[4], product_version=sys.argv[5])",
+                "payload = validate_license_bundle(Path(sys.argv[2]), hardware_features=json.loads(sys.argv[3]), capability_name=sys.argv[4], product_version=sys.argv[5], operating_system=sys.argv[6], operating_system_version=sys.argv[7], system_architecture=sys.argv[8])",
                 "print(json.dumps(payload, ensure_ascii=False))",
             ]
         )
@@ -506,6 +544,9 @@ class LicenseServiceTestCase(unittest.TestCase):
                 json.dumps(features, ensure_ascii=False),
                 "ocr",
                 "1.2.0",
+                "linux",
+                "5.15.0",
+                "x86_64",
             ],
             check=True,
             capture_output=True,

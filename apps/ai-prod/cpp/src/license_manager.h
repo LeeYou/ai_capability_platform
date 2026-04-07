@@ -26,6 +26,10 @@ struct LicenseStatusInfo {
     std::vector<std::string> capability_scope;
     nlohmann::json version_constraints = nlohmann::json::object();
     std::string hardware_fingerprint;
+    std::string operating_system;
+    std::string min_operating_system_version;
+    std::string system_architecture;
+    std::string application_name;
 };
 
 class LicenseManager {
@@ -33,6 +37,10 @@ public:
     LicenseManager(
         std::string license_root,
         std::map<std::string, std::string> hardware_features,
+        std::string operating_system,
+        std::string operating_system_version,
+        std::string system_architecture,
+        std::string application_name,
         int auto_reload_interval_seconds);
     ~LicenseManager();
 
@@ -57,6 +65,9 @@ private:
     static std::string NormalizeCstDateTime(std::string value);
     static std::string CurrentCstIsoString();
     static bool IsVersionAllowed(const std::string& product_version, const nlohmann::json& version_constraints);
+    static std::string NormalizeOperatingSystem(std::string value);
+    static std::string NormalizeSystemArchitecture(std::string value);
+    static bool MeetsMinimumVersion(const std::string& current_version, const std::string& minimum_version);
     bool VerifySignature(const nlohmann::json& payload, const std::string& signature_base64, const BundlePaths& paths) const;
     BundlePaths GetBundlePaths() const;
     std::filesystem::file_time_type GetBundleWriteTime(bool* exists) const;
@@ -68,6 +79,10 @@ private:
     std::condition_variable autoReloadCondition;
     std::filesystem::path licenseRoot;
     std::map<std::string, std::string> hardwareFeatures;
+    std::string operatingSystem;
+    std::string operatingSystemVersion;
+    std::string systemArchitecture;
+    std::string applicationName;
     int autoReloadIntervalSeconds = 0;
     LicenseStatusInfo status;
     LicenseStatusInfo lastReloadFailureStatus;

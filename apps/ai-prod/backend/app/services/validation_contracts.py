@@ -17,6 +17,9 @@ VALIDATION_CODE_EXPIRED = "time_window_expired"
 VALIDATION_CODE_HARDWARE_MISMATCH = "hardware_fingerprint_mismatch"
 VALIDATION_CODE_CAPABILITY_DENIED = "capability_scope_denied"
 VALIDATION_CODE_VERSION_DENIED = "version_constraints_denied"
+VALIDATION_CODE_OPERATING_SYSTEM_DENIED = "operating_system_denied"
+VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED = "operating_system_version_denied"
+VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED = "system_architecture_denied"
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,61 @@ def parse_cst_datetime(raw_value: str) -> datetime:
     return parsed.astimezone(CST)
 
 
+def _normalize_operating_system(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if not normalized:
+        return None
+    alias_map = {
+        "win": "windows",
+        "windows": "windows",
+        "linux": "linux",
+        "android": "android",
+        "ios": "ios",
+        "iphoneos": "ios",
+    }
+    return alias_map.get(normalized, str(raw_value).strip().lower())
+
+
+def _normalize_system_architecture(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if not normalized:
+        return None
+    alias_map = {
+        "x8664": "x86_64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+        "x86": "x86",
+        "i386": "x86",
+        "i686": "x86",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+        "armv8": "arm64",
+        "armv8l": "arm64",
+        "armv7": "armv7",
+        "armv7l": "armv7",
+    }
+    return alias_map.get(normalized, str(raw_value).strip().lower())
+
+
+def _version_tuple(raw_value: Any) -> tuple[int, ...]:
+    normalized = str(raw_value).strip()
+    if not normalized:
+        return tuple()
+    parts: list[int] = []
+    for segment in normalized.split("."):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def _meets_minimum_version(current_version: Any, minimum_version: Any) -> bool:
+    return _version_tuple(current_version) >= _version_tuple(minimum_version)
+
+
 def build_validation_contract() -> dict[str, object]:
     return {
         "diagnostics_version": DIAGNOSTICS_VERSION,
@@ -56,6 +114,9 @@ def build_validation_contract() -> dict[str, object]:
                 VALIDATION_CODE_HARDWARE_MISMATCH,
                 VALIDATION_CODE_CAPABILITY_DENIED,
                 VALIDATION_CODE_VERSION_DENIED,
+                VALIDATION_CODE_OPERATING_SYSTEM_DENIED,
+                VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED,
+                VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED,
             ],
             "stage": [
                 "signature",
@@ -63,44 +124,34 @@ def build_validation_contract() -> dict[str, object]:
                 "hardware_fingerprint",
                 "capability_scope",
                 "version_constraints",
+                "operating_system",
+                "operating_system_version",
+                "system_architecture",
                 "success",
             ],
         },
         "code_catalog": {
-            VALIDATION_CODE_LICENSE_VALID: {
-                "result": VALIDATION_RESULT_PASSED,
-                "stage": "success",
-                "message": "license 校验通过。",
-            },
-            VALIDATION_CODE_SIGNATURE_INVALID: {
-                "result": VALIDATION_RESULT_FAILED,
-                "stage": "signature",
-                "message": "签名校验失败。",
-            },
-            VALIDATION_CODE_NOT_YET_VALID: {
-                "result": VALIDATION_RESULT_FAILED,
-                "stage": "time_window",
-                "message": "license 尚未生效。",
-            },
-            VALIDATION_CODE_EXPIRED: {
-                "result": VALIDATION_RESULT_FAILED,
-                "stage": "time_window",
-                "message": "license 已过期。",
-            },
+            VALIDATION_CODE_LICENSE_VALID: {"result": VALIDATION_RESULT_PASSED, "stage": "success", "message": "license 校验通过。"},
+            VALIDATION_CODE_SIGNATURE_INVALID: {"result": VALIDATION_RESULT_FAILED, "stage": "signature", "message": "签名校验失败。"},
+            VALIDATION_CODE_NOT_YET_VALID: {"result": VALIDATION_RESULT_FAILED, "stage": "time_window", "message": "license 尚未生效。"},
+            VALIDATION_CODE_EXPIRED: {"result": VALIDATION_RESULT_FAILED, "stage": "time_window", "message": "license 已过期。"},
             VALIDATION_CODE_HARDWARE_MISMATCH: {
                 "result": VALIDATION_RESULT_FAILED,
                 "stage": "hardware_fingerprint",
                 "message": "硬件指纹不匹配。",
             },
-            VALIDATION_CODE_CAPABILITY_DENIED: {
+            VALIDATION_CODE_CAPABILITY_DENIED: {"result": VALIDATION_RESULT_FAILED, "stage": "capability_scope", "message": "能力范围不匹配。"},
+            VALIDATION_CODE_VERSION_DENIED: {"result": VALIDATION_RESULT_FAILED, "stage": "version_constraints", "message": "版本约束不匹配。"},
+            VALIDATION_CODE_OPERATING_SYSTEM_DENIED: {"result": VALIDATION_RESULT_FAILED, "stage": "operating_system", "message": "操作系统不匹配。"},
+            VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED: {
                 "result": VALIDATION_RESULT_FAILED,
-                "stage": "capability_scope",
-                "message": "能力范围不匹配。",
+                "stage": "operating_system_version",
+                "message": "系统版本低于 license 最低要求。",
             },
-            VALIDATION_CODE_VERSION_DENIED: {
+            VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED: {
                 "result": VALIDATION_RESULT_FAILED,
-                "stage": "version_constraints",
-                "message": "版本约束不匹配。",
+                "stage": "system_architecture",
+                "message": "系统架构不匹配。",
             },
         },
     }
@@ -147,6 +198,9 @@ def evaluate_license_payload(
     hardware_fingerprint: str | None,
     capability_name: str | None,
     product_version: str | None,
+    operating_system: str | None,
+    operating_system_version: str | None,
+    system_architecture: str | None,
     version_checker: callable,
 ) -> ValidationEvaluation:
     contract = build_validation_contract()["code_catalog"]
@@ -168,6 +222,11 @@ def evaluate_license_payload(
     capability_scope = payload.get("capability_scope", [])
     version_constraints = payload.get("version_constraints", {})
     expected_fingerprint = payload.get("hardware_fingerprint")
+    required_operating_system = _normalize_operating_system(payload.get("operating_system"))
+    provided_operating_system = _normalize_operating_system(operating_system)
+    required_system_architecture = _normalize_system_architecture(payload.get("system_architecture"))
+    provided_system_architecture = _normalize_system_architecture(system_architecture)
+    minimum_operating_system_version = payload.get("min_operating_system_version")
 
     if now_cst < start_at:
         code = VALIDATION_CODE_NOT_YET_VALID
@@ -236,6 +295,54 @@ def evaluate_license_payload(
                 "constraints": version_constraints if isinstance(version_constraints, dict) else {},
             },
         )
+    if required_operating_system and provided_operating_system != required_operating_system:
+        code = VALIDATION_CODE_OPERATING_SYSTEM_DENIED
+        spec = contract[code]
+        return ValidationEvaluation(
+            valid=False,
+            result=str(spec["result"]),
+            code=code,
+            reason=str(spec["message"]),
+            stage=str(spec["stage"]),
+            details={
+                "check": "operating_system",
+                "required_operating_system": required_operating_system,
+                "provided_operating_system": provided_operating_system,
+            },
+        )
+    if minimum_operating_system_version:
+        normalized_min_version = str(minimum_operating_system_version).strip()
+        normalized_current_version = str(operating_system_version).strip() if operating_system_version is not None else ""
+        if not normalized_current_version or not _meets_minimum_version(normalized_current_version, normalized_min_version):
+            code = VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED
+            spec = contract[code]
+            return ValidationEvaluation(
+                valid=False,
+                result=str(spec["result"]),
+                code=code,
+                reason=str(spec["message"]),
+                stage=str(spec["stage"]),
+                details={
+                    "check": "operating_system_version",
+                    "required_min_operating_system_version": normalized_min_version,
+                    "provided_operating_system_version": normalized_current_version or None,
+                },
+            )
+    if required_system_architecture and provided_system_architecture != required_system_architecture:
+        code = VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED
+        spec = contract[code]
+        return ValidationEvaluation(
+            valid=False,
+            result=str(spec["result"]),
+            code=code,
+            reason=str(spec["message"]),
+            stage=str(spec["stage"]),
+            details={
+                "check": "system_architecture",
+                "required_system_architecture": required_system_architecture,
+                "provided_system_architecture": provided_system_architecture,
+            },
+        )
 
     code = VALIDATION_CODE_LICENSE_VALID
     spec = contract[code]
@@ -250,5 +357,9 @@ def evaluate_license_payload(
             "requested_capability": capability_name,
             "requested_product_version": product_version,
             "provided_hardware_fingerprint": hardware_fingerprint,
+            "requested_operating_system": provided_operating_system,
+            "requested_operating_system_version": operating_system_version,
+            "requested_system_architecture": provided_system_architecture,
+            "application_name": payload.get("application_name"),
         },
     )

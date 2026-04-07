@@ -35,6 +35,10 @@ type LicensePolicyItem = {
   capability_scope: string[]
   version_constraints: Record<string, unknown>
   hardware_fingerprint?: string | null
+  operating_system: string
+  min_operating_system_version?: string | null
+  system_architecture?: string | null
+  application_name: string
   start_at_cst: string
   expire_at_cst: string
   status: string
@@ -52,6 +56,10 @@ type LicenseIssueItem = {
   hardware_fingerprint?: string | null
   capability_scope: string[]
   version_constraints: Record<string, unknown>
+  operating_system: string
+  min_operating_system_version?: string | null
+  system_architecture?: string | null
+  application_name: string
   license_path: string
   public_key_export_path: string
   issued_at_cst: string
@@ -119,6 +127,10 @@ type PolicyFormState = {
   capability_scope: string
   version_constraints: string
   hardware_fingerprint: string
+  operating_system: string
+  min_operating_system_version: string
+  system_architecture: string
+  application_name: string
   start_at_cst: string
   expire_at_cst: string
   notes: string
@@ -128,6 +140,9 @@ type ValidationFormState = {
   hardware_fingerprint: string
   capability_name: string
   product_version: string
+  operating_system: string
+  operating_system_version: string
+  system_architecture: string
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -157,6 +172,10 @@ const initialPolicyForm: PolicyFormState = {
   capability_scope: '',
   version_constraints: '{\n  "allowed_versions": []\n}',
   hardware_fingerprint: '',
+  operating_system: 'linux',
+  min_operating_system_version: '',
+  system_architecture: '',
+  application_name: 'ai-prod',
   start_at_cst: '2026-04-05T00:00:00+08:00',
   expire_at_cst: '2027-04-05T00:00:00+08:00',
   notes: '',
@@ -166,6 +185,9 @@ const initialValidationForm: ValidationFormState = {
   hardware_fingerprint: '',
   capability_name: '',
   product_version: '',
+  operating_system: 'linux',
+  operating_system_version: '',
+  system_architecture: '',
 }
 
 const tabs = ['overview', 'customer', 'policy', 'issue', 'tool'] as const
@@ -308,6 +330,10 @@ function App() {
           .filter(Boolean),
         version_constraints: JSON.parse(policyForm.version_constraints),
         hardware_fingerprint: policyForm.hardware_fingerprint || null,
+        operating_system: policyForm.operating_system,
+        min_operating_system_version: policyForm.min_operating_system_version || null,
+        system_architecture: policyForm.system_architecture || null,
+        application_name: policyForm.application_name,
         notes: policyForm.notes || null,
       }),
     })
@@ -335,6 +361,9 @@ function App() {
         hardware_fingerprint: validationForm.hardware_fingerprint || null,
         capability_name: validationForm.capability_name || null,
         product_version: validationForm.product_version || null,
+        operating_system: validationForm.operating_system || null,
+        operating_system_version: validationForm.operating_system_version || null,
+        system_architecture: validationForm.system_architecture || null,
       }),
     })
     setLastValidationResult(result)
@@ -551,6 +580,18 @@ function App() {
                 </label>
                 <label>能力范围<input value={policyForm.capability_scope} onChange={(event) => setPolicyForm((current) => ({ ...current, capability_scope: event.target.value }))} placeholder="capability_a,capability_b" /></label>
                 <label>硬件指纹<input value={policyForm.hardware_fingerprint} onChange={(event) => setPolicyForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} /></label>
+                <label>
+                  操作系统
+                  <select value={policyForm.operating_system} onChange={(event) => setPolicyForm((current) => ({ ...current, operating_system: event.target.value }))}>
+                    <option value="windows">windows</option>
+                    <option value="linux">linux</option>
+                    <option value="android">android</option>
+                    <option value="ios">ios</option>
+                  </select>
+                </label>
+                <label>最低系统版本<input value={policyForm.min_operating_system_version} onChange={(event) => setPolicyForm((current) => ({ ...current, min_operating_system_version: event.target.value }))} placeholder="可选，例如 13.0.0" /></label>
+                <label>系统架构<input value={policyForm.system_architecture} onChange={(event) => setPolicyForm((current) => ({ ...current, system_architecture: event.target.value }))} placeholder="可选，例如 x86_64 / arm64" /></label>
+                <label>应用名称<input value={policyForm.application_name} onChange={(event) => setPolicyForm((current) => ({ ...current, application_name: event.target.value }))} /></label>
                 <label>开始时间<input value={policyForm.start_at_cst} onChange={(event) => setPolicyForm((current) => ({ ...current, start_at_cst: event.target.value }))} /></label>
                 <label>结束时间<input value={policyForm.expire_at_cst} onChange={(event) => setPolicyForm((current) => ({ ...current, expire_at_cst: event.target.value }))} /></label>
                 <label className="full-width">版本约束<textarea rows={5} value={policyForm.version_constraints} onChange={(event) => setPolicyForm((current) => ({ ...current, version_constraints: event.target.value }))} /></label>
@@ -617,6 +658,10 @@ function App() {
                   <pre className="json-block">
                     {JSON.stringify(
                       {
+                        operating_system: issueDetail.operating_system,
+                        min_operating_system_version: issueDetail.min_operating_system_version,
+                        system_architecture: issueDetail.system_architecture,
+                        application_name: issueDetail.application_name,
                         last_validation_result: issueDetail.last_validation_result,
                         last_validation_code: issueDetail.last_validation_code,
                         last_validation_details: issueDetail.last_validation_details ?? {},
@@ -630,6 +675,18 @@ function App() {
                     <label>硬件指纹<input value={validationForm.hardware_fingerprint} onChange={(event) => setValidationForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} /></label>
                     <label>能力<input value={validationForm.capability_name} onChange={(event) => setValidationForm((current) => ({ ...current, capability_name: event.target.value }))} /></label>
                     <label>产品版本<input value={validationForm.product_version} onChange={(event) => setValidationForm((current) => ({ ...current, product_version: event.target.value }))} /></label>
+                    <label>
+                      操作系统
+                      <select value={validationForm.operating_system} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system: event.target.value }))}>
+                        <option value="">自动/不传</option>
+                        <option value="windows">windows</option>
+                        <option value="linux">linux</option>
+                        <option value="android">android</option>
+                        <option value="ios">ios</option>
+                      </select>
+                    </label>
+                    <label>系统版本<input value={validationForm.operating_system_version} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system_version: event.target.value }))} placeholder="例如 5.15.0 / 13.0.0" /></label>
+                    <label>系统架构<input value={validationForm.system_architecture} onChange={(event) => setValidationForm((current) => ({ ...current, system_architecture: event.target.value }))} placeholder="例如 x86_64 / arm64" /></label>
                   </div>
                   <div className="button-row"><button className="action-button" onClick={() => void handleValidateIssue()}>执行校验</button></div>
                 </>

@@ -17,6 +17,9 @@ def build_validation_contract() -> dict[str, object]:
                 "hardware_fingerprint_mismatch",
                 "capability_scope_denied",
                 "version_constraints_denied",
+                "operating_system_denied",
+                "operating_system_version_denied",
+                "system_architecture_denied",
             ],
             "stage": [
                 "signature",
@@ -24,6 +27,9 @@ def build_validation_contract() -> dict[str, object]:
                 "hardware_fingerprint",
                 "capability_scope",
                 "version_constraints",
+                "operating_system",
+                "operating_system_version",
+                "system_architecture",
                 "success",
             ],
         },
@@ -38,11 +44,14 @@ def build_validation_contract() -> dict[str, object]:
                 "message": "硬件指纹不匹配。",
             },
             "capability_scope_denied": {"result": "failed", "stage": "capability_scope", "message": "能力范围不匹配。"},
-            "version_constraints_denied": {
+            "version_constraints_denied": {"result": "failed", "stage": "version_constraints", "message": "版本约束不匹配。"},
+            "operating_system_denied": {"result": "failed", "stage": "operating_system", "message": "操作系统不匹配。"},
+            "operating_system_version_denied": {
                 "result": "failed",
-                "stage": "version_constraints",
-                "message": "版本约束不匹配。",
+                "stage": "operating_system_version",
+                "message": "系统版本低于 license 最低要求。",
             },
+            "system_architecture_denied": {"result": "failed", "stage": "system_architecture", "message": "系统架构不匹配。"},
         },
     }
 
@@ -75,6 +84,40 @@ def build_validation_vectors() -> dict[str, object]:
                 "constraints": {"allowed_versions": ["v1.0.0"]},
                 "product_version": None,
                 "expected_allowed": False,
+            },
+        ],
+        "license_validation_vectors": [
+            {
+                "vector_id": "platform_linux_x86_64_pass",
+                "payload": {
+                    "application_name": "agile-demo",
+                    "operating_system": "linux",
+                    "min_operating_system_version": "5.4.0",
+                    "system_architecture": "x86_64",
+                },
+                "request_context": {
+                    "operating_system": "linux",
+                    "operating_system_version": "5.15.0",
+                    "system_architecture": "amd64",
+                },
+                "expected_code": "license_valid",
+                "expected_valid": True,
+            },
+            {
+                "vector_id": "platform_android_version_reject",
+                "payload": {
+                    "application_name": "agile-demo",
+                    "operating_system": "android",
+                    "min_operating_system_version": "13.0.0",
+                    "system_architecture": "arm64",
+                },
+                "request_context": {
+                    "operating_system": "android",
+                    "operating_system_version": "12.0.0",
+                    "system_architecture": "arm64",
+                },
+                "expected_code": "operating_system_version_denied",
+                "expected_valid": False,
             },
         ],
     }

@@ -43,6 +43,10 @@ class LicenseServiceTestCase(unittest.TestCase):
             public_key = private_key.public_key()
             payload = {
                 "customer_code": "cust_prod",
+                "application_name": "ai-prod",
+                "operating_system": "linux",
+                "min_operating_system_version": "5.4.0",
+                "system_architecture": "x86_64",
                 "capability_scope": ["ocr"],
                 "hardware_fingerprint": None,
                 "start_at_cst": (datetime.now(cst) - timedelta(days=1)).isoformat(),
@@ -66,6 +70,9 @@ class LicenseServiceTestCase(unittest.TestCase):
                 hardware_features={},
                 capability_name="face_detect",
                 product_version="1.2.0",
+                operating_system="linux",
+                operating_system_version="5.15.0",
+                system_architecture="x86_64",
             )
 
         self.assertFalse(result["valid"])
@@ -74,3 +81,56 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertEqual(result["stage"], "capability_scope")
         self.assertEqual(result["diagnostics_version"], "1.0")
         self.assertEqual(result["details"]["requested_capability"], "face_detect")
+
+    def test_validate_license_bundle_rejects_operating_system_mismatch(self) -> None:
+        from base64 import b64encode
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from datetime import datetime, timedelta, timezone
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        cst = timezone(timedelta(hours=8))
+        with TemporaryDirectory() as temp_dir:
+            license_root = Path(temp_dir)
+            private_key = ed25519.Ed25519PrivateKey.generate()
+            public_key = private_key.public_key()
+            payload = {
+                "customer_code": "cust_prod",
+                "application_name": "ai-prod",
+                "operating_system": "windows",
+                "min_operating_system_version": None,
+                "system_architecture": None,
+                "capability_scope": ["ocr"],
+                "hardware_fingerprint": None,
+                "start_at_cst": (datetime.now(cst) - timedelta(days=1)).isoformat(),
+                "expire_at_cst": (datetime.now(cst) + timedelta(days=1)).isoformat(),
+                "version_constraints": {},
+            }
+            signature = private_key.sign(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+            (license_root / "license.bin").write_text(
+                json.dumps({"algorithm": "ed25519", "payload": payload, "signature": b64encode(signature).decode("ascii")}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (license_root / "pubkey.pem").write_bytes(
+                public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            )
+
+            result = validate_license_bundle(
+                license_root,
+                hardware_features={},
+                capability_name="ocr",
+                product_version="1.0.0",
+                operating_system="linux",
+                operating_system_version="5.15.0",
+                system_architecture="x86_64",
+            )
+
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["code"], "operating_system_denied")
+        self.assertEqual(result["stage"], "operating_system")

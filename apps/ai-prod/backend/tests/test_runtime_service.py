@@ -46,11 +46,19 @@ def _create_license_bundle(
     capability_scope: list[str] | None = None,
     min_version: str = "v1_0_0",
     max_version: str = "v9_9_9",
+    operating_system: str = "linux",
+    min_operating_system_version: str | None = "5.4.0",
+    system_architecture: str | None = "x86_64",
+    application_name: str = "ai-prod",
 ) -> None:
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
     payload = {
         "customer_code": "cust_prod",
+        "application_name": application_name,
+        "operating_system": operating_system,
+        "min_operating_system_version": min_operating_system_version,
+        "system_architecture": system_architecture,
         "capability_scope": capability_scope or ["face_detect", "ocr"],
         "hardware_fingerprint": hardware_fingerprint,
         "start_at_cst": (datetime.now(CST) - timedelta(days=1)).isoformat(),
@@ -173,6 +181,10 @@ class RuntimeServiceTestCase(unittest.TestCase):
         os.environ["AI_CAP_HOST_ROOT"] = str(self.host_root)
         os.environ["AI_CAP_GPU_AVAILABLE"] = "1"
         os.environ["AI_CAP_HARDWARE_FEATURES"] = json.dumps({"cpu": "intel-i7", "mac": "00:11:22:33:44:55"})
+        os.environ["AI_CAP_OPERATING_SYSTEM"] = "linux"
+        os.environ["AI_CAP_OPERATING_SYSTEM_VERSION"] = "5.15.0"
+        os.environ["AI_CAP_SYSTEM_ARCHITECTURE"] = "x86_64"
+        os.environ["AI_CAP_APPLICATION_NAME"] = "ai-prod"
         reset_settings_cache()
         reset_database_cache()
         initialize_database()
@@ -188,6 +200,10 @@ class RuntimeServiceTestCase(unittest.TestCase):
         os.environ.pop("AI_CAP_HOST_ROOT", None)
         os.environ.pop("AI_CAP_GPU_AVAILABLE", None)
         os.environ.pop("AI_CAP_HARDWARE_FEATURES", None)
+        os.environ.pop("AI_CAP_OPERATING_SYSTEM", None)
+        os.environ.pop("AI_CAP_OPERATING_SYSTEM_VERSION", None)
+        os.environ.pop("AI_CAP_SYSTEM_ARCHITECTURE", None)
+        os.environ.pop("AI_CAP_APPLICATION_NAME", None)
         self.temp_dir.cleanup()
 
     def test_bootstrap_runtime_scans_host_and_image_resources(self) -> None:
@@ -207,6 +223,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
 
         self.assertTrue(payload["license_status"]["valid"])
@@ -247,6 +266,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             payload = infer(
                 runtime_log_path=settings.runtime_log_path,
@@ -258,6 +280,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 payload='{"image":"demo"}',
                 prefer_device="gpu",
                 options={"threshold": 0.5},
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
 
         self.assertEqual(payload["capability_name"], "face_detect")
@@ -281,6 +306,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             revisions_before = list_runtime_revisions(session)
             capabilities_before = {item["capability_name"]: item for item in list_capabilities()}
@@ -309,6 +337,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             infer_after_reload = infer(
                 runtime_log_path=settings.runtime_log_path,
@@ -320,6 +351,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 payload='{"image":"after-reload"}',
                 prefer_device="gpu",
                 options={},
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             capabilities_after_reload = {item["capability_name"]: item for item in list_capabilities()}
             self.assertEqual(capabilities_after_reload["face_detect"]["model_version"], "v3_0_0")
@@ -341,6 +375,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             infer_after_rollback = infer(
                 runtime_log_path=settings.runtime_log_path,
@@ -352,6 +389,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 payload='{"image":"after-rollback"}',
                 prefer_device="gpu",
                 options={},
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
 
         self.assertGreater(reloaded["active_capability_count"], rolled_back["active_capability_count"])
@@ -396,6 +436,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
 
         snapshot_payload = json.loads(settings.runtime_snapshot_path.read_text(encoding="utf-8"))
@@ -420,6 +463,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             _create_model_and_plugin(self.host_root, capability_name="plate_detect", model_version="v3_0_0", target_name="linux_x86_64", source="host")
             with self.assertRaisesRegex(Exception, "plate_detect"):
@@ -439,6 +485,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                     service_name=settings.service_name,
                     company_name=settings.company_name,
                     company_domain=settings.company_domain,
+                    operating_system=settings.operating_system,
+                    operating_system_version=settings.operating_system_version,
+                    system_architecture=settings.system_architecture,
                 )
 
         logs = list_audit_logs(settings.audit_log_path, limit=20)
@@ -461,6 +510,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
             revisions_before = list_runtime_revisions(session)
             fingerprint = hashlib.sha256("cpu=intel-i7|mac=00:11:22:33:44:55".encode("utf-8")).hexdigest()
@@ -487,6 +539,9 @@ class RuntimeServiceTestCase(unittest.TestCase):
                     service_name=settings.service_name,
                     company_name=settings.company_name,
                     company_domain=settings.company_domain,
+                    operating_system=settings.operating_system,
+                    operating_system_version=settings.operating_system_version,
+                    system_architecture=settings.system_architecture,
                 )
 
         logs = list_audit_logs(settings.audit_log_path, limit=20)
@@ -509,11 +564,17 @@ class RuntimeServiceTestCase(unittest.TestCase):
                 service_name=settings.service_name,
                 company_name=settings.company_name,
                 company_domain=settings.company_domain,
+                operating_system=settings.operating_system,
+                operating_system_version=settings.operating_system_version,
+                system_architecture=settings.system_architecture,
             )
 
         status = get_license_status(
             license_root=settings.license_root,
             hardware_features=settings.hardware_features,
+            operating_system=settings.operating_system,
+            operating_system_version=settings.operating_system_version,
+            system_architecture=settings.system_architecture,
             audit_log_path=settings.audit_log_path,
         )
         logs = list_audit_logs(settings.audit_log_path, limit=20)

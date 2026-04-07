@@ -33,6 +33,7 @@ LICENSE_TOOL_SOURCE_FILES = {
     "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
 }
 LICENSE_TOOL_SUPPORTED_TARGETS = ["linux_x86_64", "linux_aarch64", "windows_x86", "windows_x86_64"]
+ALLOWED_OPERATING_SYSTEMS = {"windows", "linux", "android", "ios"}
 
 
 class CustomerNotFoundError(ValueError):
@@ -70,6 +71,23 @@ def initialize_database() -> None:
         statements.append("ALTER TABLE license_issue_record ADD COLUMN last_validation_code VARCHAR(64)")
     if "last_validation_details_json" not in columns:
         statements.append("ALTER TABLE license_issue_record ADD COLUMN last_validation_details_json TEXT")
+    if "operating_system" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN operating_system VARCHAR(32) DEFAULT 'linux'")
+    if "min_operating_system_version" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN min_operating_system_version VARCHAR(64)")
+    if "system_architecture" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN system_architecture VARCHAR(64)")
+    if "application_name" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN application_name VARCHAR(255) DEFAULT 'ai-capability-platform'")
+    policy_columns = {column["name"] for column in inspector.get_columns("license_policy")}
+    if "operating_system" not in policy_columns:
+        statements.append("ALTER TABLE license_policy ADD COLUMN operating_system VARCHAR(32) DEFAULT 'linux'")
+    if "min_operating_system_version" not in policy_columns:
+        statements.append("ALTER TABLE license_policy ADD COLUMN min_operating_system_version VARCHAR(64)")
+    if "system_architecture" not in policy_columns:
+        statements.append("ALTER TABLE license_policy ADD COLUMN system_architecture VARCHAR(64)")
+    if "application_name" not in policy_columns:
+        statements.append("ALTER TABLE license_policy ADD COLUMN application_name VARCHAR(255) DEFAULT 'ai-capability-platform'")
     if statements:
         with engine.begin() as connection:
             for statement in statements:
@@ -159,6 +177,10 @@ def _policy_item(policy: LicensePolicyModel) -> dict[str, object]:
         "capability_scope": json.loads(policy.capability_scope_json),
         "version_constraints": json.loads(policy.version_constraints_json),
         "hardware_fingerprint": policy.hardware_fingerprint,
+        "operating_system": policy.operating_system,
+        "min_operating_system_version": policy.min_operating_system_version,
+        "system_architecture": policy.system_architecture,
+        "application_name": policy.application_name,
         "start_at_cst": policy.start_at_cst,
         "expire_at_cst": policy.expire_at_cst,
         "status": policy.status,
@@ -179,6 +201,10 @@ def _issue_item(issue: LicenseIssueRecordModel) -> dict[str, object]:
         "hardware_fingerprint": issue.hardware_fingerprint,
         "capability_scope": json.loads(issue.capability_scope_json),
         "version_constraints": json.loads(issue.version_constraints_json),
+        "operating_system": issue.operating_system,
+        "min_operating_system_version": issue.min_operating_system_version,
+        "system_architecture": issue.system_architecture,
+        "application_name": issue.application_name,
         "license_path": issue.license_path,
         "public_key_export_path": issue.public_key_export_path,
         "issued_at_cst": issue.issued_at_cst,
@@ -222,6 +248,26 @@ def _normalize_key_name(raw_value: str, *, field_name: str = "密钥名称") -> 
     normalized = raw_value.strip()
     if not normalized:
         raise ValueError(f"{field_name}不能为空。")
+    return normalized
+
+
+def _normalize_operating_system(raw_value: str) -> str:
+    normalized = raw_value.strip().lower()
+    if not normalized:
+        raise ValueError("操作系统不能为空。")
+    if normalized not in ALLOWED_OPERATING_SYSTEMS:
+        raise ValueError("操作系统仅支持 windows/linux/android/ios。")
+    return normalized
+
+
+def _normalize_optional_text(raw_value: str | None, *, field_name: str, max_length: int) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > max_length:
+        raise ValueError(f"{field_name}长度不能超过 {max_length}。")
     return normalized
 
 
@@ -328,12 +374,13 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "",
                 "```bash",
                 "./build/license_tool verify /path/to/license.bin",
-                "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b",
+                "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b --operating-system linux --application-name ai-prod",
                 "```",
                 "",
                 "## 版本兼容性",
                 "",
                 "- 当前 bundle 已对齐 ai-license-mgr 与 ai-prod 的 license 版本约束语义。",
+                "- 授权载荷已支持 `operating_system` / `min_operating_system_version` / `system_architecture` / `application_name` 字段。",
                 f"- 当前 bundle 诊断契约版本：`{DIAGNOSTICS_VERSION}`，稳定字段定义见 `LICENSE_DIAGNOSTICS.json`。",
                 "- 金标准测试向量见 `VALIDATION_VECTORS.json`，供 runtime / SDK / license_tool 做一致性回归。",
                 "- 交付时需配套 `license.bin`、`pubkey.pem` 与本文档一并提供。",
@@ -367,6 +414,9 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "| hardware_fingerprint_mismatch | 硬件指纹不匹配 |",
                 "| capability_scope_denied | 能力范围不匹配 |",
                 "| version_constraints_denied | 版本约束不匹配 |",
+                "| operating_system_denied | 操作系统不匹配 |",
+                "| operating_system_version_denied | 系统版本低于 license 最低要求 |",
+                "| system_architecture_denied | 系统架构不匹配 |",
                 "",
             ]
         ),
@@ -386,6 +436,7 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "```",
                 "",
                 "若现场需要预先计算硬件指纹，可通过 ai-license-mgr `/api/v1/hardware-fingerprint` 接口统一生成。",
+                "平台授权建议同时记录操作系统、最低系统版本与系统架构；`application_name` 仅用于标识交付对象。",
                 "",
             ]
         ),
@@ -606,6 +657,10 @@ def create_license_policy(
     capability_scope: list[str],
     version_constraints: dict[str, Any],
     hardware_fingerprint: str | None,
+    operating_system: str,
+    min_operating_system_version: str | None,
+    system_architecture: str | None,
+    application_name: str,
     start_at_cst: str,
     expire_at_cst: str,
     notes: str | None,
@@ -625,6 +680,24 @@ def create_license_policy(
 
     start_at_iso, expire_at_iso = _normalize_policy_times(start_at_cst, expire_at_cst)
     clean_scope = sorted({item.strip() for item in capability_scope if item.strip()})
+    normalized_operating_system = _normalize_operating_system(operating_system)
+    normalized_min_operating_system_version = _normalize_optional_text(
+        min_operating_system_version,
+        field_name="最低操作系统版本",
+        max_length=64,
+    )
+    normalized_system_architecture = _normalize_optional_text(
+        system_architecture,
+        field_name="系统架构",
+        max_length=64,
+    )
+    normalized_application_name = _normalize_optional_text(
+        application_name,
+        field_name="应用名称",
+        max_length=255,
+    )
+    if normalized_application_name is None:
+        raise ValueError("应用名称不能为空。")
     policy = LicensePolicyModel(
         policy_name=normalized_name,
         customer_id=customer.id,
@@ -632,6 +705,10 @@ def create_license_policy(
         capability_scope_json=json.dumps(clean_scope, ensure_ascii=False, sort_keys=True),
         version_constraints_json=json.dumps(version_constraints, ensure_ascii=False, sort_keys=True),
         hardware_fingerprint=hardware_fingerprint.strip() if hardware_fingerprint else None,
+        operating_system=normalized_operating_system,
+        min_operating_system_version=normalized_min_operating_system_version,
+        system_architecture=normalized_system_architecture,
+        application_name=normalized_application_name,
         start_at_cst=start_at_iso,
         expire_at_cst=expire_at_iso,
         status="active",
@@ -670,6 +747,10 @@ def issue_license(
         "customer_id": policy.customer.id,
         "customer_code": policy.customer.customer_code,
         "customer_name": policy.customer.customer_name,
+        "application_name": policy.application_name,
+        "operating_system": policy.operating_system,
+        "min_operating_system_version": policy.min_operating_system_version,
+        "system_architecture": policy.system_architecture,
         "capability_scope": json.loads(policy.capability_scope_json),
         "hardware_fingerprint": policy.hardware_fingerprint,
         "start_at_cst": policy.start_at_cst,
@@ -693,6 +774,10 @@ def issue_license(
         hardware_fingerprint=policy.hardware_fingerprint,
         capability_scope_json=policy.capability_scope_json,
         version_constraints_json=policy.version_constraints_json,
+        operating_system=policy.operating_system,
+        min_operating_system_version=policy.min_operating_system_version,
+        system_architecture=policy.system_architecture,
+        application_name=policy.application_name,
         issued_at_cst=issued_at_cst,
     )
     session.add(issue)
@@ -756,6 +841,9 @@ def validate_license_issue(
     hardware_fingerprint: str | None,
     capability_name: str | None,
     product_version: str | None,
+    operating_system: str | None,
+    operating_system_version: str | None,
+    system_architecture: str | None,
 ) -> dict[str, object]:
     issue = session.get(LicenseIssueRecordModel, issue_record_id)
     if issue is None:
@@ -771,6 +859,9 @@ def validate_license_issue(
         hardware_fingerprint=hardware_fingerprint,
         capability_name=capability_name,
         product_version=product_version,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
         version_checker=_is_version_allowed,
     )
 

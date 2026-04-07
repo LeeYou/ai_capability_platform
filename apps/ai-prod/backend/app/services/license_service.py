@@ -101,6 +101,9 @@ def validate_license_bundle(
     hardware_features: dict[str, str],
     capability_name: str | None = None,
     product_version: str | None = None,
+    operating_system: str | None = None,
+    operating_system_version: str | None = None,
+    system_architecture: str | None = None,
 ) -> dict[str, Any]:
     bundle = read_license_bundle(license_root)
     payload = bundle["payload"]
@@ -117,6 +120,9 @@ def validate_license_bundle(
         hardware_fingerprint=hardware_fingerprint,
         capability_name=capability_name,
         product_version=product_version,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
         version_checker=_is_version_allowed,
     )
     return {
@@ -132,4 +138,8 @@ def validate_license_bundle(
         "capability_scope": payload.get("capability_scope", []),
         "version_constraints": payload.get("version_constraints", {}),
         "hardware_fingerprint": payload.get("hardware_fingerprint"),
+        "operating_system": payload.get("operating_system"),
+        "min_operating_system_version": payload.get("min_operating_system_version"),
+        "system_architecture": payload.get("system_architecture"),
+        "application_name": payload.get("application_name"),
     }

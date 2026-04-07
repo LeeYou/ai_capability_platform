@@ -44,6 +44,10 @@ int main() {
 
     nlohmann::json payload = {
         {"customer_code", "cust_prod"},
+        {"application_name", "ai-prod"},
+        {"operating_system", "linux"},
+        {"min_operating_system_version", "5.4.0"},
+        {"system_architecture", "x86_64"},
         {"capability_scope", nlohmann::json::array({"face_detect"})},
         {"hardware_fingerprint", test_license_helpers::BuildHardwareFingerprint(hardware_features)},
         {"start_at_cst", NowCstWithOffset(-1)},
@@ -52,7 +56,7 @@ int main() {
     };
     test_license_helpers::WriteLicenseBundle(license_root, payload);
 
-    LicenseManager manager(license_root.string(), hardware_features, 1);
+    LicenseManager manager(license_root.string(), hardware_features, "linux", "5.15.0", "x86_64", "ai-prod", 1);
     if (!Expect(manager.Initialize(), "license manager should initialize with valid license")) {
         return 1;
     }
@@ -162,6 +166,18 @@ int main() {
     }
 
     payload["hardware_fingerprint"] = test_license_helpers::BuildHardwareFingerprint(hardware_features);
+    payload["operating_system"] = "windows";
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(!manager.Reload(), "reload should fail for operating system mismatch")) {
+        return 1;
+    }
+    const auto os_mismatch_status = manager.GetLastReloadFailureStatus();
+    if (!Expect(os_mismatch_status.code == "operating_system_denied", "operating system mismatch should expose stable code")) {
+        return 1;
+    }
+
+    payload["hardware_fingerprint"] = test_license_helpers::BuildHardwareFingerprint(hardware_features);
+    payload["operating_system"] = "linux";
     payload["capability_scope"] = nlohmann::json::array({"face_detect"});
     test_license_helpers::WriteLicenseBundle(license_root, payload);
     if (!Expect(manager.Reload(), "reload should recover to valid license")) {

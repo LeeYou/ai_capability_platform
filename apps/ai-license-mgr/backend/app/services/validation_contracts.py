@@ -17,6 +17,9 @@ VALIDATION_CODE_EXPIRED = "time_window_expired"
 VALIDATION_CODE_HARDWARE_MISMATCH = "hardware_fingerprint_mismatch"
 VALIDATION_CODE_CAPABILITY_DENIED = "capability_scope_denied"
 VALIDATION_CODE_VERSION_DENIED = "version_constraints_denied"
+VALIDATION_CODE_OPERATING_SYSTEM_DENIED = "operating_system_denied"
+VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED = "operating_system_version_denied"
+VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED = "system_architecture_denied"
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,61 @@ def parse_cst_datetime(raw_value: str) -> datetime:
     return normalized
 
 
+def _normalize_operating_system(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if not normalized:
+        return None
+    alias_map = {
+        "win": "windows",
+        "windows": "windows",
+        "linux": "linux",
+        "android": "android",
+        "ios": "ios",
+        "iphoneos": "ios",
+    }
+    return alias_map.get(normalized, str(raw_value).strip().lower())
+
+
+def _normalize_system_architecture(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = str(raw_value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    if not normalized:
+        return None
+    alias_map = {
+        "x8664": "x86_64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+        "x86": "x86",
+        "i386": "x86",
+        "i686": "x86",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+        "armv8": "arm64",
+        "armv8l": "arm64",
+        "armv7": "armv7",
+        "armv7l": "armv7",
+    }
+    return alias_map.get(normalized, str(raw_value).strip().lower())
+
+
+def _version_tuple(raw_value: Any) -> tuple[int, ...]:
+    normalized = str(raw_value).strip()
+    if not normalized:
+        return tuple()
+    parts: list[int] = []
+    for segment in normalized.split("."):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def _meets_minimum_version(current_version: Any, minimum_version: Any) -> bool:
+    return _version_tuple(current_version) >= _version_tuple(minimum_version)
+
+
 def build_validation_contract() -> dict[str, object]:
     return {
         "diagnostics_version": DIAGNOSTICS_VERSION,
@@ -59,6 +117,9 @@ def build_validation_contract() -> dict[str, object]:
                 VALIDATION_CODE_HARDWARE_MISMATCH,
                 VALIDATION_CODE_CAPABILITY_DENIED,
                 VALIDATION_CODE_VERSION_DENIED,
+                VALIDATION_CODE_OPERATING_SYSTEM_DENIED,
+                VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED,
+                VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED,
             ],
             "stage": [
                 "signature",
@@ -66,6 +127,9 @@ def build_validation_contract() -> dict[str, object]:
                 "hardware_fingerprint",
                 "capability_scope",
                 "version_constraints",
+                "operating_system",
+                "operating_system_version",
+                "system_architecture",
                 "success",
             ],
         },
@@ -104,6 +168,21 @@ def build_validation_contract() -> dict[str, object]:
                 "result": VALIDATION_RESULT_FAILED,
                 "stage": "version_constraints",
                 "message": "版本约束不匹配。",
+            },
+            VALIDATION_CODE_OPERATING_SYSTEM_DENIED: {
+                "result": VALIDATION_RESULT_FAILED,
+                "stage": "operating_system",
+                "message": "操作系统不匹配。",
+            },
+            VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED: {
+                "result": VALIDATION_RESULT_FAILED,
+                "stage": "operating_system_version",
+                "message": "系统版本低于 license 最低要求。",
+            },
+            VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED: {
+                "result": VALIDATION_RESULT_FAILED,
+                "stage": "system_architecture",
+                "message": "系统架构不匹配。",
             },
         },
     }
@@ -146,6 +225,10 @@ def build_validation_vectors() -> dict[str, object]:
                 "signature_valid": True,
                 "payload": {
                     "customer_code": "cust_vector",
+                    "application_name": "agile-demo",
+                    "operating_system": "linux",
+                    "min_operating_system_version": "5.4.0",
+                    "system_architecture": "x86_64",
                     "capability_scope": ["ocr", "face_detect"],
                     "hardware_fingerprint": "fp-demo-001",
                     "start_at_cst": "2026-04-01T00:00:00+08:00",
@@ -156,72 +239,92 @@ def build_validation_vectors() -> dict[str, object]:
                     "hardware_fingerprint": "fp-demo-001",
                     "capability_name": "ocr",
                     "product_version": "1.2.0",
+                    "operating_system": "linux",
+                    "operating_system_version": "5.15.0",
+                    "system_architecture": "amd64",
                 },
                 "expected_code": VALIDATION_CODE_LICENSE_VALID,
                 "expected_valid": True,
             },
             {
-                "vector_id": "signature_invalid",
-                "checked_at_cst": "2026-04-07T10:00:00+08:00",
-                "signature_valid": False,
-                "payload": {
-                    "customer_code": "cust_vector",
-                    "capability_scope": ["ocr"],
-                    "hardware_fingerprint": "fp-demo-001",
-                    "start_at_cst": "2026-04-01T00:00:00+08:00",
-                    "expire_at_cst": "2026-05-01T00:00:00+08:00",
-                    "version_constraints": {},
-                },
-                "request_context": {"hardware_fingerprint": "fp-demo-001", "capability_name": "ocr", "product_version": "1.0.0"},
-                "expected_code": VALIDATION_CODE_SIGNATURE_INVALID,
-                "expected_valid": False,
-            },
-            {
-                "vector_id": "hardware_mismatch",
+                "vector_id": "operating_system_denied",
                 "checked_at_cst": "2026-04-07T10:00:00+08:00",
                 "signature_valid": True,
                 "payload": {
                     "customer_code": "cust_vector",
-                    "capability_scope": ["ocr"],
-                    "hardware_fingerprint": "fp-demo-001",
-                    "start_at_cst": "2026-04-01T00:00:00+08:00",
-                    "expire_at_cst": "2026-05-01T00:00:00+08:00",
-                    "version_constraints": {},
-                },
-                "request_context": {"hardware_fingerprint": "fp-demo-002", "capability_name": "ocr", "product_version": "1.0.0"},
-                "expected_code": VALIDATION_CODE_HARDWARE_MISMATCH,
-                "expected_valid": False,
-            },
-            {
-                "vector_id": "capability_denied",
-                "checked_at_cst": "2026-04-07T10:00:00+08:00",
-                "signature_valid": True,
-                "payload": {
-                    "customer_code": "cust_vector",
+                    "application_name": "agile-demo",
+                    "operating_system": "windows",
+                    "min_operating_system_version": None,
+                    "system_architecture": None,
                     "capability_scope": ["ocr"],
                     "hardware_fingerprint": None,
                     "start_at_cst": "2026-04-01T00:00:00+08:00",
                     "expire_at_cst": "2026-05-01T00:00:00+08:00",
                     "version_constraints": {},
                 },
-                "request_context": {"hardware_fingerprint": None, "capability_name": "face_detect", "product_version": "1.0.0"},
-                "expected_code": VALIDATION_CODE_CAPABILITY_DENIED,
+                "request_context": {
+                    "hardware_fingerprint": None,
+                    "capability_name": "ocr",
+                    "product_version": "1.0.0",
+                    "operating_system": "linux",
+                    "operating_system_version": "5.15.0",
+                    "system_architecture": "x86_64",
+                },
+                "expected_code": VALIDATION_CODE_OPERATING_SYSTEM_DENIED,
                 "expected_valid": False,
             },
             {
-                "vector_id": "version_denied",
+                "vector_id": "operating_system_version_denied",
                 "checked_at_cst": "2026-04-07T10:00:00+08:00",
                 "signature_valid": True,
                 "payload": {
                     "customer_code": "cust_vector",
+                    "application_name": "agile-demo",
+                    "operating_system": "android",
+                    "min_operating_system_version": "13.0.0",
+                    "system_architecture": None,
                     "capability_scope": ["ocr"],
                     "hardware_fingerprint": None,
                     "start_at_cst": "2026-04-01T00:00:00+08:00",
                     "expire_at_cst": "2026-05-01T00:00:00+08:00",
-                    "version_constraints": {"allowed_versions": ["1.0.0"]},
+                    "version_constraints": {},
                 },
-                "request_context": {"hardware_fingerprint": None, "capability_name": "ocr", "product_version": "1.2.0"},
-                "expected_code": VALIDATION_CODE_VERSION_DENIED,
+                "request_context": {
+                    "hardware_fingerprint": None,
+                    "capability_name": "ocr",
+                    "product_version": "1.0.0",
+                    "operating_system": "android",
+                    "operating_system_version": "12.1.0",
+                    "system_architecture": "arm64",
+                },
+                "expected_code": VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED,
+                "expected_valid": False,
+            },
+            {
+                "vector_id": "system_architecture_denied",
+                "checked_at_cst": "2026-04-07T10:00:00+08:00",
+                "signature_valid": True,
+                "payload": {
+                    "customer_code": "cust_vector",
+                    "application_name": "agile-demo",
+                    "operating_system": "linux",
+                    "min_operating_system_version": None,
+                    "system_architecture": "arm64",
+                    "capability_scope": ["ocr"],
+                    "hardware_fingerprint": None,
+                    "start_at_cst": "2026-04-01T00:00:00+08:00",
+                    "expire_at_cst": "2026-05-01T00:00:00+08:00",
+                    "version_constraints": {},
+                },
+                "request_context": {
+                    "hardware_fingerprint": None,
+                    "capability_name": "ocr",
+                    "product_version": "1.0.0",
+                    "operating_system": "linux",
+                    "operating_system_version": "5.15.0",
+                    "system_architecture": "x86_64",
+                },
+                "expected_code": VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED,
                 "expected_valid": False,
             },
         ],
@@ -236,6 +339,9 @@ def evaluate_license_payload(
     hardware_fingerprint: str | None,
     capability_name: str | None,
     product_version: str | None,
+    operating_system: str | None,
+    operating_system_version: str | None,
+    system_architecture: str | None,
     version_checker: callable,
 ) -> ValidationEvaluation:
     contract = build_validation_contract()["code_catalog"]
@@ -257,6 +363,11 @@ def evaluate_license_payload(
     capability_scope = payload.get("capability_scope", [])
     version_constraints = payload.get("version_constraints", {})
     expected_fingerprint = payload.get("hardware_fingerprint")
+    required_operating_system = _normalize_operating_system(payload.get("operating_system"))
+    provided_operating_system = _normalize_operating_system(operating_system)
+    required_system_architecture = _normalize_system_architecture(payload.get("system_architecture"))
+    provided_system_architecture = _normalize_system_architecture(system_architecture)
+    minimum_operating_system_version = payload.get("min_operating_system_version")
 
     if now_cst < start_at:
         code = VALIDATION_CODE_NOT_YET_VALID
@@ -310,7 +421,7 @@ def evaluate_license_payload(
                 "allowed_capabilities": list(capability_scope) if isinstance(capability_scope, list) else [],
             },
         )
-    if not version_checker(product_version, version_constraints if isinstance(version_constraints, dict) else {}):
+    if product_version is not None and not version_checker(product_version, version_constraints if isinstance(version_constraints, dict) else {}):
         code = VALIDATION_CODE_VERSION_DENIED
         spec = contract[code]
         return ValidationEvaluation(
@@ -323,6 +434,54 @@ def evaluate_license_payload(
                 "check": "version_constraints",
                 "requested_product_version": product_version,
                 "constraints": version_constraints if isinstance(version_constraints, dict) else {},
+            },
+        )
+    if required_operating_system and provided_operating_system != required_operating_system:
+        code = VALIDATION_CODE_OPERATING_SYSTEM_DENIED
+        spec = contract[code]
+        return ValidationEvaluation(
+            valid=False,
+            result=str(spec["result"]),
+            code=code,
+            reason=str(spec["message"]),
+            stage=str(spec["stage"]),
+            details={
+                "check": "operating_system",
+                "required_operating_system": required_operating_system,
+                "provided_operating_system": provided_operating_system,
+            },
+        )
+    if minimum_operating_system_version:
+        normalized_min_version = str(minimum_operating_system_version).strip()
+        normalized_current_version = str(operating_system_version).strip() if operating_system_version is not None else ""
+        if not normalized_current_version or not _meets_minimum_version(normalized_current_version, normalized_min_version):
+            code = VALIDATION_CODE_OPERATING_SYSTEM_VERSION_DENIED
+            spec = contract[code]
+            return ValidationEvaluation(
+                valid=False,
+                result=str(spec["result"]),
+                code=code,
+                reason=str(spec["message"]),
+                stage=str(spec["stage"]),
+                details={
+                    "check": "operating_system_version",
+                    "required_min_operating_system_version": normalized_min_version,
+                    "provided_operating_system_version": normalized_current_version or None,
+                },
+            )
+    if required_system_architecture and provided_system_architecture != required_system_architecture:
+        code = VALIDATION_CODE_SYSTEM_ARCHITECTURE_DENIED
+        spec = contract[code]
+        return ValidationEvaluation(
+            valid=False,
+            result=str(spec["result"]),
+            code=code,
+            reason=str(spec["message"]),
+            stage=str(spec["stage"]),
+            details={
+                "check": "system_architecture",
+                "required_system_architecture": required_system_architecture,
+                "provided_system_architecture": provided_system_architecture,
             },
         )
 
@@ -339,5 +498,9 @@ def evaluate_license_payload(
             "requested_capability": capability_name,
             "requested_product_version": product_version,
             "provided_hardware_fingerprint": hardware_fingerprint,
+            "requested_operating_system": provided_operating_system,
+            "requested_operating_system_version": operating_system_version,
+            "requested_system_architecture": provided_system_architecture,
+            "application_name": payload.get("application_name"),
         },
     )

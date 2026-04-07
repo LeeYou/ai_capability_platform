@@ -45,7 +45,7 @@ bool parse_bool_flag(const std::string& value, bool* out_value) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: license_tool <generate|verify> <license_path> [customer_name] [capabilities_csv] [--denied-capabilities value] [--allow-reload true|false] [--allow-admin-api true|false] [--allow-test-page true|false]" << std::endl;
+        std::cerr << "usage: license_tool <generate|verify> <license_path> [customer_name] [capabilities_csv] [--operating-system value] [--min-operating-system-version value] [--system-architecture value] [--application-name value] [--denied-capabilities value] [--allow-reload true|false] [--allow-admin-api true|false] [--allow-test-page true|false]" << std::endl;
         return 1;
     }
 
@@ -69,6 +69,10 @@ int main(int argc, char** argv) {
         data.expires_at = "2099-12-31T23:59:59Z";
         data.grace_period_hours = 24;
         data.machine_fingerprint = ai_platform::compute_machine_fingerprint();
+        data.operating_system = "linux";
+        data.min_operating_system_version = "";
+        data.system_architecture = "";
+        data.application_name = "ai-prod";
         data.licensed_capabilities = split_capabilities(argv[4]);
         data.denied_capabilities = {};
         data.allow_reload = true;
@@ -85,6 +89,14 @@ int main(int argc, char** argv) {
             const std::string value = argv[i + 1];
             if (option == "--denied-capabilities") {
                 data.denied_capabilities = split_capabilities(value);
+            } else if (option == "--operating-system") {
+                data.operating_system = value;
+            } else if (option == "--min-operating-system-version") {
+                data.min_operating_system_version = value;
+            } else if (option == "--system-architecture") {
+                data.system_architecture = value;
+            } else if (option == "--application-name") {
+                data.application_name = value;
             } else if (option == "--allow-reload") {
                 if (!parse_bool_flag(value, &data.allow_reload)) {
                     std::cerr << "invalid bool for --allow-reload" << std::endl;

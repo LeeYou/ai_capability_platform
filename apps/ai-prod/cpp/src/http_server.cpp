@@ -156,6 +156,10 @@ nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
         {"capability_scope", status.capability_scope},
         {"version_constraints", status.version_constraints},
         {"hardware_fingerprint", status.hardware_fingerprint},
+        {"operating_system", status.operating_system},
+        {"min_operating_system_version", status.min_operating_system_version},
+        {"system_architecture", status.system_architecture},
+        {"application_name", status.application_name},
     };
 }
 
@@ -642,6 +646,10 @@ AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
       licenseManager(
           config_value.license_root,
           config_value.hardware_features,
+          config_value.operating_system,
+          config_value.operating_system_version,
+          config_value.system_architecture,
+          config_value.application_name,
           config_value.license_auto_reload_interval_seconds),
       requestTracker(std::make_shared<InFlightRequestTracker>()),
       snapshotManager(config_value),

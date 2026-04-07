@@ -34,6 +34,10 @@ struct LicenseFileData {
     std::string expires_at;
     int grace_period_hours = 0;
     std::string machine_fingerprint;
+    std::string operating_system;
+    std::string min_operating_system_version;
+    std::string system_architecture;
+    std::string application_name;
     std::vector<std::string> licensed_capabilities;
     std::vector<std::string> denied_capabilities;
     bool allow_reload = false;

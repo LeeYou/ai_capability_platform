@@ -540,6 +540,9 @@ def _copy_license_tool_bundle(destination_dir: Path) -> None:
                 "| hardware_fingerprint_mismatch | 硬件指纹不匹配 |",
                 "| capability_scope_denied | 能力范围不匹配 |",
                 "| version_constraints_denied | 版本约束不匹配 |",
+                "| operating_system_denied | 操作系统不匹配 |",
+                "| operating_system_version_denied | 系统版本低于 license 最低要求 |",
+                "| system_architecture_denied | 系统架构不匹配 |",
                 "",
             ]
         ),

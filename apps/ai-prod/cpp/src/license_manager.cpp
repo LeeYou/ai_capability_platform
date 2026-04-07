@@ -83,9 +83,17 @@ LicenseStatusInfo BuildSuccessStatus(const LicenseStatusInfo& base_status, nlohm
 LicenseManager::LicenseManager(
     std::string license_root,
     std::map<std::string, std::string> hardware_features,
+    std::string operating_system,
+    std::string operating_system_version,
+    std::string system_architecture,
+    std::string application_name,
     int auto_reload_interval_seconds)
     : licenseRoot(std::move(license_root)),
       hardwareFeatures(std::move(hardware_features)),
+      operatingSystem(std::move(operating_system)),
+      operatingSystemVersion(std::move(operating_system_version)),
+      systemArchitecture(std::move(system_architecture)),
+      applicationName(std::move(application_name)),
       autoReloadIntervalSeconds(auto_reload_interval_seconds) {
 }
 
@@ -150,6 +158,45 @@ LicenseStatusInfo LicenseManager::Evaluate(const std::string& capability_name, c
                 {"constraints", status.version_constraints},
             });
     }
+    if (!status.operating_system.empty() &&
+        NormalizeOperatingSystem(operatingSystem) != NormalizeOperatingSystem(status.operating_system)) {
+        return BuildFailureStatus(
+            status,
+            "operating_system_denied",
+            "operating_system",
+            "操作系统不匹配。",
+            {
+                {"check", "operating_system"},
+                {"required_operating_system", status.operating_system},
+                {"provided_operating_system", operatingSystem.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystem)},
+            });
+    }
+    if (!status.min_operating_system_version.empty() &&
+        (operatingSystemVersion.empty() || !MeetsMinimumVersion(operatingSystemVersion, status.min_operating_system_version))) {
+        return BuildFailureStatus(
+            status,
+            "operating_system_version_denied",
+            "operating_system_version",
+            "系统版本低于 license 最低要求。",
+            {
+                {"check", "operating_system_version"},
+                {"required_min_operating_system_version", status.min_operating_system_version},
+                {"provided_operating_system_version", operatingSystemVersion.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystemVersion)},
+            });
+    }
+    if (!status.system_architecture.empty() &&
+        NormalizeSystemArchitecture(systemArchitecture) != NormalizeSystemArchitecture(status.system_architecture)) {
+        return BuildFailureStatus(
+            status,
+            "system_architecture_denied",
+            "system_architecture",
+            "系统架构不匹配。",
+            {
+                {"check", "system_architecture"},
+                {"required_system_architecture", status.system_architecture},
+                {"provided_system_architecture", systemArchitecture.empty() ? nlohmann::json(nullptr) : nlohmann::json(systemArchitecture)},
+            });
+    }
     return BuildSuccessStatus(
         status,
         {
@@ -157,6 +204,10 @@ LicenseStatusInfo LicenseManager::Evaluate(const std::string& capability_name, c
             {"requested_capability", capability_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(capability_name)},
             {"requested_product_version", product_version.empty() ? nlohmann::json(nullptr) : nlohmann::json(product_version)},
             {"provided_hardware_fingerprint", status.hardware_fingerprint.empty() ? nlohmann::json(nullptr) : nlohmann::json(status.hardware_fingerprint)},
+            {"requested_operating_system", operatingSystem.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystem)},
+            {"requested_operating_system_version", operatingSystemVersion.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystemVersion)},
+            {"requested_system_architecture", systemArchitecture.empty() ? nlohmann::json(nullptr) : nlohmann::json(systemArchitecture)},
+            {"application_name", status.application_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(status.application_name)},
         });
 }
 
@@ -353,6 +404,52 @@ bool LicenseManager::IsVersionAllowed(const std::string& product_version, const 
     return true;
 }
 
+std::string LicenseManager::NormalizeOperatingSystem(std::string value) {
+    value.erase(
+        std::remove_if(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0 || ch == '-' || ch == '_';
+        }),
+        value.end());
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (value == "win") {
+        return "windows";
+    }
+    if (value == "iphoneos") {
+        return "ios";
+    }
+    return value;
+}
+
+std::string LicenseManager::NormalizeSystemArchitecture(std::string value) {
+    value.erase(
+        std::remove_if(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0 || ch == '-' || ch == '_';
+        }),
+        value.end());
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (value == "amd64" || value == "x64" || value == "x8664") {
+        return "x86_64";
+    }
+    if (value == "i386" || value == "i686") {
+        return "x86";
+    }
+    if (value == "aarch64" || value == "armv8" || value == "armv8l") {
+        return "arm64";
+    }
+    if (value == "armv7l") {
+        return "armv7";
+    }
+    return value;
+}
+
+bool LicenseManager::MeetsMinimumVersion(const std::string& current_version, const std::string& minimum_version) {
+    return VersionTuple(current_version) >= VersionTuple(minimum_version);
+}
+
 bool LicenseManager::VerifySignature(
     const nlohmann::json& payload,
     const std::string& signature_base64,
@@ -541,6 +638,10 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     }
     next_status.version_constraints = payload.value("version_constraints", nlohmann::json::object());
     next_status.hardware_fingerprint = payload.value("hardware_fingerprint", std::string());
+    next_status.operating_system = payload.value("operating_system", std::string());
+    next_status.min_operating_system_version = payload.value("min_operating_system_version", std::string());
+    next_status.system_architecture = payload.value("system_architecture", std::string());
+    next_status.application_name = payload.value("application_name", std::string());
 
     if (!VerifySignature(payload, signature_base64, paths)) {
         next_status = BuildFailureStatus(
@@ -609,6 +710,63 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
         }
         return false;
     }
+    if (!next_status.operating_system.empty() &&
+        NormalizeOperatingSystem(operatingSystem) != NormalizeOperatingSystem(next_status.operating_system)) {
+        next_status = BuildFailureStatus(
+            next_status,
+            "operating_system_denied",
+            "operating_system",
+            "操作系统不匹配。",
+            {
+                {"check", "operating_system"},
+                {"required_operating_system", next_status.operating_system},
+                {"provided_operating_system", operatingSystem.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystem)},
+            });
+        lastReloadFailureStatus = next_status;
+        if (!keep_last_valid_status || !initialized) {
+            status = next_status;
+            initialized = false;
+        }
+        return false;
+    }
+    if (!next_status.min_operating_system_version.empty() &&
+        (operatingSystemVersion.empty() || !MeetsMinimumVersion(operatingSystemVersion, next_status.min_operating_system_version))) {
+        next_status = BuildFailureStatus(
+            next_status,
+            "operating_system_version_denied",
+            "operating_system_version",
+            "系统版本低于 license 最低要求。",
+            {
+                {"check", "operating_system_version"},
+                {"required_min_operating_system_version", next_status.min_operating_system_version},
+                {"provided_operating_system_version", operatingSystemVersion.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystemVersion)},
+            });
+        lastReloadFailureStatus = next_status;
+        if (!keep_last_valid_status || !initialized) {
+            status = next_status;
+            initialized = false;
+        }
+        return false;
+    }
+    if (!next_status.system_architecture.empty() &&
+        NormalizeSystemArchitecture(systemArchitecture) != NormalizeSystemArchitecture(next_status.system_architecture)) {
+        next_status = BuildFailureStatus(
+            next_status,
+            "system_architecture_denied",
+            "system_architecture",
+            "系统架构不匹配。",
+            {
+                {"check", "system_architecture"},
+                {"required_system_architecture", next_status.system_architecture},
+                {"provided_system_architecture", systemArchitecture.empty() ? nlohmann::json(nullptr) : nlohmann::json(systemArchitecture)},
+            });
+        lastReloadFailureStatus = next_status;
+        if (!keep_last_valid_status || !initialized) {
+            status = next_status;
+            initialized = false;
+        }
+        return false;
+    }
 
     status = BuildSuccessStatus(
         next_status,
@@ -617,6 +775,10 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
             {"requested_capability", nullptr},
             {"requested_product_version", nullptr},
             {"provided_hardware_fingerprint", actual_fingerprint.empty() ? nlohmann::json(nullptr) : nlohmann::json(actual_fingerprint)},
+            {"requested_operating_system", operatingSystem.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystem)},
+            {"requested_operating_system_version", operatingSystemVersion.empty() ? nlohmann::json(nullptr) : nlohmann::json(operatingSystemVersion)},
+            {"requested_system_architecture", systemArchitecture.empty() ? nlohmann::json(nullptr) : nlohmann::json(systemArchitecture)},
+            {"application_name", next_status.application_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(next_status.application_name)},
         });
     lastReloadFailureStatus = LicenseStatusInfo{};
     initialized = true;

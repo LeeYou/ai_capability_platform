@@ -27,6 +27,10 @@ struct ProxyConfig {
     int infer_queue_max_pending_requests = 8;
     int infer_batch_wait_timeout_ms = 0;
     int infer_request_max_deadline_ms = 60000;
+    std::string operating_system = "linux";
+    std::string operating_system_version;
+    std::string system_architecture = "x86_64";
+    std::string application_name = "ai-prod";
     std::map<std::string, std::string> hardware_features;
 };
 
