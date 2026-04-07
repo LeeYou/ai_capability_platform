@@ -55,6 +55,7 @@ from app.services.training_service import (
     TrainingTaskNotFoundError,
     append_training_task_log,
     create_training_task,
+    execute_training_task,
     get_training_task_detail,
     get_training_task_log_snapshot,
     list_training_tasks,
@@ -72,6 +73,7 @@ def _annotation_item(item) -> AnnotationTaskItem:
     return AnnotationTaskItem(
         task_id=item.task_id,
         capability_name=item.capability_name,
+        task_type=item.task_type,
         task_name=item.task_name,
         dataset_path=item.dataset_path,
         status=item.status,
@@ -89,6 +91,7 @@ def _annotation_item(item) -> AnnotationTaskItem:
             for sample in sample_items
             if isinstance(sample, dict)
         ],
+        annotation_schema=item.annotation_schema,
     )
 
 
@@ -96,6 +99,7 @@ def _training_item(item) -> TrainingTaskItem:
     return TrainingTaskItem(
         task_id=item.task_id,
         capability_name=item.capability_name,
+        task_type=item.task_type,
         task_name=item.task_name,
         dataset_path=item.dataset_path,
         status=item.status,
@@ -110,6 +114,9 @@ def _training_item(item) -> TrainingTaskItem:
         latest_logs=item.latest_logs,
         execution_plan=item.execution_plan,
         result_summary=item.result_summary,
+        training_input_path=item.training_input_path,
+        template_bundle_path=item.template_bundle_path,
+        export_dir=item.export_dir,
     )
 
 
@@ -117,6 +124,7 @@ def _model_item(item) -> ModelArtifactItem:
     return ModelArtifactItem(
         artifact_id=item.artifact_id,
         capability_name=item.capability_name,
+        task_type=item.task_type,
         model_version=item.model_version,
         source_training_task_id=item.source_training_task_id,
         artifact_path=item.artifact_path,
@@ -126,6 +134,7 @@ def _model_item(item) -> ModelArtifactItem:
         status=item.status,
         manifest_preview=item.manifest_preview,
         delivery_metadata=item.delivery_metadata,
+        runtime_contract=item.runtime_contract,
     )
 
 
@@ -149,12 +158,15 @@ def get_capabilities(session: Session = Depends(get_db_session)) -> CapabilityLi
     return CapabilityListResponse(
         items=[
             CapabilityItem(
-                capability_name=item.capability_name,
-                display_name=item.display_name,
-                dataset_path=item.dataset_path,
-                dataset_status=item.dataset_status,
-                source=item.source,
-            )
+            capability_name=item.capability_name,
+            display_name=item.display_name,
+            task_type=item.task_type,
+            dataset_path=item.dataset_path,
+            dataset_status=item.dataset_status,
+            source=item.source,
+            annotation_schema=item.annotation_schema,
+            template_bundle=item.template_bundle,
+        )
             for item in bindings
         ]
     )
@@ -175,6 +187,7 @@ def create_capability(
             session=session,
             capability_name=request.capability_name,
             display_name=request.display_name,
+            task_type=request.task_type,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -182,9 +195,12 @@ def create_capability(
     return CapabilityItem(
         capability_name=item.capability_name,
         display_name=item.display_name,
+        task_type=item.task_type,
         dataset_path=item.dataset_path,
         dataset_status=item.dataset_status,
         source=item.source,
+        annotation_schema=item.annotation_schema,
+        template_bundle=item.template_bundle,
     )
 
 
@@ -465,6 +481,27 @@ def prepare_training_task_route(
         item = prepare_training_workspace(
             session=session,
             training_jobs_root=settings.training_jobs_root,
+            task_id=task_id,
+        )
+    except TrainingTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _training_item(item)
+
+
+@router.post("/training-tasks/{task_id}/execute", response_model=TrainingTaskItem, tags=["training"])
+def execute_training_task_route(
+    task_id: int,
+    session: Session = Depends(get_db_session),
+) -> TrainingTaskItem:
+    settings = get_settings()
+    try:
+        item = execute_training_task(
+            session=session,
+            training_jobs_root=settings.training_jobs_root,
+            training_logs_root=settings.training_logs_root,
             task_id=task_id,
         )
     except TrainingTaskNotFoundError as exc:

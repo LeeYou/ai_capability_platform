@@ -1,5 +1,6 @@
 {
   "capability_name": "face_detect",
+  "task_type": "detection",
   "model_version": "v1_0_0",
   "source_train_task_id": 101,
   "task_name": "face_detect_train_v1",
@@ -28,8 +29,32 @@
   "validation": {
     "artifacts": [
       "validation/acceptance_checklist.json",
-      "validation/baseline_metrics.json"
+      "validation/baseline_metrics.json",
+      "runtime_contract.json"
     ]
+  },
+  "runtime_contract": {
+    "task_type": "detection",
+    "annotation_schema": {
+      "schema_version": "1.0",
+      "task_type": "detection"
+    },
+    "template_bundle": {
+      "training_template": {},
+      "test_template": {},
+      "inference_template": {},
+      "builder_template": {},
+      "manifest_template": {}
+    },
+    "model_files": [
+      "weights.bin",
+      "metrics.json"
+    ],
+    "runtime_inputs": {
+      "input_type": "image",
+      "preprocess_path": "preprocess.json",
+      "labels_path": "labels.json"
+    }
   },
   "delivery_metadata": {
     "ai_test": {

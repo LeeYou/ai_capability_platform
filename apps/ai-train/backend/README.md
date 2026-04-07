@@ -10,8 +10,10 @@ ai-train 后端首期工程骨架，提供训练子系统的基础 API、配置�
 4. 标注任务创建、查询与结果提交接口
 5. 训练任务创建、查询、状态流转与日志接口
 6. 模型产物登记、列表与详情接口
-7. 训练工作区准备与执行脚手架生成
-8. SQLite 元数据持久化
+7. 按任务类型分层的标注 schema（classification / detection / OCR / structured_extraction）
+8. 标注结果到 `training_input.json` 的统一适配链路
+9. 训练工作区准备、模板脚手架生成与训练执行导出
+10. SQLite 元数据持久化
 
 ## 训练工作区
 
@@ -19,6 +21,12 @@ ai-train 后端首期工程骨架，提供训练子系统的基础 API、配置�
 
 1. `train_config.json`
 2. `run_training.sh`
+3. `training_input.json`
+4. `template_bundle.json`
+5. `model_export_spec.json`
+6. `train_runner.py`
+
+训练任务也可通过 `POST /api/v1/training-tasks/{task_id}/execute` 直接完成一次受控的训练执行与导出模拟，生成 `exported_model/`、结果摘要与日志。
 
 ## 本地运行
 

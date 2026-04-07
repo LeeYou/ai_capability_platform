@@ -183,6 +183,46 @@ class AnnotationServiceTestCase(unittest.TestCase):
         self.assertEqual(detail.sample_items[0]["annotation"]["label"], "title")
         self.assertEqual(detail.sample_items[1]["status"], "pending")
 
+    def test_update_annotation_task_samples_validates_detection_schema(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "face_detect").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(
+                session,
+                capability_name="face_detect",
+                display_name="Face Detect",
+                task_type="detection",
+            )
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="face_detect",
+                dataset_path="face_detect",
+            )
+            created = create_annotation_task(
+                session=session,
+                capability_name="face_detect",
+                task_name="检测标注",
+                sample_total=1,
+            )
+            detail = update_annotation_task_samples(
+                session=session,
+                annotation_tasks_root=get_settings().annotation_tasks_root,
+                task_id=created.task_id,
+                annotations=[
+                    {
+                        "sample_id": "sample_1",
+                        "objects": [{"label": "face", "bbox": [0, 0, 10, 10]}],
+                    }
+                ],
+                mark_submitted=False,
+            )
+
+        self.assertEqual(detail.task_type, "detection")
+        self.assertEqual(detail.annotation_schema["task_type"], "detection")
+        self.assertEqual(detail.sample_items[0]["annotation"]["objects"][0]["label"], "face")
+
 
 if __name__ == "__main__":
     unittest.main()

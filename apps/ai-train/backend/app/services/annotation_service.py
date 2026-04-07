@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import AnnotationTaskModel, CapabilityRegistryModel
 from app.services.registry_service import normalize_capability_name
+from app.services.task_contracts import build_annotation_schema, normalize_task_type, validate_annotation_payload
 
 MAX_ANNOTATION_RESULT_BYTES = 1_048_576
 
@@ -22,6 +23,7 @@ class AnnotationTaskNotFoundError(ValueError):
 class AnnotationTaskSummary:
     task_id: int
     capability_name: str
+    task_type: str
     task_name: str
     dataset_path: str
     status: str
@@ -29,6 +31,7 @@ class AnnotationTaskSummary:
     labeled_count: int
     result_path: str | None
     sample_items: list[dict[str, object]]
+    annotation_schema: dict[str, object]
 
 
 def _default_sample_items(task: AnnotationTaskModel) -> list[dict[str, object]]:
@@ -46,15 +49,19 @@ def _default_sample_items(task: AnnotationTaskModel) -> list[dict[str, object]]:
 def _build_payload(task: AnnotationTaskModel, sample_items: list[dict[str, object]]) -> dict[str, object]:
     annotations = [item["annotation"] for item in sample_items if isinstance(item.get("annotation"), dict)]
     labeled_count = len(annotations)
+    task_type = normalize_task_type(task.capability.task_type)
     return {
+        "schema_version": "1.0",
         "task_id": task.id,
         "capability_name": task.capability.capability_name,
+        "task_type": task_type,
         "task_name": task.task_name,
         "dataset_path": task.dataset_binding.dataset_path,
         "sample_total": task.sample_total,
         "labeled_count": labeled_count,
         "annotations": annotations,
         "sample_items": sample_items,
+        "annotation_schema": build_annotation_schema(task_type),
     }
 
 
@@ -77,31 +84,33 @@ def _annotation_result_path(annotation_tasks_root: Path, task_id: int) -> Path:
 def _validate_annotations_payload(
     task: AnnotationTaskModel,
     annotations: list[dict[str, object]],
-) -> int:
+) -> list[dict[str, object]]:
+    task_type = normalize_task_type(task.capability.task_type)
+    normalized_annotations: list[dict[str, object]] = []
     for index, item in enumerate(annotations):
         if not isinstance(item, dict) or not item:
             raise ValueError(f"annotations[{index}] 必须为非空对象。")
-        sample_id = item.get("sample_id")
-        if not isinstance(sample_id, str) or not sample_id.strip():
-            raise ValueError(f"annotations[{index}] 缺失 sample_id。")
         if any(not isinstance(key, str) or not key.strip() for key in item):
             raise ValueError(f"annotations[{index}] 包含非法字段名。")
+        normalized_annotations.append(validate_annotation_payload(task_type, item, index))
 
-    labeled_count = len(annotations)
+    labeled_count = len(normalized_annotations)
     if labeled_count > task.sample_total:
         raise ValueError("标注结果数量不能超过样本总数。")
 
-    payload_size = len(json.dumps(annotations, ensure_ascii=False).encode("utf-8"))
+    payload_size = len(json.dumps(normalized_annotations, ensure_ascii=False).encode("utf-8"))
     if payload_size > MAX_ANNOTATION_RESULT_BYTES:
         raise ValueError("标注结果内容过大，超过单任务存储限制。")
 
-    return labeled_count
+    return normalized_annotations
 
 
 def _to_summary(task: AnnotationTaskModel) -> AnnotationTaskSummary:
+    task_type = normalize_task_type(task.capability.task_type)
     return AnnotationTaskSummary(
         task_id=task.id,
         capability_name=task.capability.capability_name,
+        task_type=task_type,
         task_name=task.task_name,
         dataset_path=task.dataset_binding.dataset_path,
         status=task.status,
@@ -109,6 +118,7 @@ def _to_summary(task: AnnotationTaskModel) -> AnnotationTaskSummary:
         labeled_count=task.labeled_count,
         result_path=task.result_path,
         sample_items=[],
+        annotation_schema=build_annotation_schema(task_type),
     )
 
 
@@ -172,6 +182,7 @@ def get_annotation_task_detail(
     return AnnotationTaskSummary(
         task_id=summary.task_id,
         capability_name=summary.capability_name,
+        task_type=summary.task_type,
         task_name=summary.task_name,
         dataset_path=summary.dataset_path,
         status=summary.status,
@@ -179,6 +190,7 @@ def get_annotation_task_detail(
         labeled_count=summary.labeled_count,
         result_path=summary.result_path,
         sample_items=[item for item in payload["sample_items"] if isinstance(item, dict)],
+        annotation_schema=summary.annotation_schema,
     )
 
 
@@ -193,7 +205,7 @@ def update_annotation_task_samples(
     task = session.get(AnnotationTaskModel, task_id)
     if task is None:
         raise AnnotationTaskNotFoundError("标注任务不存在。")
-    _validate_annotations_payload(task, annotations)
+    normalized_annotations = _validate_annotations_payload(task, annotations)
     payload = _load_payload(annotation_tasks_root, task)
     sample_items = [item for item in payload["sample_items"] if isinstance(item, dict)]
     item_map = {
@@ -213,7 +225,7 @@ def update_annotation_task_samples(
                     "updated_at": None,
                 },
             )
-    for index, item in enumerate(annotations):
+    for index, item in enumerate(normalized_annotations):
         sample_id = str(item["sample_id"]).strip()
         if sample_id not in item_map:
             placeholder_key = next(

@@ -16,9 +16,12 @@ class HealthResponse(BaseModel):
 class CapabilityItem(BaseModel):
     capability_name: str = Field(description="能力标识")
     display_name: str = Field(description="能力显示名称")
+    task_type: str = Field(description="任务类型")
     dataset_path: str = Field(description="数据集路径")
     dataset_status: str = Field(description="数据集状态")
     source: str = Field(description="能力来源")
+    annotation_schema: dict[str, Any] = Field(default_factory=dict, description="标注 schema")
+    template_bundle: dict[str, Any] = Field(default_factory=dict, description="训练/测试/推理/构建模板")
 
 
 class DatasetItem(BaseModel):
@@ -39,6 +42,7 @@ class DatasetListResponse(BaseModel):
 class RegisterCapabilityRequest(BaseModel):
     capability_name: str = Field(min_length=1, max_length=128, description="能力标识")
     display_name: str | None = Field(default=None, min_length=1, max_length=255, description="能力显示名称")
+    task_type: str | None = Field(default=None, min_length=1, max_length=64, description="任务类型")
 
 
 class BindDatasetRequest(BaseModel):
@@ -50,6 +54,7 @@ class BindDatasetRequest(BaseModel):
 class AnnotationTaskItem(BaseModel):
     task_id: int = Field(description="标注任务 ID")
     capability_name: str = Field(description="能力标识")
+    task_type: str = Field(description="任务类型")
     task_name: str = Field(description="任务名称")
     dataset_path: str = Field(description="数据集路径")
     status: str = Field(description="任务状态")
@@ -58,6 +63,7 @@ class AnnotationTaskItem(BaseModel):
     result_path: str | None = Field(default=None, description="结果文件路径")
     completion_ratio: float = Field(default=0.0, description="标注完成比例")
     sample_items: list["AnnotationSampleItem"] = Field(default_factory=list, description="样本级标注详情")
+    annotation_schema: dict[str, Any] = Field(default_factory=dict, description="当前任务标注 schema")
 
 
 class AnnotationTaskListResponse(BaseModel):
@@ -89,6 +95,7 @@ class UpdateAnnotationSamplesRequest(BaseModel):
 class TrainingTaskItem(BaseModel):
     task_id: int = Field(description="训练任务 ID")
     capability_name: str = Field(description="能力标识")
+    task_type: str = Field(description="任务类型")
     task_name: str = Field(description="任务名称")
     dataset_path: str = Field(description="数据集路径")
     status: str = Field(description="任务状态")
@@ -103,6 +110,9 @@ class TrainingTaskItem(BaseModel):
     latest_logs: list[str] = Field(default_factory=list, description="最近日志片段")
     execution_plan: dict[str, Any] | None = Field(default=None, description="训练执行计划")
     result_summary: dict[str, Any] | None = Field(default=None, description="训练结果摘要")
+    training_input_path: str | None = Field(default=None, description="训练输入适配文件路径")
+    template_bundle_path: str | None = Field(default=None, description="模板脚手架路径")
+    export_dir: str | None = Field(default=None, description="训练导出目录")
 
 
 class TrainingTaskListResponse(BaseModel):
@@ -142,6 +152,7 @@ class TrainingTaskLogSnapshot(BaseModel):
 class ModelArtifactItem(BaseModel):
     artifact_id: int = Field(description="模型产物 ID")
     capability_name: str = Field(description="能力标识")
+    task_type: str = Field(description="任务类型")
     model_version: str = Field(description="模型版本")
     source_training_task_id: int = Field(description="来源训练任务 ID")
     artifact_path: str = Field(description="模型目录")
@@ -151,6 +162,7 @@ class ModelArtifactItem(BaseModel):
     status: str = Field(description="产物状态")
     manifest_preview: dict[str, Any] | None = Field(default=None, description="manifest 预览")
     delivery_metadata: dict[str, Any] | None = Field(default=None, description="面向 ai-test / ai-builder 的交付元数据")
+    runtime_contract: dict[str, Any] | None = Field(default=None, description="运行时消费契约")
 
 
 class ModelArtifactListResponse(BaseModel):

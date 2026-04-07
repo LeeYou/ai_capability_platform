@@ -12,6 +12,7 @@ from app.services.registry_service import bind_dataset_to_capability, initialize
 from app.services.training_service import (
     append_training_task_log,
     create_training_task,
+    execute_training_task,
     get_training_task_detail,
     get_training_task_log_snapshot,
     get_training_task,
@@ -190,6 +191,9 @@ class TrainingServiceTestCase(unittest.TestCase):
         self.assertTrue((workspace / "train_config.json").is_file())
         self.assertTrue((workspace / "run_training.sh").is_file())
         self.assertTrue((workspace / "execution_plan.json").is_file())
+        self.assertTrue((workspace / "training_input.json").is_file())
+        self.assertTrue((workspace / "template_bundle.json").is_file())
+        self.assertTrue((workspace / "model_export_spec.json").is_file())
 
     def test_training_task_log_snapshot_and_result_summary(self) -> None:
         datasets_root = get_settings().datasets_root
@@ -247,6 +251,60 @@ class TrainingServiceTestCase(unittest.TestCase):
         self.assertEqual(detail.result_summary["best_metric"], 0.91)
         self.assertTrue(snapshot.latest_logs)
         self.assertIn("epoch=1 acc=0.91", "\n".join(snapshot.latest_logs))
+
+    def test_execute_training_task_builds_exports_and_result_summary(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "doc_audit").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(
+                session,
+                capability_name="doc_audit",
+                display_name="Doc Audit",
+                task_type="structured_extraction",
+            )
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="doc_audit",
+                dataset_path="doc_audit",
+            )
+            annotation_task = create_annotation_task(
+                session=session,
+                capability_name="doc_audit",
+                task_name="文档抽取标注",
+                sample_total=1,
+            )
+            submit_annotation_task_result(
+                session=session,
+                annotation_tasks_root=get_settings().annotation_tasks_root,
+                task_id=annotation_task.task_id,
+                annotations=[{"sample_id": "1", "fields": {"invoice_no": "A001"}}],
+            )
+            training_task = create_training_task(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                capability_name="doc_audit",
+                task_name="文档抽取训练",
+                framework="pytorch",
+                backend_type="cpu",
+                annotation_task_id=annotation_task.task_id,
+                train_params={"epochs": 2},
+            )
+            executed = execute_training_task(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                training_logs_root=get_settings().training_logs_root,
+                task_id=training_task.task_id,
+            )
+
+        self.assertEqual(executed.status, "completed")
+        self.assertEqual(executed.task_type, "structured_extraction")
+        self.assertTrue(executed.training_input_path)
+        self.assertTrue(executed.template_bundle_path)
+        self.assertTrue(executed.export_dir)
+        self.assertIn("best_metric", executed.result_summary)
+        self.assertTrue((Path(executed.export_dir) / "weights.bin").is_file())
 
 
 if __name__ == "__main__":
