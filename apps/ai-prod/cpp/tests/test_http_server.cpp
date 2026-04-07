@@ -142,6 +142,92 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& content
     output << content;
 }
 
+std::string BuildModelManifest(
+    const std::filesystem::path& model_root,
+    const std::string& capability_name,
+    const std::string& model_version,
+    int max_batch_size,
+    int min_batch_size = 1,
+    int queue_wait_timeout_ms = -1,
+    int infer_timeout_ms = -1,
+    int estimated_avg_infer_time_ms = -1,
+    int p95_infer_time_ms = -1,
+    int max_concurrent_requests = -1,
+    int capability_priority = 100,
+    const std::string& device_mode = "auto",
+    bool supports_concurrent_infer = true,
+    bool allow_resource_sharing = false) {
+    const auto preprocess_path = model_root / "preprocess.json";
+    const auto labels_path = model_root / "labels.json";
+    const auto validation_path = model_root / "validation" / "acceptance_checklist.json";
+    const auto delivery_metadata_path = model_root / "delivery_metadata.json";
+    const auto runtime_contract_path = model_root / "runtime_contract.json";
+    WriteTextFile(preprocess_path, R"({"input_type":"image","resize":{"width":640,"height":640},"normalize":{"mean":[0.5],"std":[0.5]}})");
+    WriteTextFile(labels_path, R"({"labels":["ok","ng"]})");
+    WriteTextFile(validation_path, R"({"required_cases":["acceptance_check"]})");
+    WriteTextFile(delivery_metadata_path, R"({"ai_builder":{"manifest_schema_path":"apps/shared/schemas/manifest_model.json"}})");
+    const nlohmann::json runtime_contract = {
+        {"task_type", "detection"},
+        {"annotation_schema", {{"type", "object"}}},
+        {"template_bundle", {{"name", capability_name}}},
+        {"model_files", nlohmann::json::array({"model.onnx"})},
+        {"runtime_inputs", {{"preprocess_path", preprocess_path.string()}, {"labels_path", labels_path.string()}}},
+    };
+    WriteTextFile(runtime_contract_path, runtime_contract.dump());
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"task_type", "detection"},
+        {"model_version", model_version},
+        {"source_train_task_id", 1},
+        {"task_name", capability_name + "_task"},
+        {"backend_type", "onnxruntime"},
+        {"artifact_path", model_root.string()},
+        {"status", "ready"},
+        {"checksum", capability_name + "-" + model_version + "-checksum"},
+        {"preprocessing", {{"input_type", "image"}, {"resize", {{"width", 640}, {"height", 640}}}, {"normalize", {{"mean", nlohmann::json::array({0.5})}, {"std", nlohmann::json::array({0.5})}}}}},
+        {"thresholds", {{"score_threshold", 0.5}, {"nms_threshold", 0.45}}},
+        {"labels", nlohmann::json::array({"ok", "ng"})},
+        {"validation", {{"artifacts", nlohmann::json::array({"preprocess.json", "labels.json", "validation/acceptance_checklist.json", "delivery_metadata.json", "runtime_contract.json"})}}},
+        {"runtime_contract", runtime_contract},
+        {"delivery_metadata", {{"ai_test", {{"task_type", "acceptance"}}}, {"ai_builder", {{"manifest_schema_path", "apps/shared/schemas/manifest_model.json"}}}, {"training_summary", {{"backend_type", "onnxruntime"}}}}},
+        {"device_mode", device_mode},
+        {"capability_priority", capability_priority},
+        {"max_batch_size", max_batch_size},
+        {"min_batch_size", min_batch_size},
+        {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+        {"infer_timeout_ms", infer_timeout_ms},
+        {"estimated_avg_infer_time_ms", estimated_avg_infer_time_ms},
+        {"p95_infer_time_ms", p95_infer_time_ms},
+        {"max_concurrent_requests", max_concurrent_requests},
+        {"supports_concurrent_infer", supports_concurrent_infer},
+        {"allow_resource_sharing", allow_resource_sharing},
+    }.dump();
+}
+
+std::string BuildPluginManifest(
+    const std::string& capability_name,
+    const std::string& model_version,
+    const std::string& target_name,
+    int instance_count,
+    int max_pending_request_count,
+    int capability_priority = 100) {
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"model_version", model_version},
+        {"target_name", target_name},
+        {"artifact_format", "so"},
+        {"build_mode", "native"},
+        {"toolchain_name", "cmake-native"},
+        {"jni_enabled", false},
+        {"customer_code", "cust_prod"},
+        {"issue_record_id", 1},
+        {"dependency_summary", {{"runtime", "onnxruntime"}, {"abi", "cxx17"}, {"license_required", true}, {"build_params_controlled", true}}},
+        {"instance_count", instance_count},
+        {"max_pending_request_count", max_pending_request_count},
+        {"capability_priority", capability_priority},
+    }.dump();
+}
+
 std::vector<nlohmann::json> ReadJsonLines(const std::filesystem::path& path) {
     std::vector<nlohmann::json> items;
     std::ifstream input(path);
@@ -186,10 +272,10 @@ int main(int argc, char** argv) {
     }
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","device_mode":"gpu/cpu","capability_priority":120,"max_batch_size":5,"min_batch_size":2,"queue_wait_timeout_ms":220,"infer_timeout_ms":900,"estimated_avg_infer_time_ms":45,"p95_infer_time_ms":80,"max_concurrent_requests":3,"supports_concurrent_infer":true,"allow_resource_sharing":true})");
+        BuildModelManifest(host_root / "models" / "face_detect" / "v2_0_0", "face_detect", "v2_0_0", 5, 2, 220, 900, 45, 80, 3, 120, "gpu/cpu", true, true));
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":2,"max_pending_request_count":4,"capability_priority":140})");
+        BuildPluginManifest("face_detect", "v2_0_0", "linux_x86_64", 2, 4, 140));
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -197,10 +283,10 @@ int main(int argc, char** argv) {
         std::filesystem::copy_options::overwrite_existing);
     WriteTextFile(
         image_root / "models" / "ocr" / "v1_0_0" / "manifest.json",
-        R"({"capability_name":"ocr","model_version":"v1_0_0","backend_type":"onnxruntime","max_batch_size":3})");
+        BuildModelManifest(image_root / "models" / "ocr" / "v1_0_0", "ocr", "v1_0_0", 3));
     WriteTextFile(
         image_root / "libs" / "linux_x86_64" / "ocr" / "manifest" / "manifest.json",
-        R"({"capability_name":"ocr","target_name":"linux_x86_64","build_mode":"template","instance_count":2})");
+        BuildPluginManifest("ocr", "v1_0_0", "linux_x86_64", 2, 0));
     std::filesystem::create_directories(image_root / "libs" / "linux_x86_64" / "ocr" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -208,10 +294,10 @@ int main(int argc, char** argv) {
         std::filesystem::copy_options::overwrite_existing);
     WriteTextFile(
         image_root / "models" / "pose_estimate" / "gpucheckfail_v1_0_0" / "manifest.json",
-        R"({"capability_name":"pose_estimate","model_version":"gpucheckfail_v1_0_0","backend_type":"onnxruntime","max_batch_size":2})");
+        BuildModelManifest(image_root / "models" / "pose_estimate" / "gpucheckfail_v1_0_0", "pose_estimate", "gpucheckfail_v1_0_0", 2));
     WriteTextFile(
         image_root / "libs" / "linux_x86_64" / "pose_estimate" / "manifest" / "manifest.json",
-        R"({"capability_name":"pose_estimate","target_name":"linux_x86_64","build_mode":"template","instance_count":2})");
+        BuildPluginManifest("pose_estimate", "gpucheckfail_v1_0_0", "linux_x86_64", 2, 0));
     std::filesystem::create_directories(image_root / "libs" / "linux_x86_64" / "pose_estimate" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,

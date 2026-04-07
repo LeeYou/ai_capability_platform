@@ -83,23 +83,74 @@ def _create_model_and_plugin(
     max_batch_size: int = 1,
     instance_count: int = 0,
 ) -> None:
+    model_root = base_root / "models" / capability_name / model_version
+    preprocess_path = model_root / "preprocess.json"
+    labels_path = model_root / "labels.json"
+    validation_path = model_root / "validation" / "acceptance_checklist.json"
+    delivery_metadata_path = model_root / "delivery_metadata.json"
+    runtime_contract_path = model_root / "runtime_contract.json"
+    _write_text(preprocess_path, json.dumps({"input_type": "image", "resize": {"width": 640, "height": 640}, "normalize": {"mean": [0.5], "std": [0.5]}}, ensure_ascii=False))
+    _write_text(labels_path, json.dumps({"labels": ["ok", "ng"]}, ensure_ascii=False))
+    _write_text(validation_path, json.dumps({"required_cases": ["acceptance_check"]}, ensure_ascii=False))
+    _write_text(delivery_metadata_path, json.dumps({"ai_builder": {"manifest_schema_path": "apps/shared/schemas/manifest_model.json"}}, ensure_ascii=False))
+    runtime_contract = {
+        "task_type": "detection",
+        "annotation_schema": {"type": "object"},
+        "template_bundle": {"name": capability_name},
+        "model_files": ["model.onnx"],
+        "runtime_inputs": {
+            "preprocess_path": str(preprocess_path.resolve()),
+            "labels_path": str(labels_path.resolve()),
+        },
+    }
+    _write_text(runtime_contract_path, json.dumps(runtime_contract, ensure_ascii=False))
     model_manifest = {
         "capability_name": capability_name,
+        "task_type": "detection",
         "model_version": model_version,
+        "source_train_task_id": 1,
+        "task_name": f"{capability_name}_task",
         "backend_type": "onnxruntime",
+        "artifact_path": str(model_root.resolve()),
+        "status": "ready",
+        "checksum": f"checksum-{capability_name}-{model_version}",
+        "preprocessing": {"input_type": "image", "resize": {"width": 640, "height": 640}, "normalize": {"mean": [0.5], "std": [0.5]}},
+        "thresholds": {"score_threshold": 0.5, "nms_threshold": 0.45},
+        "labels": ["ok", "ng"],
+        "validation": {
+            "artifacts": [
+                "preprocess.json",
+                "labels.json",
+                "validation/acceptance_checklist.json",
+                "delivery_metadata.json",
+                "runtime_contract.json",
+            ]
+        },
+        "runtime_contract": runtime_contract,
+        "delivery_metadata": {"ai_test": {"task_type": "acceptance"}, "ai_builder": {"manifest_schema_path": "apps/shared/schemas/manifest_model.json"}, "training_summary": {"backend_type": "onnxruntime"}},
         "source": source,
         "max_batch_size": max_batch_size,
     }
     if instance_count > 0:
         model_manifest["instance_count"] = instance_count
-    _write_text(base_root / "models" / capability_name / model_version / "manifest.json", json.dumps(model_manifest, ensure_ascii=False))
-    _write_text(base_root / "models" / capability_name / model_version / "model.onnx", "fake-model")
+    _write_text(model_root / "manifest.json", json.dumps(model_manifest, ensure_ascii=False))
+    _write_text(model_root / "model.onnx", "fake-model")
     plugin_manifest = {
         "capability_name": capability_name,
         "model_version": model_version,
         "target_name": target_name,
-        "build_mode": "native" if source == "host" else "baseline",
+        "artifact_format": "so",
+        "build_mode": "native",
         "toolchain_name": "cmake-native",
+        "jni_enabled": False,
+        "customer_code": "cust_prod",
+        "issue_record_id": 1,
+        "dependency_summary": {
+            "runtime": "onnxruntime",
+            "abi": "cxx17",
+            "license_required": True,
+            "build_params_controlled": True,
+        },
         "max_batch_size": max_batch_size,
     }
     if instance_count > 0:
@@ -283,6 +334,42 @@ class RuntimeServiceTestCase(unittest.TestCase):
         self.assertEqual(capabilities_after_rollback["face_detect"]["model_version"], "v1_0_0")
         self.assertEqual(capabilities_after_rollback["face_detect"]["max_batch_size"], 4)
         self.assertEqual(capabilities_after_rollback["face_detect"]["pool_size"], 3)
+
+    def test_bootstrap_skips_invalid_manifest_contracts(self) -> None:
+        settings = get_settings()
+        _create_model_and_plugin(
+            self.host_root,
+            capability_name="broken_cap",
+            model_version="v1_0_0",
+            target_name="linux_x86_64",
+            source="host",
+        )
+        broken_plugin_manifest_path = self.host_root / "libs" / "linux_x86_64" / "broken_cap" / "manifest" / "manifest.json"
+        broken_manifest = json.loads(broken_plugin_manifest_path.read_text(encoding="utf-8"))
+        broken_manifest["model_version"] = "v9_9_9"
+        broken_plugin_manifest_path.write_text(json.dumps(broken_manifest, ensure_ascii=False), encoding="utf-8")
+
+        with get_session_factory()() as session:
+            payload = bootstrap_runtime(
+                session,
+                runtime_snapshot_path=settings.runtime_snapshot_path,
+                runtime_log_path=settings.runtime_log_path,
+                audit_log_path=settings.audit_log_path,
+                host_root=settings.host_root,
+                image_resource_root=self.image_root,
+                license_root=settings.license_root,
+                hardware_features=settings.hardware_features,
+                pool_size=settings.pool_size,
+                gpu_available=settings.gpu_available,
+                service_name=settings.service_name,
+                company_name=settings.company_name,
+                company_domain=settings.company_domain,
+            )
+
+        snapshot_payload = json.loads(settings.runtime_snapshot_path.read_text(encoding="utf-8"))
+        capability_names = {item["capability_name"] for item in list_capabilities()}
+        self.assertNotIn("broken_cap", capability_names)
+        self.assertEqual(len(snapshot_payload["source_summary"]["invalid_capability_failures"]), 1)
 
     def test_reload_rejects_capability_outside_license_scope_and_records_audit(self) -> None:
         settings = get_settings()

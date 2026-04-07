@@ -113,75 +113,195 @@ def _sorted_dirs(path: Path) -> list[Path]:
     return sorted([item for item in path.iterdir() if item.is_dir()], key=lambda item: item.name)
 
 
-def _scan_models(root: Path) -> dict[str, dict[str, Any]]:
+def _failure_item(capability_name: str, manifest_type: str, manifest_path: Path, reason: str) -> dict[str, str]:
+    return {
+        "capability_name": capability_name,
+        "manifest_type": manifest_type,
+        "manifest_path": str(manifest_path.resolve()),
+        "reason": reason,
+    }
+
+
+def _resolve_manifest_path(base_path: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path)
+    resolved = candidate if candidate.is_absolute() else (base_path / candidate)
+    resolved = resolved.resolve()
+    if not resolved.exists():
+        raise ValueError(f"manifest 依赖文件不存在：{resolved}")
+    if resolved != base_path.resolve() and base_path.resolve() not in resolved.parents:
+        raise ValueError("manifest 依赖文件必须位于模型目录内。")
+    return resolved
+
+
+def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, manifest: Any) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest 顶层必须是对象。")
+    required_keys = (
+        "capability_name",
+        "task_type",
+        "model_version",
+        "source_train_task_id",
+        "task_name",
+        "backend_type",
+        "artifact_path",
+        "status",
+        "checksum",
+        "preprocessing",
+        "thresholds",
+        "labels",
+        "validation",
+        "runtime_contract",
+        "delivery_metadata",
+    )
+    for key in required_keys:
+        if key not in manifest:
+            raise ValueError(f"模型包 manifest 缺失字段：{key}")
+    if manifest["capability_name"] != capability_dir.name:
+        raise ValueError("模型包 manifest capability_name 与目录名不一致。")
+    if manifest["model_version"] != selected_version_dir.name:
+        raise ValueError("模型包 manifest model_version 与目录版本不一致。")
+    if manifest["status"] != "ready":
+        raise ValueError("模型包 manifest status 必须为 ready。")
+    if not isinstance(manifest["labels"], list) or not manifest["labels"] or any(not isinstance(item, str) or not item.strip() for item in manifest["labels"]):
+        raise ValueError("模型包 manifest labels 必须为非空字符串数组。")
+    preprocessing = manifest["preprocessing"]
+    thresholds = manifest["thresholds"]
+    validation = manifest["validation"]
+    runtime_contract = manifest["runtime_contract"]
+    if not isinstance(preprocessing, dict) or not isinstance(thresholds, dict) or not isinstance(validation, dict) or not isinstance(runtime_contract, dict):
+        raise ValueError("模型包 manifest 复合字段类型非法。")
+    if "input_type" not in preprocessing or "resize" not in preprocessing or "normalize" not in preprocessing:
+        raise ValueError("模型包 manifest preprocessing 缺失必需字段。")
+    if "score_threshold" not in thresholds or "nms_threshold" not in thresholds:
+        raise ValueError("模型包 manifest thresholds 缺失必需字段。")
+    if runtime_contract.get("task_type") != manifest["task_type"]:
+        raise ValueError("模型包 manifest runtime_contract.task_type 与 task_type 不一致。")
+    runtime_inputs = runtime_contract.get("runtime_inputs")
+    if not isinstance(runtime_inputs, dict):
+        raise ValueError("模型包 manifest runtime_contract.runtime_inputs 缺失。")
+    _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"]))
+    if _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"])) != selected_version_dir.resolve():
+        raise ValueError("模型包 manifest artifact_path 与实际模型目录不一致。")
+    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("preprocess_path", "")))
+    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("labels_path", "")))
+    artifacts = validation.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError("模型包 manifest validation.artifacts 缺失。")
+    for item in artifacts:
+        if not isinstance(item, str):
+            raise ValueError("模型包 manifest validation.artifacts 必须全部为字符串。")
+        _resolve_manifest_path(selected_version_dir, item)
+    return {
+        "model_root": str(selected_version_dir.resolve()),
+        "model_version": str(manifest["model_version"]),
+        "backend_type": str(manifest["backend_type"]),
+        "max_batch_size": max(1, int(manifest.get("max_batch_size", manifest.get("batch_size", 1)))),
+        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "manifest": manifest,
+    }
+
+
+def _validate_plugin_manifest(capability_dir: Path, target_name: str, manifest: Any, binary_path: Path | None) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest 顶层必须是对象。")
+    required_keys = (
+        "capability_name",
+        "model_version",
+        "target_name",
+        "artifact_format",
+        "build_mode",
+        "toolchain_name",
+        "jni_enabled",
+        "customer_code",
+        "issue_record_id",
+        "dependency_summary",
+    )
+    for key in required_keys:
+        if key not in manifest:
+            raise ValueError(f"插件 manifest 缺失字段：{key}")
+    if manifest["capability_name"] != capability_dir.name:
+        raise ValueError("插件 manifest capability_name 与目录名不一致。")
+    if manifest["target_name"] != target_name:
+        raise ValueError("插件 manifest target_name 与当前目标平台不一致。")
+    dependency_summary = manifest["dependency_summary"]
+    if not isinstance(dependency_summary, dict):
+        raise ValueError("插件 manifest dependency_summary 必须是对象。")
+    for key in ("runtime", "abi", "license_required", "build_params_controlled"):
+        if key not in dependency_summary:
+            raise ValueError(f"插件 manifest dependency_summary 缺失字段：{key}")
+    if binary_path is None or not binary_path.exists():
+        raise ValueError("插件二进制不存在。")
+    if manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
+        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
+    if manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
+        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
+    return {
+        "plugin_root": str(capability_dir.resolve()),
+        "plugin_target": target_name,
+        "build_mode": str(manifest["build_mode"]),
+        "binary_path": str(binary_path.resolve()),
+        "max_batch_size": max(1, int(manifest.get("max_batch_size", 1))),
+        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "manifest": manifest,
+    }
+
+
+def _scan_models(root: Path) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
     capability_map: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, str]] = []
     for capability_dir in _sorted_dirs(root):
         versions = _sorted_dirs(capability_dir)
         if not versions:
             continue
         selected_version_dir = versions[-1]
         manifest_path = selected_version_dir / "manifest.json"
-        if manifest_path.exists():
+        try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "capability_name": capability_dir.name,
-                "model_version": selected_version_dir.name,
-                "backend_type": "onnxruntime",
-            }
-        capability_map[capability_dir.name] = {
-            "model_root": str(selected_version_dir.resolve()),
-            "model_version": str(manifest.get("model_version", selected_version_dir.name)),
-            "backend_type": str(manifest.get("backend_type", "onnxruntime")),
-            "max_batch_size": max(
-                1,
-                int(manifest.get("max_batch_size", manifest.get("batch_size", 1))),
-            ),
-            "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
-            "manifest": manifest,
-        }
-    return capability_map
+            capability_map[capability_dir.name] = _validate_model_manifest(capability_dir, selected_version_dir, manifest)
+        except Exception as exc:
+            failures.append(_failure_item(capability_dir.name, "model_manifest", manifest_path, str(exc)))
+    return capability_map, failures
 
 
-def _scan_plugins(root: Path, target_name: str) -> dict[str, dict[str, Any]]:
+def _scan_plugins(root: Path, target_name: str) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
     capability_map: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, str]] = []
     target_root = root / target_name
     for capability_dir in _sorted_dirs(target_root):
         manifest_path = capability_dir / "manifest" / "manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "capability_name": capability_dir.name,
-                "target_name": target_name,
-                "build_mode": "template",
-                "dependency_summary": {},
-            }
         lib_dir = capability_dir / "lib"
         binary_candidates = sorted([item for item in lib_dir.iterdir() if item.is_file()], key=lambda item: item.name) if lib_dir.exists() else []
-        capability_map[capability_dir.name] = {
-            "plugin_root": str(capability_dir.resolve()),
-            "plugin_target": target_name,
-            "build_mode": str(manifest.get("build_mode", "template")),
-            "binary_path": str(binary_candidates[0].resolve()) if binary_candidates else "",
-            "max_batch_size": max(1, int(manifest.get("max_batch_size", 1))),
-            "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
-            "manifest": manifest,
-        }
-    return capability_map
+        binary_path = binary_candidates[0] if binary_candidates else None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            capability_map[capability_dir.name] = _validate_plugin_manifest(capability_dir, target_name, manifest, binary_path)
+        except Exception as exc:
+            failures.append(_failure_item(capability_dir.name, "plugin_manifest", manifest_path, str(exc)))
+    return capability_map, failures
 
 
 def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    host_models = _scan_models(host_root / "models")
-    image_models = _scan_models(image_root / "models")
-    host_plugins = _scan_plugins(host_root / "libs", target_name)
-    image_plugins = _scan_plugins(image_root / "libs", target_name)
+    host_models, host_model_failures = _scan_models(host_root / "models")
+    image_models, image_model_failures = _scan_models(image_root / "models")
+    host_plugins, host_plugin_failures = _scan_plugins(host_root / "libs", target_name)
+    image_plugins, image_plugin_failures = _scan_plugins(image_root / "libs", target_name)
 
     merged: dict[str, dict[str, Any]] = {}
+    invalid_capability_failures: list[dict[str, str]] = []
     for capability_name in sorted(set(host_models) | set(image_models) | set(host_plugins) | set(image_plugins)):
         model_entry = host_models.get(capability_name) or image_models.get(capability_name)
         plugin_entry = host_plugins.get(capability_name) or image_plugins.get(capability_name)
         if model_entry is None or plugin_entry is None:
+            continue
+        if plugin_entry["manifest"].get("model_version") != model_entry["model_version"]:
+            invalid_capability_failures.append(
+                _failure_item(
+                    capability_name,
+                    "capability_contract",
+                    Path(plugin_entry["plugin_root"]) / "manifest" / "manifest.json",
+                    "插件 manifest model_version 与模型包 manifest 不一致。",
+                )
+            )
             continue
         merged[capability_name] = {
             "capability_name": capability_name,
@@ -206,6 +326,11 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
         "host_plugins": sorted(host_plugins),
         "image_models": sorted(image_models),
         "image_plugins": sorted(image_plugins),
+        "host_model_failures": host_model_failures,
+        "host_plugin_failures": host_plugin_failures,
+        "image_model_failures": image_model_failures,
+        "image_plugin_failures": image_plugin_failures,
+        "invalid_capability_failures": invalid_capability_failures,
     }
 
 

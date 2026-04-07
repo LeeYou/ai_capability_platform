@@ -91,9 +91,9 @@
 
 ### 9.1 当前整改重点
 
-1. 强化 runtime 对模型包 manifest、插件 manifest、builder 交付物的强校验与强消费。
+1. 已完成 runtime 对 ai-train 模型包 manifest、ai-builder 插件 manifest 与 builder 交付物关键字段的强校验与强消费：无效资源会在 bootstrap / reload 阶段被跳过并记录失败明细，模型/插件版本不一致的能力不会进入运行时。
 2. 已完成授权校验稳定诊断字段收敛：Python / C++ runtime 统一输出 `result / code / stage / details`，并与 `license_tool` / SDK 保持一致语义。
-3. 为新增能力建立 capability 级接入检查清单，覆盖 ABI、manifest、license、样本输入与运行时装载。
+3. 下一步为 capability 级新增接入检查清单，覆盖 ABI、manifest、license、样本输入与运行时装载。
 
 ### 9.2 与其他模块的关键契约
 

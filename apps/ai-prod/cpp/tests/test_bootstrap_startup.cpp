@@ -72,6 +72,72 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& content
     output << content;
 }
 
+std::string BuildModelManifest(
+    const std::filesystem::path& model_root,
+    const std::string& capability_name,
+    const std::string& model_version,
+    int max_batch_size,
+    int queue_wait_timeout_ms) {
+    const auto preprocess_path = model_root / "preprocess.json";
+    const auto labels_path = model_root / "labels.json";
+    const auto validation_path = model_root / "validation" / "acceptance_checklist.json";
+    const auto delivery_metadata_path = model_root / "delivery_metadata.json";
+    const auto runtime_contract_path = model_root / "runtime_contract.json";
+    WriteTextFile(preprocess_path, R"({"input_type":"image","resize":{"width":640,"height":640},"normalize":{"mean":[0.5],"std":[0.5]}})");
+    WriteTextFile(labels_path, R"({"labels":["ok","ng"]})");
+    WriteTextFile(validation_path, R"({"required_cases":["acceptance_check"]})");
+    WriteTextFile(delivery_metadata_path, R"({"ai_builder":{"manifest_schema_path":"apps/shared/schemas/manifest_model.json"}})");
+    const nlohmann::json runtime_contract = {
+        {"task_type", "detection"},
+        {"annotation_schema", {{"type", "object"}}},
+        {"template_bundle", {{"name", capability_name}}},
+        {"model_files", nlohmann::json::array({"model.onnx"})},
+        {"runtime_inputs", {{"preprocess_path", preprocess_path.string()}, {"labels_path", labels_path.string()}}},
+    };
+    WriteTextFile(runtime_contract_path, runtime_contract.dump());
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"task_type", "detection"},
+        {"model_version", model_version},
+        {"source_train_task_id", 1},
+        {"task_name", capability_name + "_task"},
+        {"backend_type", "onnxruntime"},
+        {"artifact_path", model_root.string()},
+        {"status", "ready"},
+        {"checksum", capability_name + "-" + model_version + "-checksum"},
+        {"preprocessing", {{"input_type", "image"}, {"resize", {{"width", 640}, {"height", 640}}}, {"normalize", {{"mean", nlohmann::json::array({0.5})}, {"std", nlohmann::json::array({0.5})}}}}},
+        {"thresholds", {{"score_threshold", 0.5}, {"nms_threshold", 0.45}}},
+        {"labels", nlohmann::json::array({"ok", "ng"})},
+        {"validation", {{"artifacts", nlohmann::json::array({"preprocess.json", "labels.json", "validation/acceptance_checklist.json", "delivery_metadata.json", "runtime_contract.json"})}}},
+        {"runtime_contract", runtime_contract},
+        {"delivery_metadata", {{"ai_test", {{"task_type", "acceptance"}}}, {"ai_builder", {{"manifest_schema_path", "apps/shared/schemas/manifest_model.json"}}}, {"training_summary", {{"backend_type", "onnxruntime"}}}}},
+        {"max_batch_size", max_batch_size},
+        {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+    }.dump();
+}
+
+std::string BuildPluginManifest(
+    const std::string& capability_name,
+    const std::string& model_version,
+    const std::string& target_name,
+    int instance_count,
+    int max_pending_request_count) {
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"model_version", model_version},
+        {"target_name", target_name},
+        {"artifact_format", "so"},
+        {"build_mode", "native"},
+        {"toolchain_name", "cmake-native"},
+        {"jni_enabled", false},
+        {"customer_code", "cust_prod"},
+        {"issue_record_id", 1},
+        {"dependency_summary", {{"runtime", "onnxruntime"}, {"abi", "cxx17"}, {"license_required", true}, {"build_params_controlled", true}}},
+        {"instance_count", instance_count},
+        {"max_pending_request_count", max_pending_request_count},
+    }.dump();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -93,10 +159,10 @@ int main(int argc, char** argv) {
 
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime","max_batch_size":5,"queue_wait_timeout_ms":280})");
+        BuildModelManifest(host_root / "models" / "face_detect" / "v2_0_0", "face_detect", "v2_0_0", 5, 280));
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release","instance_count":3,"max_pending_request_count":5})");
+        BuildPluginManifest("face_detect", "v2_0_0", "linux_x86_64", 3, 5));
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -219,7 +285,10 @@ int main(int argc, char** argv) {
 
     WriteTextFile(
         host_root / "models" / "face_detect" / "v3_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v3_0_0","backend_type":"onnxruntime","max_batch_size":6,"queue_wait_timeout_ms":320})");
+        BuildModelManifest(host_root / "models" / "face_detect" / "v3_0_0", "face_detect", "v3_0_0", 6, 320));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
+        BuildPluginManifest("face_detect", "v3_0_0", "linux_x86_64", 3, 5));
     const auto reload_result = client.Post(
         "/api/v1/admin/reload",
         "{\"action\":\"reload\"}",
