@@ -42,10 +42,14 @@
 | P32 | 补齐结构化审计日志与请求关联字段统一收口 | 已完成 |
 | P33 | 补齐 capability 级短时批次聚合与批次调度观测 | 已完成 |
 | P34 | 补齐 capability 级运行时编排元数据与全局资源编排诊断 | 已完成 |
+| P35 | 模型包 manifest / 插件 manifest 强校验与强消费收敛 | 未开始 |
+| P36 | 授权校验、诊断字段与 C++ 公共核心收敛 | 未开始 |
+| P37 | capability 级新增接入检查清单与运行时门禁 | 未开始 |
+| P38 | 真实交付链 bootstrap / reload / infer / rollback 端到端校验 | 未开始 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RP-01 ~ RP-03。
 
 ## 4. 当前进度更新
 
@@ -57,17 +61,20 @@
 4. 已完成基础版 runtime revision、实例池、GPU 优先/CPU 自动回退、统一推理 API、前端测试页、reload/rollback 与运行日志审计。
 5. 已完成基础版 Docker、测试与构建校验。
 
-### 4.2 已完成
+### 4.2 进行中
 
 1. 当前已完成 P9-P34 全量收口，`apps/ai-prod/cpp/` 已成为面向客户交付的 C++ 生产主链路，实现了真实插件执行、bootstrap、reload/rollback、revision/operation 持久化、显式状态机、请求跟踪、批处理、deadline、审计日志与运行时编排诊断。
 2. 当前已完成与 ai-license-mgr 的 License / 热更新 / 回滚语义统一：版本约束、`license_tool` 协同、密钥轮转后的运行态校验以及现场交付链路所需的能力范围与版本控制均已在代码与测试层完成对齐。
 3. 当前已完成内部验收外壳与交付材料收口：Python backend 仅保留 `/internal/*` 诊断能力，React 前端已补齐能力目录、在线控制台、revision/operation 视图、跨模块导航、共享 workspace 配置与总体联调复审展示。
-4. 经再次对照代码、测试、模块设计文档与总体计划核验，当前模块开发计划项已全部完成，后续若继续增强，将转入新一轮增量规划而非当前模块遗留项。
+4. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 P35-P38 作为下一轮模块整改工作项。
 
 ### 4.3 未完成
 
-1. ai-prod 模块开发计划项已全部完成；当前代码、模块设计文档与模块开发计划已完成对齐，后续若继续增强，将转入新一轮增量规划而非当前模块遗留项。
+1. P35：模型包 manifest / 插件 manifest 强校验与强消费收敛。
+2. P36：授权校验、诊断字段与 C++ 公共核心收敛。
+3. P37：capability 级新增接入检查清单与运行时门禁。
+4. P38：真实交付链 bootstrap / reload / infer / rollback 端到端校验。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P34：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21/P22/P23/P24/P25/P26/P27/P28/P29/P30/P31/P32/P33 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec`、切换互斥保护与 `/api/v1/admin/metrics` 统一运行时指标接口；在已补齐 capability 级 `max_batch_size` / `instance_count` 元数据透传、基础请求排队等待、排队上限、等待超时与排队耗时统计、capability 级 `queue_wait_timeout_ms` / `max_pending_request_count` 调度策略元数据收口、GPU 插件动态库装载/生命周期失败场景下的 CPU 自动回退编排、`lifecycle_elapsed_ms` 端到端时延观测、请求级 `prefer_deadline_ms` SLA 截止时间控制、结构化审计日志与请求关联字段统一收口，以及 capability 级短时批次调度之后，本轮进一步补齐 capability 级运行时编排元数据透传与 `ResourceOrchestrator` 全局资源编排诊断，统一输出 `scheduling_mode`、`backpressure_level`、`recommended_pool_size`、`recommended_max_batch_size` 等 capability 级编排建议，并形成 `/api/v1/admin/catalog` 与 `/api/v1/admin/metrics` 的模块级编排诊断面；同时结合总体计划 R7，对内部 React 验收外壳补齐了标签页式能力目录、在线控制台、revision/operation 视图，以及第二轮跨模块联调导航入口、共享 R7 workspace 配置、公共样式与总体联调复审展示。至此 ai-prod 当前模块设计与开发计划已全部实现完成，模块整体进入已完成状态。
+ai-prod 上一轮已完成 P9-P34，具备较成熟的 C++ HTTP、Runtime、插件装载、授权校验、状态机、批处理、调度观测与交付运行主链路；但结合本轮逻辑自洽审查，仍需继续完成模型包 / 插件 manifest 强契约、授权 C++ 公共核心与稳定诊断字段、capability 级接入门禁，以及真实交付链的端到端验证。因此本模块计划已进入新一轮整改阶段，新增 P35-P38 作为后续逐项实施与跟踪基线。
