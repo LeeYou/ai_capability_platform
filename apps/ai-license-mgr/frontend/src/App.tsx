@@ -57,10 +57,22 @@ type LicenseIssueItem = {
   issued_at_cst: string
   last_validation_at?: string | null
   last_validation_result?: string | null
+  last_validation_code?: string | null
+  last_validation_details?: Record<string, unknown>
 }
 
 type LicenseIssueDetail = LicenseIssueItem & {
   payload: Record<string, unknown>
+}
+
+type ValidateLicenseResult = {
+  valid: boolean
+  reason: string
+  result: string
+  code: string
+  stage: string
+  details: Record<string, unknown>
+  diagnostics_version: string
 }
 
 type LicenseToolReleaseItem = {
@@ -193,6 +205,7 @@ function App() {
   const [selectedIssueId, setSelectedIssueId] = useState<number | null>(null)
   const [issueDetail, setIssueDetail] = useState<LicenseIssueDetail | null>(null)
   const [validationForm, setValidationForm] = useState<ValidationFormState>(initialValidationForm)
+  const [lastValidationResult, setLastValidationResult] = useState<ValidateLicenseResult | null>(null)
 
   async function loadDashboard(): Promise<void> {
     setLoading(true)
@@ -227,6 +240,7 @@ function App() {
   useEffect(() => {
     if (selectedIssueId == null) {
       setIssueDetail(null)
+      setLastValidationResult(null)
       return
     }
     void request<LicenseIssueDetail>(`/api/v1/license-issues/${selectedIssueId}`).then(setIssueDetail).catch(() => {
@@ -315,7 +329,7 @@ function App() {
     if (selectedIssueId == null) {
       return
     }
-    const result = await request<{ reason: string; valid: boolean }>(`/api/v1/license-issues/${selectedIssueId}/validate`, {
+    const result = await request<ValidateLicenseResult>(`/api/v1/license-issues/${selectedIssueId}/validate`, {
       method: 'POST',
       body: JSON.stringify({
         hardware_fingerprint: validationForm.hardware_fingerprint || null,
@@ -323,7 +337,8 @@ function App() {
         product_version: validationForm.product_version || null,
       }),
     })
-    setActionMessage(`校验结果：${result.valid ? '通过' : '失败'} / ${result.reason}`)
+    setLastValidationResult(result)
+    setActionMessage(`校验结果：${result.valid ? '通过' : '失败'} / ${result.code}`)
     await loadDashboard()
   }
 
@@ -343,12 +358,12 @@ function App() {
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
           <h1>ai-license-mgr 专业授权台</h1>
-          <p>统一收口客户、密钥、策略、签发、校验与工具发布，支撑 ai-prod / ai-builder / SDK 交付联调。</p>
+          <p>统一收口授权金标准测试向量、稳定诊断字段、签发校验与工具发布，支撑 ai-prod / SDK / license_tool 一致性联调。</p>
         </div>
         <div className="hero-panel">
           <div><span className="label">服务端口</span><strong>26002</strong></div>
           <div><span className="label">关键物料</span><strong>license.bin / pubkey.pem / license_tool</strong></div>
-          <div><span className="label">当前阶段</span><strong>R7 专业化增强</strong></div>
+          <div><span className="label">当前阶段</span><strong>L11 / L12 / L13 执行中</strong></div>
         </div>
       </header>
 
@@ -448,8 +463,8 @@ function App() {
               <h3>联调就绪项</h3>
               <ul>
                 <li>已支持私钥轮转、隔离与策略迁移。</li>
-                <li>已支持签发记录详情、校验与导出。</li>
-                <li>已支持默认 license_tool 发布同步与导出。</li>
+                <li>已支持签发记录稳定 code / stage / details 校验输出。</li>
+                <li>已支持默认 license_tool 发布同步、诊断契约与测试向量导出。</li>
               </ul>
             </article>
           </section>
@@ -578,7 +593,7 @@ function App() {
                   >
                     <strong>#{item.issue_record_id}</strong>
                     <span>{item.customer_code}</span>
-                    <span>{item.status}</span>
+                    <span>{item.last_validation_code ?? item.status}</span>
                   </button>
                 ))}
               </div>
@@ -599,6 +614,18 @@ function App() {
               ) : (
                 <>
                   <pre className="json-block">{JSON.stringify(issueDetail.payload, null, 2)}</pre>
+                  <pre className="json-block">
+                    {JSON.stringify(
+                      {
+                        last_validation_result: issueDetail.last_validation_result,
+                        last_validation_code: issueDetail.last_validation_code,
+                        last_validation_details: issueDetail.last_validation_details ?? {},
+                        latest_validation_response: lastValidationResult ?? undefined,
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
                   <div className="form-grid">
                     <label>硬件指纹<input value={validationForm.hardware_fingerprint} onChange={(event) => setValidationForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} /></label>
                     <label>能力<input value={validationForm.capability_name} onChange={(event) => setValidationForm((current) => ({ ...current, capability_name: event.target.value }))} /></label>
@@ -631,6 +658,8 @@ function App() {
                             <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=archive`)}>归档</a>
                             <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=manifest`)}>manifest</a>
                             <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=readme`)}>README</a>
+                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=diagnostics`)}>diagnostics</a>
+                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=vectors`)}>vectors</a>
                           </div>
                         </td>
                       </tr>
@@ -643,8 +672,8 @@ function App() {
               <h3>本轮专业化增强</h3>
               <ul>
                 <li>将客户台、策略台、签发台与工具发布整合为页签式工作台。</li>
-                <li>提供轮转、隔离、签发、校验与导出直达操作。</li>
-                <li>为跨模块联调保留统一的审计与导出入口。</li>
+                <li>提供轮转、隔离、签发、稳定诊断校验与导出直达操作。</li>
+                <li>为跨模块联调保留统一的审计、诊断契约与测试向量导出入口。</li>
               </ul>
             </article>
           </section>

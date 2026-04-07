@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -15,6 +18,8 @@ from app.services.license_service import (
     create_license_policy,
     export_license_issue,
     export_license_tool_release,
+    get_license_validation_contract,
+    get_license_validation_vectors,
     get_license_issue,
     get_license_policy,
     get_license_tool_release,
@@ -185,6 +190,9 @@ class LicenseServiceTestCase(unittest.TestCase):
 
         self.assertFalse(validation["valid"])
         self.assertIn("不匹配", validation["reason"])
+        self.assertEqual(validation["code"], "hardware_fingerprint_mismatch")
+        self.assertEqual(validation["stage"], "hardware_fingerprint")
+        self.assertEqual(validation["details"]["expected_hardware_fingerprint"], "fp-001")
 
     def test_audit_logs_are_written(self) -> None:
         with get_session_factory()() as session:
@@ -215,6 +223,13 @@ class LicenseServiceTestCase(unittest.TestCase):
                 release_id=int(release["release_id"]),
                 export_format="archive",
             )
+            diagnostics_export = export_license_tool_release(
+                session,
+                get_settings().exports_root,
+                get_settings().audit_log_path,
+                release_id=int(release["release_id"]),
+                export_format="diagnostics",
+            )
             release_detail = get_license_tool_release(session, int(release["release_id"]))
 
         self.assertEqual(len(list_license_tool_releases(session)), 1)
@@ -223,8 +238,12 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertTrue(Path(release["manifest_path"]).is_file())
         self.assertTrue(Path(release["readme_path"]).is_file())
         self.assertTrue(Path(export_path).is_file())
+        self.assertTrue(Path(diagnostics_export).is_file())
+        self.assertTrue((Path(release["manifest_path"]).parent / "LICENSE_DIAGNOSTICS.json").is_file())
+        self.assertTrue((Path(release["manifest_path"]).parent / "VALIDATION_VECTORS.json").is_file())
         manifest_payload = Path(release["manifest_path"]).read_text(encoding="utf-8")
         self.assertIn('"version": "1.0.0"', manifest_payload)
+        self.assertIn('"diagnostics_version": "1.0"', manifest_payload)
 
     def test_rotate_key_pair_migrates_active_policies(self) -> None:
         with get_session_factory()() as session:
@@ -404,3 +423,97 @@ class LicenseServiceTestCase(unittest.TestCase):
         actions = [item["action"] for item in logs]
         self.assertIn("rotate", actions)
         self.assertIn("isolate", actions)
+
+    def test_validation_contract_and_vectors_are_available(self) -> None:
+        contract = get_license_validation_contract()
+        vectors = get_license_validation_vectors()
+
+        self.assertEqual(contract["diagnostics_version"], "1.0")
+        self.assertIn("signature_invalid", contract["code_catalog"])
+        self.assertEqual(vectors["diagnostics_version"], "1.0")
+        self.assertGreaterEqual(len(vectors["license_validation_vectors"]), 5)
+        self.assertEqual(
+            vectors["fingerprint_vectors"][0]["expected_fingerprint"],
+            build_hardware_fingerprint(vectors["fingerprint_vectors"][0]["features"]),
+        )
+
+    def test_cross_module_validation_matches_ai_prod_python(self) -> None:
+        features = {"cpu": "intel-i7", "disk": "nvme-sn-001", "mac": "00:11:22:33:44:55"}
+        with get_session_factory()() as session:
+            customer = create_customer(
+                session,
+                get_settings().audit_log_path,
+                customer_code="cust_cross",
+                customer_name="跨模块客户",
+                contact_name=None,
+                contact_email=None,
+            )
+            key_pair = create_key_pair(
+                session,
+                get_settings().key_pairs_root,
+                get_settings().audit_log_path,
+                key_name="cross-key",
+            )
+            hardware_fingerprint = build_hardware_fingerprint(features)
+            policy = create_license_policy(
+                session,
+                get_settings().audit_log_path,
+                policy_name="policy-cross",
+                customer_id=int(customer["customer_id"]),
+                key_pair_id=int(key_pair["key_pair_id"]),
+                capability_scope=["ocr"],
+                version_constraints={"min_version": "1.0.0", "max_version": "2.0.0"},
+                hardware_fingerprint=hardware_fingerprint,
+                start_at_cst="2026-04-01T00:00:00+08:00",
+                expire_at_cst="2027-04-01T00:00:00+08:00",
+                notes=None,
+            )
+            issue = issue_license(
+                session,
+                get_settings().license_root,
+                get_settings().issue_records_root,
+                get_settings().audit_log_path,
+                policy_id=int(policy["policy_id"]),
+            )
+            mgr_validation = validate_license_issue(
+                session,
+                get_settings().audit_log_path,
+                issue_record_id=int(issue["issue_record_id"]),
+                hardware_fingerprint=hardware_fingerprint,
+                capability_name="ocr",
+                product_version="1.2.0",
+            )
+
+        ai_prod_backend_root = Path("/home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/backend")
+        inline_code = "\n".join(
+            [
+                "import json",
+                "import sys",
+                "from pathlib import Path",
+                "sys.path.insert(0, sys.argv[1])",
+                "from app.services.license_service import validate_license_bundle",
+                "payload = validate_license_bundle(Path(sys.argv[2]), hardware_features=json.loads(sys.argv[3]), capability_name=sys.argv[4], product_version=sys.argv[5])",
+                "print(json.dumps(payload, ensure_ascii=False))",
+            ]
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                inline_code,
+                str(ai_prod_backend_root),
+                str(get_settings().license_root),
+                json.dumps(features, ensure_ascii=False),
+                "ocr",
+                "1.2.0",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        prod_validation = json.loads(result.stdout)
+
+        self.assertTrue(mgr_validation["valid"])
+        self.assertEqual(mgr_validation["code"], "license_valid")
+        self.assertTrue(prod_validation["valid"])
+        self.assertEqual(prod_validation["reason"], mgr_validation["reason"])

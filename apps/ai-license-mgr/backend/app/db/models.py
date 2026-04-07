@@ -98,6 +98,8 @@ class LicenseIssueRecordModel(Base):
     issued_at_cst: Mapped[str] = mapped_column(String(64))
     last_validation_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_validation_result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_validation_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_validation_details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),

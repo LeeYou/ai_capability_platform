@@ -7,11 +7,19 @@ from pathlib import Path
 import shutil
 from typing import Any
 
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.db.models import CustomerModel, KeyPairModel, LicenseIssueRecordModel, LicensePolicyModel, LicenseToolReleaseModel
 from app.services.audit_service import append_audit_log, now_cst_iso
 from app.services.crypto_service import generate_hardware_fingerprint, generate_key_pair_files, sign_payload, verify_signature
+from app.services.validation_contracts import (
+    DIAGNOSTICS_VERSION,
+    build_validation_contract,
+    build_validation_vectors,
+    evaluate_license_payload,
+    parse_cst_datetime,
+)
 
 
 CST = timezone(timedelta(hours=8))
@@ -51,25 +59,26 @@ def initialize_database() -> None:
     from app.db.database import Base, get_engine
     from app.db import models  # noqa: F401
 
-    Base.metadata.create_all(bind=get_engine())
-
-
-def _parse_cst_datetime(raw_value: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(raw_value)
-    except ValueError as exc:
-        raise ValueError("时间必须为 ISO 8601 格式。") from exc
-    if parsed.tzinfo is None:
-        raise ValueError("时间必须显式包含 CST 时区信息。")
-    normalized = parsed.astimezone(CST)
-    if normalized.utcoffset() != timedelta(hours=8):
-        raise ValueError("时间必须使用 CST(+08:00) 时区。")
-    return normalized
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    if "license_issue_record" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("license_issue_record")}
+    statements: list[str] = []
+    if "last_validation_code" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN last_validation_code VARCHAR(64)")
+    if "last_validation_details_json" not in columns:
+        statements.append("ALTER TABLE license_issue_record ADD COLUMN last_validation_details_json TEXT")
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
 
 
 def _normalize_policy_times(start_at_cst: str, expire_at_cst: str) -> tuple[str, str]:
-    start = _parse_cst_datetime(start_at_cst)
-    expire = _parse_cst_datetime(expire_at_cst)
+    start = parse_cst_datetime(start_at_cst)
+    expire = parse_cst_datetime(expire_at_cst)
     if expire <= start:
         raise ValueError("到期时间必须晚于生效时间。")
     return start.isoformat(), expire.isoformat()
@@ -175,6 +184,10 @@ def _issue_item(issue: LicenseIssueRecordModel) -> dict[str, object]:
         "issued_at_cst": issue.issued_at_cst,
         "last_validation_at": issue.last_validation_at,
         "last_validation_result": issue.last_validation_result,
+        "last_validation_code": issue.last_validation_code,
+        "last_validation_details": json.loads(issue.last_validation_details_json)
+        if issue.last_validation_details_json
+        else {},
         "payload": payload,
     }
 
@@ -263,7 +276,11 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
     readme_path = release_root / "README.md"
     error_codes_path = release_root / "ERROR_CODES.md"
     hardware_guide_path = release_root / "HARDWARE_FINGERPRINT.md"
+    diagnostics_path = release_root / "LICENSE_DIAGNOSTICS.json"
+    validation_vectors_path = release_root / "VALIDATION_VECTORS.json"
     _write_text(release_root / "VERSION", version + "\n")
+    _write_text(diagnostics_path, json.dumps(build_validation_contract(), ensure_ascii=False, indent=2, sort_keys=True))
+    _write_text(validation_vectors_path, json.dumps(build_validation_vectors(), ensure_ascii=False, indent=2, sort_keys=True))
     _write_text(
         manifest_path,
         json.dumps(
@@ -273,9 +290,10 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "bundle_format": "source_bundle",
                 "entrypoint": "src/license_tool.cpp",
                 "build_system": "cmake",
+                "diagnostics_version": DIAGNOSTICS_VERSION,
                 "supported_targets": LICENSE_TOOL_SUPPORTED_TARGETS,
                 "source_files": sorted(LICENSE_TOOL_SOURCE_FILES),
-                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md"],
+                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md", "LICENSE_DIAGNOSTICS.json", "VALIDATION_VECTORS.json"],
             },
             ensure_ascii=False,
             indent=2,
@@ -316,6 +334,8 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "## 版本兼容性",
                 "",
                 "- 当前 bundle 已对齐 ai-license-mgr 与 ai-prod 的 license 版本约束语义。",
+                f"- 当前 bundle 诊断契约版本：`{DIAGNOSTICS_VERSION}`，稳定字段定义见 `LICENSE_DIAGNOSTICS.json`。",
+                "- 金标准测试向量见 `VALIDATION_VECTORS.json`，供 runtime / SDK / license_tool 做一致性回归。",
                 "- 交付时需配套 `license.bin`、`pubkey.pem` 与本文档一并提供。",
                 "",
             ]
@@ -335,6 +355,18 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
                 "| 4 | 解析 license 文件失败 |",
                 "| 5 | 验证 license 失败 |",
                 "| 6 | 未知 mode |",
+                "",
+                "## 稳定诊断 code",
+                "",
+                "| code | 含义 |",
+                "| --- | --- |",
+                "| license_valid | 校验通过 |",
+                "| signature_invalid | 签名校验失败 |",
+                "| time_window_not_started | 尚未生效 |",
+                "| time_window_expired | 已过期 |",
+                "| hardware_fingerprint_mismatch | 硬件指纹不匹配 |",
+                "| capability_scope_denied | 能力范围不匹配 |",
+                "| version_constraints_denied | 版本约束不匹配 |",
                 "",
             ]
         ),
@@ -732,50 +764,36 @@ def validate_license_issue(
     payload = json.loads(issue.payload_json)
     signature_valid = verify_signature(Path(issue.public_key_export_path), payload, issue.signature_base64)
     checked_at_cst = now_cst_iso()
-
-    if not signature_valid:
-        valid = False
-        reason = "签名校验失败。"
-    else:
-        now_cst = _parse_cst_datetime(checked_at_cst)
-        start_at = _parse_cst_datetime(payload["start_at_cst"])
-        expire_at = _parse_cst_datetime(payload["expire_at_cst"])
-        capability_scope = payload.get("capability_scope", [])
-        version_constraints = payload.get("version_constraints", {})
-        expected_fingerprint = payload.get("hardware_fingerprint")
-
-        if now_cst < start_at:
-            valid = False
-            reason = "license 尚未生效。"
-        elif now_cst > expire_at:
-            valid = False
-            reason = "license 已过期。"
-        elif expected_fingerprint and hardware_fingerprint != expected_fingerprint:
-            valid = False
-            reason = "硬件指纹不匹配。"
-        elif capability_name and capability_scope and capability_name not in capability_scope:
-            valid = False
-            reason = "能力范围不匹配。"
-        elif not _is_version_allowed(product_version, version_constraints):
-            valid = False
-            reason = "版本约束不匹配。"
-        else:
-            valid = True
-            reason = "license 校验通过。"
+    evaluation = evaluate_license_payload(
+        payload=payload,
+        signature_valid=signature_valid,
+        checked_at_cst=checked_at_cst,
+        hardware_fingerprint=hardware_fingerprint,
+        capability_name=capability_name,
+        product_version=product_version,
+        version_checker=_is_version_allowed,
+    )
 
     issue.last_validation_at = checked_at_cst
-    issue.last_validation_result = "passed" if valid else "failed"
+    issue.last_validation_result = evaluation.result
+    issue.last_validation_code = evaluation.code
+    issue.last_validation_details_json = json.dumps(evaluation.details, ensure_ascii=False, sort_keys=True)
     session.commit()
     append_audit_log(
         audit_log_path,
         action="validate",
         entity_type="license_issue_record",
         entity_id=str(issue.id),
-        detail={"valid": valid, "reason": reason},
+        detail={"valid": evaluation.valid, "code": evaluation.code, "stage": evaluation.stage, "details": evaluation.details},
     )
     return {
-        "valid": valid,
-        "reason": reason,
+        "valid": evaluation.valid,
+        "reason": evaluation.reason,
+        "result": evaluation.result,
+        "code": evaluation.code,
+        "stage": evaluation.stage,
+        "details": evaluation.details,
+        "diagnostics_version": DIAGNOSTICS_VERSION,
         "issue_record_id": issue.id,
         "checked_at_cst": checked_at_cst,
     }
@@ -893,9 +911,11 @@ def export_license_tool_release(
         "archive": Path(release.archive_path),
         "manifest": Path(release.manifest_path),
         "readme": Path(release.readme_path),
+        "diagnostics": Path(release.manifest_path).with_name("LICENSE_DIAGNOSTICS.json"),
+        "vectors": Path(release.manifest_path).with_name("VALIDATION_VECTORS.json"),
     }
     if export_format not in source_map:
-        raise ValueError("仅支持导出 archive/manifest/readme。")
+        raise ValueError("仅支持导出 archive/manifest/readme/diagnostics/vectors。")
 
     export_dir = (exports_root / "ai-license-mgr").resolve()
     if not (export_dir == exports_root or exports_root in export_dir.parents):
@@ -922,3 +942,11 @@ def export_license_tool_release(
 
 def build_hardware_fingerprint(features: dict[str, str]) -> str:
     return generate_hardware_fingerprint(features)
+
+
+def get_license_validation_contract() -> dict[str, object]:
+    return build_validation_contract()
+
+
+def get_license_validation_vectors() -> dict[str, object]:
+    return build_validation_vectors()

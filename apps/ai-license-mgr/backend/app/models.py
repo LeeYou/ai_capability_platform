@@ -121,6 +121,8 @@ class LicenseIssueItem(BaseModel):
     issued_at_cst: str = Field(description="签发时间")
     last_validation_at: str | None = Field(default=None, description="最近校验时间")
     last_validation_result: str | None = Field(default=None, description="最近校验结果")
+    last_validation_code: str | None = Field(default=None, description="最近校验稳定结果码")
+    last_validation_details: dict[str, Any] = Field(default_factory=dict, description="最近校验稳定细节")
 
 
 class LicenseIssueDetailResponse(LicenseIssueItem):
@@ -140,6 +142,11 @@ class ValidateLicenseRequest(BaseModel):
 class ValidateLicenseResponse(BaseModel):
     valid: bool = Field(description="校验结果")
     reason: str = Field(description="校验说明")
+    result: str = Field(description="稳定校验结果")
+    code: str = Field(description="稳定校验结果码")
+    stage: str = Field(description="校验阶段")
+    details: dict[str, Any] = Field(default_factory=dict, description="稳定校验细节")
+    diagnostics_version: str = Field(description="诊断契约版本")
     issue_record_id: int = Field(description="签发记录 ID")
     checked_at_cst: str = Field(description="校验时间")
 
@@ -170,6 +177,19 @@ class GenerateFingerprintRequest(BaseModel):
 
 class GenerateFingerprintResponse(BaseModel):
     hardware_fingerprint: str = Field(description="硬件指纹")
+
+
+class LicenseValidationContractResponse(BaseModel):
+    diagnostics_version: str = Field(description="诊断契约版本")
+    fields: dict[str, Any] = Field(default_factory=dict, description="稳定字段定义")
+    code_catalog: dict[str, Any] = Field(default_factory=dict, description="稳定结果码目录")
+
+
+class LicenseValidationVectorsResponse(BaseModel):
+    diagnostics_version: str = Field(description="诊断契约版本")
+    fingerprint_vectors: list[dict[str, Any]] = Field(default_factory=list, description="硬件指纹测试向量")
+    version_constraint_vectors: list[dict[str, Any]] = Field(default_factory=list, description="版本约束测试向量")
+    license_validation_vectors: list[dict[str, Any]] = Field(default_factory=list, description="license 校验测试向量")
 
 
 class AuditLogItem(BaseModel):

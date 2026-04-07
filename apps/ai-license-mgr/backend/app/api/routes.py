@@ -27,6 +27,8 @@ from app.models import (
     LicenseIssueListResponse,
     LicensePolicyItem,
     LicensePolicyListResponse,
+    LicenseValidationContractResponse,
+    LicenseValidationVectorsResponse,
     LicenseToolReleaseItem,
     LicenseToolReleaseListResponse,
     RotateKeyPairRequest,
@@ -48,6 +50,8 @@ from app.services.license_service import (
     export_license_issue,
     export_license_tool_release,
     get_customer,
+    get_license_validation_contract,
+    get_license_validation_vectors,
     get_key_pair,
     get_license_issue,
     get_license_policy,
@@ -237,6 +241,16 @@ def generate_hardware_fingerprint_route(request: GenerateFingerprintRequest) -> 
     return GenerateFingerprintResponse(hardware_fingerprint=fingerprint)
 
 
+@router.get("/license-validation/contract", response_model=LicenseValidationContractResponse, tags=["license"])
+def get_license_validation_contract_route() -> LicenseValidationContractResponse:
+    return LicenseValidationContractResponse(**get_license_validation_contract())
+
+
+@router.get("/license-validation/vectors", response_model=LicenseValidationVectorsResponse, tags=["license"])
+def get_license_validation_vectors_route() -> LicenseValidationVectorsResponse:
+    return LicenseValidationVectorsResponse(**get_license_validation_vectors())
+
+
 @router.get("/license-issues", response_model=LicenseIssueListResponse, tags=["license"])
 def get_license_issues(session: Session = Depends(get_db_session)) -> LicenseIssueListResponse:
     return LicenseIssueListResponse(items=[LicenseIssueItem(**item) for item in list_license_issues(session)])
@@ -340,7 +354,7 @@ def sync_default_license_tool_release_route(
 @router.get("/tool-releases/{release_id}/export", tags=["tools"])
 def export_license_tool_release_route(
     release_id: int,
-    export_format: str = Query(default="archive", pattern="^(archive|manifest|readme)$"),
+    export_format: str = Query(default="archive", pattern="^(archive|manifest|readme|diagnostics|vectors)$"),
     session: Session = Depends(get_db_session),
 ) -> FileResponse:
     settings = get_settings()

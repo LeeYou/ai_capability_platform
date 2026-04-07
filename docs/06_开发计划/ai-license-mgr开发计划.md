@@ -18,9 +18,9 @@
 | L8 | 与 ai-prod 运行态 License 规则收敛 | 已完成 |
 | L9 | license_tool 与交付材料收敛 | 已完成 |
 | L10 | 私钥管理、轮转与隔离策略增强 | 已完成 |
-| L11 | 授权核心金标准测试向量与一致性基线 | 未开始 |
-| L12 | 稳定授权失败原因 / 细节字段收敛 | 未开始 |
-| L13 | Python / C++ / SDK / license_tool 跨模块回归链路 | 未开始 |
+| L11 | 授权核心金标准测试向量与一致性基线 | 已完成 |
+| L12 | 稳定授权失败原因 / 细节字段收敛 | 已完成 |
+| L13 | Python / C++ / SDK / license_tool 跨模块回归链路 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -35,18 +35,17 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已完成 ai-license-mgr 与 ai-prod 运行时 License 规则的一轮收敛，并进一步完成 `license_tool` 默认发布归档、导出接口、私钥轮转/隔离与交付材料收敛。
-2. 当前已结合总体计划 R7，进一步把前端管理台升级为专业授权工作台，补齐客户创建、密钥轮转/隔离、策略创建、签发校验与 `license_tool` 发布导出等统一页签式操作入口。
-3. 当前已结合总体计划 R7 第二轮，继续补齐跨模块联调导航入口、当前模块标识与联调复审清单展示，提升与 ai-builder / ai-prod / ai-test 的协同联调效率。
-4. 当前已完成 R7 最终收口：前端已切换为共享 R7 workspace 配置与公共样式，并统一展示总体联调复审结论。
-5. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 L11-L13 作为下一轮模块整改工作项。
+1. 当前已完成 ai-license-mgr 本轮整改实施：建立授权金标准测试向量源，覆盖硬件指纹、版本约束与 license 校验场景。
+2. 当前已完成稳定授权诊断字段收敛：校验接口与签发记录已统一输出 `result` / `code` / `stage` / `details` / `diagnostics_version`。
+3. 当前已完成 `license_tool` source bundle 发布材料增强：manifest/README/ERROR_CODES 中已补齐稳定诊断 code，并附带 `LICENSE_DIAGNOSTICS.json` 与 `VALIDATION_VECTORS.json`。
+4. 当前已完成 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，形成跨模块基线。
+5. 当前已完成前端授权工作台增强：已展示稳定校验 code/细节，并补齐 diagnostics / vectors 导出入口。
+6. 当前已完成基线验证：ai-license-mgr backend unittest 与 frontend build/lint 均已通过。
 
 ### 4.3 未完成
 
-1. L11：授权核心金标准测试向量与一致性基线。
-2. L12：稳定授权失败原因 / 细节字段收敛。
-3. L13：Python / C++ / SDK / license_tool 跨模块回归链路。
+1. 暂无；ai-license-mgr 模块当前轮 L11-L13 已全部完成，后续将转入 ai-prod / ai-sdk 侧的一致性继续收口。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 上一轮已完成 L1-L10，具备基础签发、轮转隔离、版本约束、`license_tool` 与交付材料能力；但结合本轮逻辑自洽审查，仍需继续完成授权核心金标准测试向量、稳定授权失败字段以及 Python / C++ / SDK / `license_tool` 的跨模块回归链路。因此本模块计划已进入新一轮整改阶段，新增 L11-L13 作为后续逐项实施与跟踪基线。
+ai-license-mgr 本轮已完成 L11-L13：一方面补齐授权金标准测试向量与统一诊断契约，形成硬件指纹、版本约束与 license 校验的统一基线；另一方面把校验接口与签发记录收敛为 `result` / `code` / `stage` / `details` 稳定字段，并将同一份契约和测试向量纳入 `license_tool` source bundle 发布物；同时新增 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，确保相同真实 license 在签发侧与运行侧得到一致结论。经后端单元测试与前端 build/lint 验证，当前 ai-license-mgr 模块本轮整改已完成。
