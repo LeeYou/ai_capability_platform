@@ -16,6 +16,11 @@
 struct LicenseStatusInfo {
     bool valid = false;
     std::string reason = "标准 license 文件不存在。";
+    std::string result = "failed";
+    std::string code = "bundle_missing";
+    std::string stage = "bundle";
+    nlohmann::json details = nlohmann::json::object();
+    std::string diagnostics_version = "1.0";
     std::string checked_at_cst;
     std::string customer_code;
     std::vector<std::string> capability_scope;
@@ -34,6 +39,7 @@ public:
     bool Initialize();
     bool Reload();
     bool QuickCheck(const std::string& capability_name, const std::string& product_version = std::string()) const;
+    LicenseStatusInfo Evaluate(const std::string& capability_name = std::string(), const std::string& product_version = std::string()) const;
     LicenseStatusInfo GetStatus() const;
     LicenseStatusInfo GetLastReloadFailureStatus() const;
     void StartAutoReloadMonitor();

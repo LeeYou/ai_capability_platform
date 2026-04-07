@@ -159,6 +159,8 @@ class RuntimeServiceTestCase(unittest.TestCase):
             )
 
         self.assertTrue(payload["license_status"]["valid"])
+        self.assertEqual(payload["license_status"]["code"], "license_valid")
+        self.assertEqual(payload["license_status"]["stage"], "success")
         capabilities = list_capabilities()
         self.assertEqual(len(capabilities), 2)
         self.assertTrue(settings.runtime_snapshot_path.is_file())
@@ -397,4 +399,6 @@ class RuntimeServiceTestCase(unittest.TestCase):
         )
         logs = list_audit_logs(settings.audit_log_path, limit=20)
         self.assertTrue(status["valid"])
+        self.assertEqual(status["code"], "license_valid")
+        self.assertEqual(status["stage"], "success")
         self.assertTrue(any(item["action"] == "license_status_query" for item in logs))

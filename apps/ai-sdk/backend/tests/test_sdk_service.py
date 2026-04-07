@@ -158,10 +158,13 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertEqual(Path(linux_target["output_dir"]).name, "sdk_linux_x86_64")
         self.assertTrue((Path(linux_target["output_dir"]) / "manifest" / "manifest.json").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "manifest.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "LICENSE_DIAGNOSTICS.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "VALIDATION_VECTORS.json").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "validation" / "verify_sdk_package.py").is_file())
         package_manifest = json.loads(Path(package_detail["manifest_path"]).read_text(encoding="utf-8"))
         self.assertTrue(package_manifest["delivery_package_alignment"])
         self.assertEqual(package_manifest["stage_status"]["S9"], "completed")
+        self.assertEqual(package_manifest["stage_status"]["S10"], "completed")
         self.assertTrue((Path(payload["package_root_path"]) / "acceptance_checklist.json").is_file())
         self.assertTrue((Path(payload["package_root_path"]) / "version_manifest.json").is_file())
         self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.json").is_file())
@@ -179,6 +182,7 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertIn("tools_bundle", version_manifest)
         self.assertIn("checksum", version_manifest["delivery_checksums"][0])
         self.assertNotIn("sha256", version_manifest["delivery_checksums"][0])
+        self.assertIn("sdk_linux_x86_64/tools/license_tool/manifest.json", version_manifest["tools_bundle"]["license_tool_manifests"])
         _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "acceptance_checklist.json"), acceptance_checklist)
         _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "version_manifest.json"), version_manifest)
         _assert_matches_schema(
@@ -259,3 +263,5 @@ class SdkServiceTestCase(unittest.TestCase):
         verify_script = Path(target["output_dir"]) / "validation" / "verify_sdk_package.py"
         exit_code = os.system(f'python "{verify_script}" "{Path(target["output_dir"])}" > /dev/null')
         self.assertEqual(exit_code, 0)
+        license_tool_manifest = _load_json(Path(target["output_dir"]) / "tools" / "license_tool" / "manifest.json")
+        self.assertEqual(license_tool_manifest["diagnostics_version"], "1.0")

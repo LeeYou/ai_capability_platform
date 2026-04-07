@@ -92,7 +92,7 @@
 ### 9.1 当前整改重点
 
 1. 强化 runtime 对模型包 manifest、插件 manifest、builder 交付物的强校验与强消费。
-2. 收敛授权校验、授权失败诊断与 `license_tool` / SDK 共享的 C++ 核心语义。
+2. 已完成授权校验稳定诊断字段收敛：Python / C++ runtime 统一输出 `result / code / stage / details`，并与 `license_tool` / SDK 保持一致语义。
 3. 为新增能力建立 capability 级接入检查清单，覆盖 ABI、manifest、license、样本输入与运行时装载。
 
 ### 9.2 与其他模块的关键契约

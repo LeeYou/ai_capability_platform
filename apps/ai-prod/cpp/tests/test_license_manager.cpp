@@ -60,6 +60,12 @@ int main() {
     if (!Expect(valid_status.valid, "valid license should report valid status")) {
         return 1;
     }
+    if (!Expect(valid_status.code == "license_valid", "valid license should expose stable code")) {
+        return 1;
+    }
+    if (!Expect(valid_status.stage == "success", "valid license should expose success stage")) {
+        return 1;
+    }
     if (!Expect(manager.QuickCheck("face_detect", "v1_0_0"), "licensed capability should pass quick check")) {
         return 1;
     }
@@ -123,6 +129,9 @@ int main() {
     if (!Expect(invalid_signature_status.reason == "签名校验失败。", "invalid signature should expose reason")) {
         return 1;
     }
+    if (!Expect(invalid_signature_status.code == "signature_invalid", "invalid signature should expose stable code")) {
+        return 1;
+    }
 
     payload["signature"] = nullptr;
     payload["expire_at_cst"] = NowCstWithOffset(-1);
@@ -134,6 +143,9 @@ int main() {
     if (!Expect(expired_status.reason == "license 已过期。", "expired license should expose reason")) {
         return 1;
     }
+    if (!Expect(expired_status.code == "time_window_expired", "expired license should expose stable code")) {
+        return 1;
+    }
 
     payload["expire_at_cst"] = NowCstWithOffset(30);
     payload["hardware_fingerprint"] = "mismatch";
@@ -143,6 +155,9 @@ int main() {
     }
     const auto mismatch_status = manager.GetLastReloadFailureStatus();
     if (!Expect(mismatch_status.reason == "硬件指纹不匹配。", "fingerprint mismatch should expose reason")) {
+        return 1;
+    }
+    if (!Expect(mismatch_status.code == "hardware_fingerprint_mismatch", "fingerprint mismatch should expose stable code")) {
         return 1;
     }
 

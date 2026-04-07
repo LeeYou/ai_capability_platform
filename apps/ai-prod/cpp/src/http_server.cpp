@@ -31,6 +31,8 @@ constexpr int kRefreshRetryAttempts = 10;
 constexpr int kMaxSimulateDelayMs = 2000;
 constexpr std::size_t kRecentLatencySampleLimit = 64;
 
+nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status);
+
 struct AdminTransitionRequestPayload {
     std::string action = "reload";
     std::optional<int> target_revision_id;
@@ -114,6 +116,22 @@ void ApplyJsonErrorResponse(
         kDefaultJsonContentType);
 }
 
+void ApplyLicenseErrorResponse(
+    int status,
+    const LicenseStatusInfo& license_status,
+    httplib::Response& response) {
+    response.status = status;
+    response.set_content(
+        nlohmann::json(
+            {
+                {"status", "error"},
+                {"message", license_status.reason},
+                {"license_status", BuildLicenseStatusPayload(license_status)},
+            })
+            .dump(),
+        kDefaultJsonContentType);
+}
+
 InferExecutionOutcome BuildErrorOutcome(int status, const std::string& message) {
     return {
         status,
@@ -128,6 +146,11 @@ nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
     return {
         {"valid", status.valid},
         {"reason", status.reason},
+        {"result", status.result},
+        {"code", status.code},
+        {"stage", status.stage},
+        {"details", status.details},
+        {"diagnostics_version", status.diagnostics_version},
         {"checked_at_cst", status.checked_at_cst},
         {"customer_code", status.customer_code},
         {"capability_scope", status.capability_scope},
@@ -1119,7 +1142,8 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    if (!licenseManager.QuickCheck(capability_name, catalog_entry->model_version)) {
+    const auto infer_license_status = licenseManager.Evaluate(capability_name, catalog_entry->model_version);
+    if (!infer_license_status.valid) {
         auditLogger->Append(
             {
                 "infer_license_rejected",
@@ -1129,13 +1153,16 @@ void AiProdHttpServer::HandleInferRequest(
                 request_id,
                 request_id,
                 -1.0,
-                "当前 license 未授权该能力或版本。",
+                infer_license_status.reason,
                 {
-                    {"reason", "当前 license 未授权该能力或版本。"},
+                    {"reason", infer_license_status.reason},
+                    {"code", infer_license_status.code},
+                    {"stage", infer_license_status.stage},
+                    {"details", infer_license_status.details},
                     {"model_version", catalog_entry->model_version},
                 },
             });
-        ApplyJsonErrorResponse(403, "当前 license 未授权该能力或版本。", response);
+        ApplyLicenseErrorResponse(403, infer_license_status, response);
         return;
     }
 
@@ -1722,7 +1749,8 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
+        const auto capability_license_status = licenseManager.Evaluate(capability_entry.first, capability_entry.second.model_version);
+        if (!capability_license_status.valid) {
             auditLogger->Append(
                 {
                     action + "_license_rejected",
@@ -1732,13 +1760,16 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
                     request_id,
                     request_id,
                     -1.0,
-                    "当前 license 未授权该能力或版本。",
+                    capability_license_status.reason,
                     {
-                        {"reason", "当前 license 未授权该能力或版本。"},
+                        {"reason", capability_license_status.reason},
+                        {"code", capability_license_status.code},
+                        {"stage", capability_license_status.stage},
+                        {"details", capability_license_status.details},
                         {"model_version", capability_entry.second.model_version},
                     },
                 });
-            *error_message = "当前 license 未覆盖目标能力或版本。";
+            *error_message = capability_license_status.reason;
             return std::nullopt;
         }
     }
@@ -1749,15 +1780,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         capability_names.push_back(capability_entry.first);
     }
 
-    const nlohmann::json license_status = {
-        {"valid", current_license_status.valid},
-        {"reason", current_license_status.reason},
-        {"checked_at_cst", current_license_status.checked_at_cst},
-        {"customer_code", current_license_status.customer_code},
-        {"capability_scope", current_license_status.capability_scope},
-        {"version_constraints", current_license_status.version_constraints},
-        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-    };
+    const nlohmann::json license_status = BuildLicenseStatusPayload(current_license_status);
 
     nlohmann::json detail = {
         {"license_status", license_status},
@@ -1794,16 +1817,11 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
         {"source_summary", source_summary},
-        {"license_status", {
-            {"valid", current_license_status.valid},
-            {"reason", current_license_status.reason},
-            {"checked_at_cst", current_license_status.checked_at_cst},
-            {"customer_code", current_license_status.customer_code},
-            {"capability_scope", current_license_status.capability_scope},
-            {"version_constraints", current_license_status.version_constraints},
-            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-            {"runtime_revision_id", revision->id},
-        }},
+        {"license_status", [&]() {
+            nlohmann::json payload = BuildLicenseStatusPayload(current_license_status);
+            payload["runtime_revision_id"] = revision->id;
+            return payload;
+        }()},
         {"service_name", "ai-prod"},
         {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
         {"company_domain", "agilestar.cn"},
@@ -1901,7 +1919,8 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
         return;
     }
 
-    if (!licenseManager.GetStatus().valid) {
+    const auto current_transition_license_status = licenseManager.GetStatus();
+    if (!current_transition_license_status.valid) {
         auditLogger->Append(
             {
                 transition_request.action + "_license_rejected",
@@ -1911,15 +1930,21 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
                 request_id,
                 request_id,
                 -1.0,
-                "license 未授权或已失效，无法执行运行时切换。",
-                {{"reason", "license 未授权或已失效，无法执行运行时切换。"}},
+                current_transition_license_status.reason,
+                {
+                    {"reason", current_transition_license_status.reason},
+                    {"code", current_transition_license_status.code},
+                    {"stage", current_transition_license_status.stage},
+                    {"details", current_transition_license_status.details},
+                },
             });
-        ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
+        ApplyLicenseErrorResponse(403, current_transition_license_status, response);
         return;
     }
 
     for (const auto& entry : capabilityCatalog.ListEntries()) {
-        if (!licenseManager.QuickCheck(entry.capability_name, entry.model_version)) {
+        const auto entry_license_status = licenseManager.Evaluate(entry.capability_name, entry.model_version);
+        if (!entry_license_status.valid) {
             auditLogger->Append(
                 {
                     transition_request.action + "_license_rejected",
@@ -1929,10 +1954,16 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
                     request_id,
                     request_id,
                     -1.0,
-                    "当前 license 未覆盖已装载能力，无法执行运行时切换。",
-                    {{"model_version", entry.model_version}},
+                    entry_license_status.reason,
+                    {
+                        {"reason", entry_license_status.reason},
+                        {"code", entry_license_status.code},
+                        {"stage", entry_license_status.stage},
+                        {"details", entry_license_status.details},
+                        {"model_version", entry.model_version},
+                    },
                 });
-            ApplyJsonErrorResponse(403, "当前 license 未覆盖已装载能力，无法执行运行时切换。", response);
+            ApplyLicenseErrorResponse(403, entry_license_status, response);
             return;
         }
     }
@@ -2095,7 +2126,8 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
+        const auto capability_license_status = licenseManager.Evaluate(capability_entry.first, capability_entry.second.model_version);
+        if (!capability_license_status.valid) {
             auditLogger->Append(
                 {
                     "bootstrap_license_rejected",
@@ -2105,13 +2137,16 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
                     request_id,
                     request_id,
                     -1.0,
-                    "当前 license 未授权该能力或版本。",
+                    capability_license_status.reason,
                     {
-                        {"reason", "当前 license 未授权该能力或版本。"},
+                        {"reason", capability_license_status.reason},
+                        {"code", capability_license_status.code},
+                        {"stage", capability_license_status.stage},
+                        {"details", capability_license_status.details},
                         {"model_version", capability_entry.second.model_version},
                     },
                 });
-            set_error("当前 license 未覆盖启动阶段目标能力或版本。");
+            set_error(capability_license_status.reason);
             return false;
         }
     }
@@ -2127,18 +2162,10 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
         capability_names.push_back(capability_entry.first);
     }
 
-    const nlohmann::json license_status = {
-        {"valid", current_license_status.valid},
-        {"reason", current_license_status.reason},
-        {"checked_at_cst", current_license_status.checked_at_cst},
-        {"customer_code", current_license_status.customer_code},
-        {"capability_scope", current_license_status.capability_scope},
-        {"version_constraints", current_license_status.version_constraints},
-        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-        {"validated_capability_names", capability_names},
-        {"validation_action", "bootstrap"},
-        {"validation_entity_id", "bootstrap"},
-    };
+    nlohmann::json license_status = BuildLicenseStatusPayload(current_license_status);
+    license_status["validated_capability_names"] = capability_names;
+    license_status["validation_action"] = "bootstrap";
+    license_status["validation_entity_id"] = "bootstrap";
 
     const auto revision = revision_store.CreateRevision(
         GenerateRequestId(),
@@ -2170,19 +2197,14 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
         {"source_summary", scan_result.source_summary},
-        {"license_status", {
-            {"valid", current_license_status.valid},
-            {"reason", current_license_status.reason},
-            {"checked_at_cst", current_license_status.checked_at_cst},
-            {"customer_code", current_license_status.customer_code},
-            {"capability_scope", current_license_status.capability_scope},
-            {"version_constraints", current_license_status.version_constraints},
-            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-            {"validated_capability_names", capability_names},
-            {"validation_action", "bootstrap"},
-            {"validation_entity_id", "bootstrap"},
-            {"runtime_revision_id", revision->id},
-        }},
+        {"license_status", [&]() {
+            nlohmann::json payload = BuildLicenseStatusPayload(current_license_status);
+            payload["validated_capability_names"] = capability_names;
+            payload["validation_action"] = "bootstrap";
+            payload["validation_entity_id"] = "bootstrap";
+            payload["runtime_revision_id"] = revision->id;
+            return payload;
+        }()},
         {"service_name", "ai-prod"},
         {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
         {"company_domain", "agilestar.cn"},

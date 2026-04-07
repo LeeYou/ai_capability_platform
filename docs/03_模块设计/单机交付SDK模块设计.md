@@ -58,7 +58,7 @@
 
 ### 8.1 当前整改重点
 
-1. 收敛 SDK 与 ai-prod 在 runtime、license 校验、授权失败诊断上的一致语义。
+1. 已完成 SDK 与 ai-prod 在 license 诊断物料上的一致语义收敛：SDK 内 `license_tool` 已附带稳定诊断契约与测试向量。
 2. 确保 SDK 包内容来自 ai-builder / ai-prod 的真实交付链，而不是与生产主链路脱节的独立占位物。
 3. 建立 SDK 级装载校验、验收脚本与示例工程回归，保证现场集成可用。
 

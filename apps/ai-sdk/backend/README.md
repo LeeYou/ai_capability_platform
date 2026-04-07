@@ -13,6 +13,7 @@
 7. 自动生成 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`
 8. package 级验收清单、版本清单与交付摘要已对齐 shared schema，便于与 ai-builder 复用交付复审结构
 9. 记录包任务、目标、产物与审计日志
+10. `tools/license_tool` 现已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json` 与稳定授权诊断说明
 
 ## 本地运行
 

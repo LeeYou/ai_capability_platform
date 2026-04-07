@@ -43,7 +43,7 @@
 | P33 | 补齐 capability 级短时批次聚合与批次调度观测 | 已完成 |
 | P34 | 补齐 capability 级运行时编排元数据与全局资源编排诊断 | 已完成 |
 | P35 | 模型包 manifest / 插件 manifest 强校验与强消费收敛 | 未开始 |
-| P36 | 授权校验、诊断字段与 C++ 公共核心收敛 | 未开始 |
+| P36 | 授权校验、诊断字段与 C++ 公共核心收敛 | 已完成 |
 | P37 | capability 级新增接入检查清单与运行时门禁 | 未开始 |
 | P38 | 真实交付链 bootstrap / reload / infer / rollback 端到端校验 | 未开始 |
 
@@ -65,16 +65,16 @@
 
 1. 当前已完成 P9-P34 全量收口，`apps/ai-prod/cpp/` 已成为面向客户交付的 C++ 生产主链路，实现了真实插件执行、bootstrap、reload/rollback、revision/operation 持久化、显式状态机、请求跟踪、批处理、deadline、审计日志与运行时编排诊断。
 2. 当前已完成与 ai-license-mgr 的 License / 热更新 / 回滚语义统一：版本约束、`license_tool` 协同、密钥轮转后的运行态校验以及现场交付链路所需的能力范围与版本控制均已在代码与测试层完成对齐。
-3. 当前已完成内部验收外壳与交付材料收口：Python backend 仅保留 `/internal/*` 诊断能力，React 前端已补齐能力目录、在线控制台、revision/operation 视图、跨模块导航、共享 workspace 配置与总体联调复审展示。
-4. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 P35-P38 作为下一轮模块整改工作项。
+3. 当前已完成 P36：Python / C++ runtime 已统一输出 `result / code / stage / details / diagnostics_version` 稳定授权诊断字段；C++ `infer` / `reload` 拒绝响应与审计日志也已补齐稳定 code/stage/details。
+4. 当前已完成内部验收外壳与交付材料收口：Python backend 仅保留 `/internal/*` 诊断能力，React 前端已补齐能力目录、在线控制台、revision/operation 视图、跨模块导航、共享 workspace 配置与总体联调复审展示。
+5. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 P35-P38 作为下一轮模块整改工作项。
 
 ### 4.3 未完成
 
 1. P35：模型包 manifest / 插件 manifest 强校验与强消费收敛。
-2. P36：授权校验、诊断字段与 C++ 公共核心收敛。
-3. P37：capability 级新增接入检查清单与运行时门禁。
-4. P38：真实交付链 bootstrap / reload / infer / rollback 端到端校验。
+2. P37：capability 级新增接入检查清单与运行时门禁。
+3. P38：真实交付链 bootstrap / reload / infer / rollback 端到端校验。
 
 ### 4.4 阶段小结
 
-ai-prod 上一轮已完成 P9-P34，具备较成熟的 C++ HTTP、Runtime、插件装载、授权校验、状态机、批处理、调度观测与交付运行主链路；但结合本轮逻辑自洽审查，仍需继续完成模型包 / 插件 manifest 强契约、授权 C++ 公共核心与稳定诊断字段、capability 级接入门禁，以及真实交付链的端到端验证。因此本模块计划已进入新一轮整改阶段，新增 P35-P38 作为后续逐项实施与跟踪基线。
+ai-prod 当前已完成 P36：Python / C++ runtime 已补齐稳定授权诊断字段与拒绝场景的稳定诊断输出，运行时 snapshot / revision detail / HTTP license 响应与审计日志均已对齐 `result / code / stage / details / diagnostics_version` 语义；同时 infer / reload 的拒绝响应也已附带 `license_status` 结构，避免消费方依赖错误文本解析。后续仍需继续完成模型包 / 插件 manifest 强契约、capability 级接入门禁，以及真实交付链的端到端验证。

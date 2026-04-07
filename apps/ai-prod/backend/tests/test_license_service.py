@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.license_service import _is_version_allowed
+from app.services.license_service import _is_version_allowed, validate_license_bundle
 
 
 class LicenseServiceTestCase(unittest.TestCase):
@@ -25,3 +25,52 @@ class LicenseServiceTestCase(unittest.TestCase):
         self.assertFalse(_is_version_allowed("", constraints))
         self.assertTrue(_is_version_allowed("v1.0.0", constraints))
         self.assertFalse(_is_version_allowed("v1.0.1", constraints))
+
+    def test_validate_license_bundle_returns_stable_diagnostics(self) -> None:
+        from base64 import b64encode
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from datetime import datetime, timedelta, timezone
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        cst = timezone(timedelta(hours=8))
+        with TemporaryDirectory() as temp_dir:
+            license_root = Path(temp_dir)
+            private_key = ed25519.Ed25519PrivateKey.generate()
+            public_key = private_key.public_key()
+            payload = {
+                "customer_code": "cust_prod",
+                "capability_scope": ["ocr"],
+                "hardware_fingerprint": None,
+                "start_at_cst": (datetime.now(cst) - timedelta(days=1)).isoformat(),
+                "expire_at_cst": (datetime.now(cst) + timedelta(days=1)).isoformat(),
+                "version_constraints": {"allowed_versions": ["1.0.0"]},
+            }
+            signature = private_key.sign(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+            (license_root / "license.bin").write_text(
+                json.dumps({"algorithm": "ed25519", "payload": payload, "signature": b64encode(signature).decode("ascii")}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (license_root / "pubkey.pem").write_bytes(
+                public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+            )
+
+            result = validate_license_bundle(
+                license_root,
+                hardware_features={},
+                capability_name="face_detect",
+                product_version="1.2.0",
+            )
+
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["result"], "failed")
+        self.assertEqual(result["code"], "capability_scope_denied")
+        self.assertEqual(result["stage"], "capability_scope")
+        self.assertEqual(result["diagnostics_version"], "1.0")
+        self.assertEqual(result["details"]["requested_capability"], "face_detect")

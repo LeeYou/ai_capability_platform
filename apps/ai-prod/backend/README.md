@@ -7,6 +7,7 @@ ai-prod backend 当前定位为**内部测试验收外壳与诊断查询服务**
 1. 提供面向内部测试验收外壳的 `/internal/*` 诊断查询接口
 2. 共享 SQLite revision / operation / audit 日志等验收查询能力
 3. 保留 Python runtime service 逻辑用于内部单元测试与行为对照，不再通过公开 API 承担生产职责
+4. Python runtime license/status 诊断已输出稳定字段：`result / code / stage / details / diagnostics_version`
 
 ## 本地运行
 
@@ -25,6 +26,16 @@ SQLite 数据库默认位于 `${AI_CAP_HOST_ROOT}/data/ai_prod.db`。
 cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/backend
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
+
+## 授权诊断字段
+
+`validate_license_bundle`、runtime snapshot 与 runtime revision detail 中的 `license_status` 现已统一输出：
+
+- `result`
+- `code`
+- `stage`
+- `details`
+- `diagnostics_version`
 
 ## C++ HTTP 迭代实现
 

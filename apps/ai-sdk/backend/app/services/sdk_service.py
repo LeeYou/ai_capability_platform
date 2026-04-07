@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import SdkArtifactModel, SdkPackageModel, SdkTargetModel
 from app.services.audit_service import append_audit_log
+from app.services.validation_contracts import DIAGNOSTICS_VERSION, build_validation_contract, build_validation_vectors
 
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -332,8 +333,9 @@ def _render_acceptance_checklist(capability_name: str, model_version: str, targe
             "2. 校验 `manifest/manifest.json` 与 `checksums.txt` 可读且内容完整。",
             "3. 参考 `docs/README_集成说明.md` 编译并运行示例工程。",
             "4. 使用 `tools/license_tool/README.md` 中说明构建并执行 `license_tool verify`。",
-            "5. 运行 `validation/verify_sdk_package.py <sdk_dir>` 完成标准目录快速校验。",
-            f"6. {'核对 jni/ 目录与 Java 示例。' if jni_enabled else '确认当前目标无需 JNI 目录。'}",
+            "5. 核对 `tools/license_tool/LICENSE_DIAGNOSTICS.json` 与 `tools/license_tool/VALIDATION_VECTORS.json`。",
+            "6. 运行 `validation/verify_sdk_package.py <sdk_dir>` 完成标准目录快速校验。",
+            f"7. {'核对 jni/ 目录与 Java 示例。' if jni_enabled else '确认当前目标无需 JNI 目录。'}",
             "",
         ]
     )
@@ -353,7 +355,8 @@ def _render_deployment_guide(capability_name: str, model_version: str, target_na
             "1. 将 `lib/`、`include/`、`models/`、`licenses/` 与 `tools/` 一并下发到目标环境。",
             "2. 按 `docs/README_集成说明.md` 完成 ABI 校验、初始化与推理接入。",
             "3. 如需现场核验授权，先构建 `tools/license_tool`，再执行 `license_tool verify`。",
-            "4. 交付验收前执行 `validation/verify_sdk_package.py` 与示例工程编译校验。",
+            "4. 如需接入稳定授权诊断，请同步分发 `tools/license_tool/LICENSE_DIAGNOSTICS.json` 与 `VALIDATION_VECTORS.json`。",
+            "5. 交付验收前执行 `validation/verify_sdk_package.py` 与示例工程编译校验。",
             "",
         ]
     )
@@ -379,6 +382,8 @@ def _render_license_tool_integration_doc(target_name: str) -> str:
             "```bash",
             "./build/license_tool verify ../../licenses/license.bin",
             "```",
+            "",
+            "稳定诊断字段与结果码定义见 `tools/license_tool/LICENSE_DIAGNOSTICS.json`，金标准测试向量见 `tools/license_tool/VALIDATION_VECTORS.json`。",
             "",
             "如需生成或预计算硬件指纹，请继续参考 `tools/license_tool/HARDWARE_FINGERPRINT.md`。",
             "",
@@ -458,6 +463,8 @@ def _copy_license_tool_bundle(destination_dir: Path) -> None:
         copy_to.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, copy_to)
     _write_text(destination_dir / "VERSION", LICENSE_TOOL_VERSION + "\n")
+    _write_text(destination_dir / "LICENSE_DIAGNOSTICS.json", json.dumps(build_validation_contract(), ensure_ascii=False, indent=2, sort_keys=True))
+    _write_text(destination_dir / "VALIDATION_VECTORS.json", json.dumps(build_validation_vectors(), ensure_ascii=False, indent=2, sort_keys=True))
     _write_text(
         destination_dir / "manifest.json",
         json.dumps(
@@ -466,8 +473,9 @@ def _copy_license_tool_bundle(destination_dir: Path) -> None:
                 "version": LICENSE_TOOL_VERSION,
                 "bundle_format": "source_bundle",
                 "build_command": "cmake -S . -B build && cmake --build build --parallel",
+                "diagnostics_version": DIAGNOSTICS_VERSION,
                 "source_files": sorted(LICENSE_TOOL_SOURCE_FILES),
-                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md"],
+                "documents": ["README.md", "ERROR_CODES.md", "HARDWARE_FINGERPRINT.md", "LICENSE_DIAGNOSTICS.json", "VALIDATION_VECTORS.json"],
             },
             ensure_ascii=False,
             indent=2,
@@ -497,6 +505,12 @@ def _copy_license_tool_bundle(destination_dir: Path) -> None:
                 "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b",
                 "```",
                 "",
+                "## 稳定诊断契约",
+                "",
+                f"- 诊断契约版本：`{DIAGNOSTICS_VERSION}`",
+                "- 稳定字段定义见 `LICENSE_DIAGNOSTICS.json`。",
+                "- 金标准测试向量见 `VALIDATION_VECTORS.json`。",
+                "",
             ]
         ),
     )
@@ -514,6 +528,18 @@ def _copy_license_tool_bundle(destination_dir: Path) -> None:
                 "| 4 | 解析 license 文件失败 |",
                 "| 5 | 验证 license 失败 |",
                 "| 6 | 未知 mode |",
+                "",
+                "## 稳定诊断 code",
+                "",
+                "| code | 含义 |",
+                "| --- | --- |",
+                "| license_valid | 校验通过 |",
+                "| signature_invalid | 签名校验失败 |",
+                "| time_window_not_started | 尚未生效 |",
+                "| time_window_expired | 已过期 |",
+                "| hardware_fingerprint_mismatch | 硬件指纹不匹配 |",
+                "| capability_scope_denied | 能力范围不匹配 |",
+                "| version_constraints_denied | 版本约束不匹配 |",
                 "",
             ]
         ),
@@ -560,6 +586,8 @@ def _write_verify_sdk_package_script(validation_dir: Path) -> None:
                 "        'docs',",
                 "        'examples',",
                 "        'tools/license_tool/manifest.json',",
+                "        'tools/license_tool/LICENSE_DIAGNOSTICS.json',",
+                "        'tools/license_tool/VALIDATION_VECTORS.json',",
                 "        'validation/verify_sdk_package.py',",
                 "        'manifest/manifest.json',",
                 "        'checksums.txt',",
@@ -665,6 +693,8 @@ def _create_sdk_acceptance_checklist(
         "docs",
         "examples",
         "tools/license_tool/manifest.json",
+        "tools/license_tool/LICENSE_DIAGNOSTICS.json",
+        "tools/license_tool/VALIDATION_VECTORS.json",
         "validation/verify_sdk_package.py",
         "manifest/manifest.json",
         "checksums.txt",
@@ -749,6 +779,8 @@ def _create_version_manifest(
             "docs/DEPLOYMENT_GUIDE.md",
             "docs/LICENSE_TOOL.md",
             "tools/license_tool/manifest.json",
+            "tools/license_tool/LICENSE_DIAGNOSTICS.json",
+            "tools/license_tool/VALIDATION_VECTORS.json",
             "validation/verify_sdk_package.py",
         ):
             file_path = output_dir / relative_path
@@ -1033,7 +1065,7 @@ def create_sdk_package(
             "gpu_fallback": True,
             "delivery_package_alignment": {
                 "sdk_dir": sdk_dir_name,
-                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed"},
+                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
             },
         }
         sdk_manifest_path = manifest_dir / "manifest.json"
@@ -1082,6 +1114,8 @@ def create_sdk_package(
             ("example", examples_dir / "sample_c_api.c"),
             ("example", examples_dir / "CMakeLists.txt"),
             ("tool", tools_dir / "license_tool" / "manifest.json"),
+            ("tool", tools_dir / "license_tool" / "LICENSE_DIAGNOSTICS.json"),
+            ("tool", tools_dir / "license_tool" / "VALIDATION_VECTORS.json"),
             ("validation", validation_dir / "verify_sdk_package.py"),
             ("archive", archive_path),
         ):
@@ -1132,7 +1166,7 @@ def create_sdk_package(
         "model_version": safe_model_version,
         "requested_targets": sorted(set(normalized_targets)),
         "jni_enabled": jni_enabled,
-        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed"},
+        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
         "delivery_package_alignment": True,
         "targets": [
             {

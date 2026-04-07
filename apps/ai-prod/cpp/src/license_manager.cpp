@@ -16,6 +16,8 @@
 
 namespace {
 
+constexpr const char* kDiagnosticsVersion = "1.0";
+
 std::string JsonString(const std::string& value) {
     return nlohmann::json(value).dump();
 }
@@ -47,6 +49,35 @@ std::vector<int> VersionTuple(const std::string& raw_value) {
     return parts;
 }
 
+LicenseStatusInfo BuildFailureStatus(
+    const LicenseStatusInfo& base_status,
+    const std::string& code,
+    const std::string& stage,
+    const std::string& reason,
+    nlohmann::json details) {
+    LicenseStatusInfo status = base_status;
+    status.valid = false;
+    status.result = "failed";
+    status.code = code;
+    status.stage = stage;
+    status.reason = reason;
+    status.details = std::move(details);
+    status.diagnostics_version = kDiagnosticsVersion;
+    return status;
+}
+
+LicenseStatusInfo BuildSuccessStatus(const LicenseStatusInfo& base_status, nlohmann::json details) {
+    LicenseStatusInfo status = base_status;
+    status.valid = true;
+    status.result = "passed";
+    status.code = "license_valid";
+    status.stage = "success";
+    status.reason = "license 校验通过。";
+    status.details = std::move(details);
+    status.diagnostics_version = kDiagnosticsVersion;
+    return status;
+}
+
 }
 
 LicenseManager::LicenseManager(
@@ -73,15 +104,60 @@ bool LicenseManager::Reload() {
 }
 
 bool LicenseManager::QuickCheck(const std::string& capability_name, const std::string& product_version) const {
+    return Evaluate(capability_name, product_version).valid;
+}
+
+LicenseStatusInfo LicenseManager::Evaluate(const std::string& capability_name, const std::string& product_version) const {
     std::lock_guard<std::mutex> guard(mutex);
-    if (!initialized || capability_name.empty() || !status.valid) {
-        return false;
+    if (!initialized || !status.valid) {
+        return status;
     }
-    if (!status.capability_scope.empty() &&
+    if (!capability_name.empty() &&
+        !status.capability_scope.empty() &&
         std::find(status.capability_scope.begin(), status.capability_scope.end(), capability_name) == status.capability_scope.end()) {
-        return false;
+        return BuildFailureStatus(
+            status,
+            "capability_scope_denied",
+            "capability_scope",
+            "能力范围不匹配。",
+            {
+                {"check", "capability_scope"},
+                {"requested_capability", capability_name},
+                {"allowed_capabilities", status.capability_scope},
+            });
     }
-    return IsVersionAllowed(product_version, status.version_constraints);
+    if (!product_version.empty() && !IsVersionAllowed(product_version, status.version_constraints)) {
+        return BuildFailureStatus(
+            status,
+            "version_constraints_denied",
+            "version_constraints",
+            "版本约束不匹配。",
+            {
+                {"check", "version_constraints"},
+                {"requested_product_version", product_version},
+                {"constraints", status.version_constraints},
+            });
+    }
+    if (product_version.empty() && capability_name.size() > 0 && status.version_constraints.is_object() && !status.version_constraints.empty()) {
+        return BuildFailureStatus(
+            status,
+            "version_constraints_denied",
+            "version_constraints",
+            "版本约束不匹配。",
+            {
+                {"check", "version_constraints"},
+                {"requested_product_version", nullptr},
+                {"constraints", status.version_constraints},
+            });
+    }
+    return BuildSuccessStatus(
+        status,
+        {
+            {"check", "success"},
+            {"requested_capability", capability_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(capability_name)},
+            {"requested_product_version", product_version.empty() ? nlohmann::json(nullptr) : nlohmann::json(product_version)},
+            {"provided_hardware_fingerprint", status.hardware_fingerprint.empty() ? nlohmann::json(nullptr) : nlohmann::json(status.hardware_fingerprint)},
+        });
 }
 
 LicenseStatusInfo LicenseManager::GetStatus() const {
@@ -397,9 +473,14 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     const auto paths = GetBundlePaths();
     LicenseStatusInfo next_status;
     next_status.checked_at_cst = CurrentCstIsoString();
+    next_status.diagnostics_version = kDiagnosticsVersion;
 
     if (!std::filesystem::exists(paths.license_path) || !std::filesystem::exists(paths.pubkey_path)) {
         next_status.reason = "标准 license 文件不存在。";
+        next_status.result = "failed";
+        next_status.code = "bundle_missing";
+        next_status.stage = "bundle";
+        next_status.details = {{"check", "bundle"}, {"license_path", paths.license_path.string()}, {"pubkey_path", paths.pubkey_path.string()}};
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -420,6 +501,10 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
         input >> bundle;
     } catch (const std::exception&) {
         next_status.reason = "license 文件格式非法。";
+        next_status.result = "failed";
+        next_status.code = "bundle_invalid";
+        next_status.stage = "bundle";
+        next_status.details = {{"check", "bundle"}, {"license_path", paths.license_path.string()}};
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -432,6 +517,10 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     const auto signature_it = bundle.find("signature");
     if (payload_it == bundle.end() || signature_it == bundle.end() || !payload_it->is_object() || !signature_it->is_string()) {
         next_status.reason = "license 文件内容非法。";
+        next_status.result = "failed";
+        next_status.code = "bundle_content_invalid";
+        next_status.stage = "bundle";
+        next_status.details = {{"check", "bundle_content"}};
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -454,7 +543,12 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     next_status.hardware_fingerprint = payload.value("hardware_fingerprint", std::string());
 
     if (!VerifySignature(payload, signature_base64, paths)) {
-        next_status.reason = "签名校验失败。";
+        next_status = BuildFailureStatus(
+            next_status,
+            "signature_invalid",
+            "signature",
+            "签名校验失败。",
+            {{"check", "signature"}, {"signature_valid", false}});
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -467,7 +561,12 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     const std::string expire_at = NormalizeCstDateTime(payload.value("expire_at_cst", std::string()));
     const std::string now_cst = NormalizeCstDateTime(next_status.checked_at_cst);
     if (!start_at.empty() && now_cst < start_at) {
-        next_status.reason = "license 尚未生效。";
+        next_status = BuildFailureStatus(
+            next_status,
+            "time_window_not_started",
+            "time_window",
+            "license 尚未生效。",
+            {{"check", "time_window"}, {"checked_at_cst", next_status.checked_at_cst}, {"start_at_cst", payload.value("start_at_cst", std::string())}});
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -476,7 +575,12 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
         return false;
     }
     if (!expire_at.empty() && now_cst > expire_at) {
-        next_status.reason = "license 已过期。";
+        next_status = BuildFailureStatus(
+            next_status,
+            "time_window_expired",
+            "time_window",
+            "license 已过期。",
+            {{"check", "time_window"}, {"checked_at_cst", next_status.checked_at_cst}, {"expire_at_cst", payload.value("expire_at_cst", std::string())}});
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -488,7 +592,16 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
     const std::string expected_fingerprint = payload.value("hardware_fingerprint", std::string());
     const std::string actual_fingerprint = BuildHardwareFingerprint();
     if (!expected_fingerprint.empty() && !actual_fingerprint.empty() && expected_fingerprint != actual_fingerprint) {
-        next_status.reason = "硬件指纹不匹配。";
+        next_status = BuildFailureStatus(
+            next_status,
+            "hardware_fingerprint_mismatch",
+            "hardware_fingerprint",
+            "硬件指纹不匹配。",
+            {
+                {"check", "hardware_fingerprint"},
+                {"expected_hardware_fingerprint", expected_fingerprint},
+                {"provided_hardware_fingerprint", actual_fingerprint},
+            });
         lastReloadFailureStatus = next_status;
         if (!keep_last_valid_status || !initialized) {
             status = next_status;
@@ -497,9 +610,14 @@ bool LicenseManager::ReloadLocked(bool keep_last_valid_status) {
         return false;
     }
 
-    next_status.valid = true;
-    next_status.reason = "license 校验通过。";
-    status = next_status;
+    status = BuildSuccessStatus(
+        next_status,
+        {
+            {"check", "success"},
+            {"requested_capability", nullptr},
+            {"requested_product_version", nullptr},
+            {"provided_hardware_fingerprint", actual_fingerprint.empty() ? nlohmann::json(nullptr) : nlohmann::json(actual_fingerprint)},
+        });
     lastReloadFailureStatus = LicenseStatusInfo{};
     initialized = true;
     bool exists = false;

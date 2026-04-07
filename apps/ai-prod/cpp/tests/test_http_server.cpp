@@ -108,6 +108,11 @@ void WriteSnapshot(
         << "\"license_status\":{"
         << "\"valid\":true,"
         << "\"reason\":\"ok\","
+        << "\"result\":\"passed\","
+        << "\"code\":\"license_valid\","
+        << "\"stage\":\"success\","
+        << "\"details\":{\"check\":\"success\"},"
+        << "\"diagnostics_version\":\"1.0\","
         << "\"checked_at_cst\":\"2026-04-02T17:00:00+08:00\","
         << "\"customer_code\":\"cust_prod\","
         << "\"capability_scope\":[\"face_detect\"],"
@@ -464,6 +469,12 @@ int main(int argc, char** argv) {
     }
     const auto license_status_payload = nlohmann::json::parse(license_status_result->body);
     if (!Expect(license_status_payload["valid"] == true, "license status should be valid")) {
+        return 1;
+    }
+    if (!Expect(license_status_payload["code"] == "license_valid", "license status should expose stable code")) {
+        return 1;
+    }
+    if (!Expect(license_status_payload["diagnostics_version"] == "1.0", "license status should expose diagnostics version")) {
         return 1;
     }
     if (!Expect(license_status_payload["capability_scope"].size() == 3, "license status should expose capability scope")) {
@@ -1070,11 +1081,19 @@ int main(int argc, char** argv) {
     if (!Expect(denied_infer_result && denied_infer_result->status == 403, "infer route should reject capability outside license scope")) {
         return 1;
     }
+    const auto denied_infer_payload = nlohmann::json::parse(denied_infer_result->body);
+    if (!Expect(denied_infer_payload["license_status"]["code"] == "capability_scope_denied", "infer rejection should expose stable code")) {
+        return 1;
+    }
     const auto denied_reload_result = proxy_client.Post(
         "/api/v1/admin/reload",
         "{\"action\":\"reload\"}",
         "application/json");
     if (!Expect(denied_reload_result && denied_reload_result->status == 403, "reload route should reject invalid license status")) {
+        return 1;
+    }
+    const auto denied_reload_payload = nlohmann::json::parse(denied_reload_result->body);
+    if (!Expect(denied_reload_payload["license_status"]["code"] == "capability_scope_denied", "reload rejection should expose stable code")) {
         return 1;
     }
     license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "ocr", "pose_estimate"});

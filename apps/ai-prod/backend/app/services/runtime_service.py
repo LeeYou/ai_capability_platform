@@ -56,6 +56,9 @@ def _validate_runtime_capabilities_license(
                 entity_id=capability_name,
                 detail={
                     "reason": capability_license_status["reason"],
+                    "code": capability_license_status["code"],
+                    "stage": capability_license_status["stage"],
+                    "details": capability_license_status["details"],
                     "model_version": capability["model_version"],
                 },
             )
@@ -468,6 +471,8 @@ def get_license_status(
             detail={
                 "valid": bool(status["valid"]),
                 "reason": status["reason"],
+                "code": status["code"],
+                "stage": status["stage"],
                 "runtime_revision_id": _ACTIVE_REVISION_ID,
             },
         )
@@ -504,6 +509,9 @@ def infer(
                 entity_id=capability_name,
                 detail={
                     "reason": license_status["reason"],
+                    "code": license_status["code"],
+                    "stage": license_status["stage"],
+                    "details": license_status["details"],
                     "model_version": capability["model_version"],
                 },
             )

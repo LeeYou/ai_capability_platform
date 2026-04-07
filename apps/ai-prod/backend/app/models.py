@@ -33,6 +33,11 @@ class CapabilityListResponse(BaseModel):
 class LicenseStatusResponse(BaseModel):
     valid: bool
     reason: str
+    result: str
+    code: str
+    stage: str
+    details: dict[str, Any] = Field(default_factory=dict)
+    diagnostics_version: str
     checked_at_cst: str
     customer_code: str | None = None
     capability_scope: list[str] = Field(default_factory=list)
