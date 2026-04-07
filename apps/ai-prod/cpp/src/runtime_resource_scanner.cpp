@@ -793,6 +793,7 @@ nlohmann::json SerializeRuntimeCapabilityRecord(const RuntimeCapabilityRecord& r
         {"allow_resource_sharing", record.allow_resource_sharing},
         {"model_manifest", record.model_manifest},
         {"plugin_manifest", record.plugin_manifest},
+        {"admission_checklist", record.admission_checklist},
     };
 }
 
@@ -880,6 +881,15 @@ std::optional<RuntimeCapabilityRecord> DeserializeRuntimeCapabilityRecord(
             return std::nullopt;
         }
         record.plugin_manifest = payload["plugin_manifest"];
+    }
+    if (payload.contains("admission_checklist")) {
+        if (!payload["admission_checklist"].is_object()) {
+            if (error_message != nullptr) {
+                *error_message = "admission_checklist 必须是对象。";
+            }
+            return std::nullopt;
+        }
+        record.admission_checklist = payload["admission_checklist"];
     }
     return record;
 }

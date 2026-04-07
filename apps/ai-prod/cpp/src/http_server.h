@@ -87,6 +87,11 @@ private:
         const nlohmann::json& batch_metrics,
         const std::optional<nlohmann::json>& execution_metrics) const;
     bool EnsureRuntimeReady();
+    bool ApplyCapabilityAdmissionGate(
+        const std::string& action,
+        std::map<std::string, RuntimeCapabilityRecord>* capabilities,
+        nlohmann::json* source_summary,
+        std::string* error_message);
     bool BootstrapRuntime(const std::string& request_id, std::string* error_message);
     std::optional<nlohmann::json> ExecuteRuntimeTransition(
         const std::string& action,

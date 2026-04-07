@@ -334,6 +334,35 @@ void PluginExecutor::RecordLifecycleSample(
     target_binding->max_lifecycle_time_ms = std::max(target_binding->max_lifecycle_time_ms, lifecycle_elapsed_ms);
 }
 
+bool PluginExecutor::Preflight(
+    const CapabilityCatalogEntry& entry,
+    const std::string& device,
+    nlohmann::json* plugin_info,
+    std::string* error_message,
+    PluginFailureKind* failure_kind) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* binding = nullptr;
+    if (!EnsureBindingLoaded(entry, device, &binding, error_message)) {
+        if (failure_kind != nullptr) {
+            *failure_kind = error_message != nullptr && error_message->find("缺少必要导出符号") != std::string::npos
+                                ? PluginFailureKind::kBindingLoadFailure
+                                : (error_message != nullptr &&
+                                           (error_message->find("预热失败") != std::string::npos ||
+                                            error_message->find("健康检查失败") != std::string::npos)
+                                       ? PluginFailureKind::kLifecycleFailure
+                                       : PluginFailureKind::kBindingLoadFailure);
+        }
+        return false;
+    }
+    if (plugin_info != nullptr) {
+        *plugin_info = binding->plugin_info_loaded ? SerializePluginInfo(binding->plugin_info) : nlohmann::json(nullptr);
+    }
+    if (failure_kind != nullptr) {
+        *failure_kind = PluginFailureKind::kNone;
+    }
+    return true;
+}
+
 bool PluginExecutor::Execute(
     const CapabilityCatalogEntry& entry,
     std::size_t slot_index,

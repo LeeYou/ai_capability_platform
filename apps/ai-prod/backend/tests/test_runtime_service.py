@@ -223,6 +223,12 @@ class RuntimeServiceTestCase(unittest.TestCase):
         capabilities_by_name = {item["capability_name"]: item for item in capabilities}
         self.assertEqual(capabilities_by_name["face_detect"]["max_batch_size"], 4)
         self.assertEqual(capabilities_by_name["face_detect"]["pool_size"], 3)
+        self.assertTrue(capabilities_by_name["face_detect"]["admission_checklist"]["ready"])
+        checklist_items = {
+            item["code"]: item for item in capabilities_by_name["face_detect"]["admission_checklist"]["items"]
+        }
+        self.assertEqual(checklist_items["runtime_probe"]["status"], "not_applicable")
+        self.assertTrue(snapshot_payload["capabilities"][0]["admission_checklist"]["ready"])
 
     def test_infer_uses_dual_layer_license_validation_and_gpu_fallback(self) -> None:
         settings = get_settings()

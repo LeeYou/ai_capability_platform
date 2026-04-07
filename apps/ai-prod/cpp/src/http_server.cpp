@@ -316,6 +316,156 @@ bool CanFallbackToCpu(const CapabilityCatalogEntry& entry, const std::string& re
     return failure_kind == PluginFailureKind::kBindingLoadFailure || failure_kind == PluginFailureKind::kLifecycleFailure;
 }
 
+CapabilityCatalogEntry BuildCapabilityCatalogEntryForRecord(
+    const RuntimeCapabilityRecord& capability_record,
+    int revision_id,
+    const ProxyConfig& config) {
+    const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
+    return CapabilityCatalogEntry{
+        capability_record.capability_name,
+        capability_record.plugin_target,
+        capability_record.model_version,
+        capability_record.backend_type,
+        capability_record.active_source,
+        capability_record.declared_device_mode == "auto"
+            ? (config.gpu_available ? "gpu/cpu" : "cpu")
+            : capability_record.declared_device_mode,
+        capability_record.model_root,
+        capability_record.binary_path,
+        capability_record.capability_priority,
+        pool_size,
+        capability_record.max_batch_size,
+        capability_record.min_batch_size,
+        capability_record.batch_wait_timeout_ms >= 0 ? capability_record.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms,
+        capability_record.queue_wait_timeout_ms >= 0 ? capability_record.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms,
+        capability_record.max_pending_request_count >= 0
+            ? capability_record.max_pending_request_count
+            : config.infer_queue_max_pending_requests,
+        capability_record.infer_timeout_ms,
+        capability_record.estimated_avg_infer_time_ms,
+        capability_record.p95_infer_time_ms,
+        capability_record.max_concurrent_requests,
+        capability_record.supports_concurrent_infer,
+        capability_record.allow_resource_sharing,
+        revision_id,
+        capability_record.admission_checklist,
+    };
+}
+
+void SetChecklistItem(
+    nlohmann::json* checklist,
+    const std::string& code,
+    const std::string& label,
+    bool required,
+    const std::string& status,
+    const std::string& detail) {
+    if (!checklist->contains("items") || !(*checklist)["items"].is_array()) {
+        (*checklist)["items"] = nlohmann::json::array();
+    }
+    auto& items = (*checklist)["items"];
+    for (auto& item : items) {
+        if (item.is_object() && item.value("code", "") == code) {
+            item["label"] = label;
+            item["required"] = required;
+            item["status"] = status;
+            item["detail"] = detail;
+            return;
+        }
+    }
+    items.push_back(
+        {
+            {"code", code},
+            {"label", label},
+            {"required", required},
+            {"status", status},
+            {"detail", detail},
+        });
+}
+
+void FinalizeChecklist(nlohmann::json* checklist) {
+    if (!checklist->contains("items") || !(*checklist)["items"].is_array()) {
+        (*checklist)["items"] = nlohmann::json::array();
+    }
+    nlohmann::json failed_codes = nlohmann::json::array();
+    for (const auto& item : (*checklist)["items"]) {
+        if (!item.is_object() || !item.value("required", false)) {
+            continue;
+        }
+        if (item.value("status", "") != "passed") {
+            failed_codes.push_back(item.value("code", ""));
+        }
+    }
+    (*checklist)["failed_codes"] = failed_codes;
+    (*checklist)["ready"] = failed_codes.empty();
+}
+
+nlohmann::json BuildBaseAdmissionChecklist(const RuntimeCapabilityRecord& capability_record) {
+    nlohmann::json checklist = {
+        {"capability_name", capability_record.capability_name},
+        {"items", nlohmann::json::array()},
+        {"failed_codes", nlohmann::json::array()},
+        {"ready", false},
+    };
+    SetChecklistItem(
+        &checklist,
+        "manifest_contract",
+        "manifest 契约",
+        true,
+        "passed",
+        "模型包 manifest 与插件 manifest 已通过强校验。");
+    const auto runtime_contract = capability_record.model_manifest.value("runtime_contract", nlohmann::json::object());
+    const auto runtime_inputs = runtime_contract.value("runtime_inputs", nlohmann::json::object());
+    const std::string input_type =
+        capability_record.model_manifest.value("preprocessing", nlohmann::json::object()).value("input_type", "");
+    SetChecklistItem(
+        &checklist,
+        "sample_input_contract",
+        "样本输入契约",
+        true,
+        !input_type.empty() && runtime_inputs.contains("preprocess_path") && runtime_inputs.contains("labels_path")
+            ? "passed"
+            : "failed",
+        !input_type.empty() && runtime_inputs.contains("preprocess_path") && runtime_inputs.contains("labels_path")
+            ? "输入类型、预处理配置与标签路径齐全。"
+            : "缺少 preprocessing.input_type 或 runtime_inputs 关键路径。");
+    const auto dependency_summary =
+        capability_record.plugin_manifest.value("dependency_summary", nlohmann::json::object());
+    SetChecklistItem(
+        &checklist,
+        "abi_contract",
+        "插件 ABI 契约",
+        true,
+        dependency_summary.value("abi", std::string()).empty() ? "failed" : "passed",
+        dependency_summary.value("abi", std::string()).empty()
+            ? "插件 manifest 缺少 ABI 声明。"
+            : "插件 manifest 已声明 ABI 与运行时依赖。");
+    const bool artifacts_present = !capability_record.model_root.empty() && std::filesystem::exists(capability_record.model_root) &&
+                                   !capability_record.binary_path.empty() && std::filesystem::exists(capability_record.binary_path);
+    SetChecklistItem(
+        &checklist,
+        "artifact_presence",
+        "运行时产物存在性",
+        true,
+        artifacts_present ? "passed" : "failed",
+        artifacts_present ? "模型目录与插件二进制均存在。" : "模型目录或插件二进制缺失。");
+    SetChecklistItem(
+        &checklist,
+        "license_gate",
+        "License 门禁",
+        true,
+        "pending",
+        "待 bootstrap/reload/rollback 期间完成 license 约束校验。");
+    SetChecklistItem(
+        &checklist,
+        "runtime_probe",
+        "运行时装载门禁",
+        true,
+        "pending",
+        "待运行时预装载探测。");
+    FinalizeChecklist(&checklist);
+    return checklist;
+}
+
 nlohmann::json BuildSnapshotCapabilityPayload(
     const RuntimeCapabilityRecord& capability_record,
     int revision_id,
@@ -353,6 +503,7 @@ nlohmann::json BuildSnapshotCapabilityPayload(
         {"max_concurrent_requests", capability_record.max_concurrent_requests},
         {"supports_concurrent_infer", capability_record.supports_concurrent_infer},
         {"allow_resource_sharing", capability_record.allow_resource_sharing},
+        {"admission_checklist", capability_record.admission_checklist},
         {"revision_id", revision_id},
     };
 }
@@ -806,6 +957,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                     batch_metrics,
                     execution_metrics)},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
+                {"admission_checklist", entry.admission_checklist},
                 {"revision_id", entry.revision_id},
             });
         orchestration_assessments.push_back(BuildOrchestrationAssessment(
@@ -1773,6 +1925,9 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
             return std::nullopt;
         }
     }
+    if (!ApplyCapabilityAdmissionGate(action, &selected_capabilities, &source_summary, error_message)) {
+        return std::nullopt;
+    }
 
     nlohmann::json capability_names = nlohmann::json::array();
     nlohmann::json snapshot_capabilities = nlohmann::json::array();
@@ -2103,6 +2258,137 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
         kDefaultJsonContentType);
 }
 
+bool AiProdHttpServer::ApplyCapabilityAdmissionGate(
+    const std::string& action,
+    std::map<std::string, RuntimeCapabilityRecord>* capabilities,
+    nlohmann::json* source_summary,
+    std::string* error_message) {
+    if (capabilities == nullptr || source_summary == nullptr) {
+        if (error_message != nullptr) {
+            *error_message = "运行时门禁参数无效。";
+        }
+        return false;
+    }
+
+    std::vector<CapabilityCatalogEntry> candidate_entries;
+    candidate_entries.reserve(capabilities->size());
+    for (auto& capability_entry : *capabilities) {
+        capability_entry.second.admission_checklist = BuildBaseAdmissionChecklist(capability_entry.second);
+        SetChecklistItem(
+            &capability_entry.second.admission_checklist,
+            "license_gate",
+            "License 门禁",
+            true,
+            "passed",
+            "当前 capability 已通过 license 范围与版本约束校验。");
+        FinalizeChecklist(&capability_entry.second.admission_checklist);
+        candidate_entries.push_back(BuildCapabilityCatalogEntryForRecord(capability_entry.second, 0, config));
+    }
+    pluginExecutor.SyncEntries(candidate_entries);
+
+    nlohmann::json gate_failures = nlohmann::json::array();
+    std::map<std::string, RuntimeCapabilityRecord> admitted_capabilities;
+    for (auto& capability_entry : *capabilities) {
+        auto& record = capability_entry.second;
+        const auto catalog_entry = BuildCapabilityCatalogEntryForRecord(record, 0, config);
+        const std::string requested_device = catalog_entry.device_mode == "cpu" ? "cpu" : "gpu";
+        std::string executed_device = requested_device;
+        std::string gate_error;
+        PluginFailureKind failure_kind = PluginFailureKind::kNone;
+        nlohmann::json plugin_info = nlohmann::json(nullptr);
+        bool gate_ok = pluginExecutor.Preflight(
+            catalog_entry,
+            requested_device,
+            &plugin_info,
+            &gate_error,
+            &failure_kind);
+        bool fallback_applied = false;
+        if (!gate_ok && CanFallbackToCpu(catalog_entry, requested_device, failure_kind)) {
+            executed_device = "cpu";
+            fallback_applied = true;
+            gate_ok = pluginExecutor.Preflight(
+                catalog_entry,
+                executed_device,
+                &plugin_info,
+                &gate_error,
+                &failure_kind);
+        }
+
+        if (!gate_ok) {
+            if (gate_error.find("缺少必要导出符号") != std::string::npos) {
+                SetChecklistItem(
+                    &record.admission_checklist,
+                    "abi_contract",
+                    "插件 ABI 契约",
+                    true,
+                    "failed",
+                    gate_error);
+            }
+            SetChecklistItem(
+                &record.admission_checklist,
+                "runtime_probe",
+                "运行时装载门禁",
+                true,
+                "failed",
+                gate_error.empty() ? "能力未通过运行时预装载探测。" : gate_error);
+            record.admission_checklist["fallback_applied"] = fallback_applied;
+            record.admission_checklist["probe_device"] = executed_device;
+            FinalizeChecklist(&record.admission_checklist);
+            gate_failures.push_back(
+                {
+                    {"capability_name", record.capability_name},
+                    {"gate_code", "runtime_probe"},
+                    {"requested_device", requested_device},
+                    {"executed_device", executed_device},
+                    {"fallback_applied", fallback_applied},
+                    {"reason", gate_error.empty() ? "能力未通过运行时预装载探测。" : gate_error},
+                });
+            auditLogger->Append(
+                {
+                    action + "_capability_gated",
+                    "capability",
+                    record.capability_name,
+                    "failure",
+                    "",
+                    "",
+                    -1.0,
+                    gate_error,
+                    {
+                        {"gate_code", "runtime_probe"},
+                        {"requested_device", requested_device},
+                        {"executed_device", executed_device},
+                        {"fallback_applied", fallback_applied},
+                    },
+                });
+            continue;
+        }
+
+        SetChecklistItem(
+            &record.admission_checklist,
+            "runtime_probe",
+            "运行时装载门禁",
+            true,
+            "passed",
+            fallback_applied ? "GPU 预装载失败后已自动回退 CPU，最终通过装载门禁。"
+                             : "能力已通过插件装载、初始化、预热与健康检查门禁。");
+        record.admission_checklist["fallback_applied"] = fallback_applied;
+        record.admission_checklist["probe_device"] = executed_device;
+        record.admission_checklist["plugin_info"] = plugin_info;
+        FinalizeChecklist(&record.admission_checklist);
+        admitted_capabilities.emplace(capability_entry.first, record);
+    }
+
+    (*source_summary)["admission_gate_failures"] = gate_failures;
+    *capabilities = std::move(admitted_capabilities);
+    if (capabilities->empty()) {
+        if (error_message != nullptr) {
+            *error_message = "未发现通过 capability 接入门禁的能力资源。";
+        }
+        return false;
+    }
+    return true;
+}
+
 bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::string* error_message) {
     auto set_error = [&](const std::string& message) {
         if (error_message != nullptr) {
@@ -2113,7 +2399,7 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
         config.host_root,
         config.image_resource_root,
         RuntimeResourceScanner::DetectPlatformTarget());
-    const auto& selected_capabilities = scan_result.capabilities;
+    std::map<std::string, RuntimeCapabilityRecord> selected_capabilities = scan_result.capabilities;
     if (selected_capabilities.empty()) {
         set_error("未发现可用能力资源，无法完成启动自举。");
         return false;
@@ -2150,6 +2436,10 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
             return false;
         }
     }
+    nlohmann::json source_summary = scan_result.source_summary;
+    if (!ApplyCapabilityAdmissionGate("bootstrap", &selected_capabilities, &source_summary, error_message)) {
+        return false;
+    }
 
     RevisionStore revision_store(config.database_path);
     if (!revision_store.EnsureSchema(error_message)) {
@@ -2171,12 +2461,13 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
         GenerateRequestId(),
         "bootstrap",
         "active",
-        scan_result.source_summary,
+        source_summary,
         capability_names,
         true,
         {
             {"license_status", license_status},
             {"capability_records", BuildCapabilityRecordArray(selected_capabilities)},
+            {"source_summary", source_summary},
         },
         std::nullopt,
         error_message);
@@ -2196,7 +2487,7 @@ bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::stri
         {"capability_names", capability_names},
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
-        {"source_summary", scan_result.source_summary},
+        {"source_summary", source_summary},
         {"license_status", [&]() {
             nlohmann::json payload = BuildLicenseStatusPayload(current_license_status);
             payload["validated_capability_names"] = capability_names;

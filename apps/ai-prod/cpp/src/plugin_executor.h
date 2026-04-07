@@ -38,6 +38,12 @@ public:
         const std::string& capability_name,
         const std::string& device,
         double lifecycle_elapsed_ms);
+    bool Preflight(
+        const CapabilityCatalogEntry& entry,
+        const std::string& device,
+        nlohmann::json* plugin_info,
+        std::string* error_message,
+        PluginFailureKind* failure_kind = nullptr);
     bool Execute(
         const CapabilityCatalogEntry& entry,
         std::size_t slot_index,

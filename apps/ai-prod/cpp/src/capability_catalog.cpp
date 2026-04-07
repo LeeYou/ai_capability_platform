@@ -133,6 +133,9 @@ bool CapabilityCatalog::ParseSnapshotUnlocked(const nlohmann::json& snapshot_jso
                 item.value("supports_concurrent_infer", true),
                 item.value("allow_resource_sharing", false),
                 item.value("revision_id", snapshot_json.value("revision_id", 0)),
+                item.contains("admission_checklist") && item["admission_checklist"].is_object()
+                    ? item["admission_checklist"]
+                    : nlohmann::json::object(),
             });
     }
 

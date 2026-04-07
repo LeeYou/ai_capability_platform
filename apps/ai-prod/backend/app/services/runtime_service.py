@@ -316,6 +316,7 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
             "instance_count": int(plugin_entry.get("instance_count") or model_entry.get("instance_count") or 0),
             "model_manifest": model_entry["manifest"],
             "plugin_manifest": plugin_entry["manifest"],
+            "admission_checklist": {},
             "active_source": "host"
             if capability_name in host_models and capability_name in host_plugins
             else "image",
@@ -332,6 +333,129 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
         "image_plugin_failures": image_plugin_failures,
         "invalid_capability_failures": invalid_capability_failures,
     }
+
+
+def _set_checklist_item(
+    checklist: dict[str, Any],
+    *,
+    code: str,
+    label: str,
+    required: bool,
+    status: str,
+    detail: str,
+) -> None:
+    items = checklist.setdefault("items", [])
+    for item in items:
+        if item.get("code") == code:
+            item.update(
+                {
+                    "label": label,
+                    "required": required,
+                    "status": status,
+                    "detail": detail,
+                }
+            )
+            return
+    items.append(
+        {
+            "code": code,
+            "label": label,
+            "required": required,
+            "status": status,
+            "detail": detail,
+        }
+    )
+
+
+def _finalize_checklist(checklist: dict[str, Any]) -> dict[str, Any]:
+    failed_codes = [
+        item["code"]
+        for item in checklist.get("items", [])
+        if item.get("required") and item.get("status") != "passed"
+    ]
+    checklist["failed_codes"] = failed_codes
+    checklist["ready"] = not failed_codes
+    return checklist
+
+
+def _build_admission_checklist(payload: dict[str, Any], *, license_valid: bool) -> dict[str, Any]:
+    checklist: dict[str, Any] = {
+        "capability_name": payload["capability_name"],
+        "items": [],
+        "failed_codes": [],
+        "ready": False,
+    }
+    model_manifest = payload.get("model_manifest", {})
+    plugin_manifest = payload.get("plugin_manifest", {})
+    runtime_contract = model_manifest.get("runtime_contract", {})
+    runtime_inputs = runtime_contract.get("runtime_inputs", {})
+    dependency_summary = plugin_manifest.get("dependency_summary", {})
+    _set_checklist_item(
+        checklist,
+        code="manifest_contract",
+        label="manifest 契约",
+        required=True,
+        status="passed",
+        detail="模型包 manifest 与插件 manifest 已通过强校验。",
+    )
+    sample_input_passed = bool(
+        model_manifest.get("preprocessing", {}).get("input_type")
+        and runtime_inputs.get("preprocess_path")
+        and runtime_inputs.get("labels_path")
+    )
+    _set_checklist_item(
+        checklist,
+        code="sample_input_contract",
+        label="样本输入契约",
+        required=True,
+        status="passed" if sample_input_passed else "failed",
+        detail="输入类型、预处理配置与标签路径齐全。"
+        if sample_input_passed
+        else "缺少 preprocessing.input_type 或 runtime_inputs 关键路径。",
+    )
+    abi_passed = bool(dependency_summary.get("abi"))
+    _set_checklist_item(
+        checklist,
+        code="abi_contract",
+        label="插件 ABI 契约",
+        required=True,
+        status="passed" if abi_passed else "failed",
+        detail="插件 manifest 已声明 ABI 与运行时依赖。"
+        if abi_passed
+        else "插件 manifest 缺少 ABI 声明。",
+    )
+    model_root = str(payload.get("model_root", "")).strip()
+    binary_path = str(payload.get("binary_path", "")).strip()
+    artifact_passed = bool(model_root) and bool(binary_path) and Path(model_root).exists() and Path(binary_path).exists()
+    _set_checklist_item(
+        checklist,
+        code="artifact_presence",
+        label="运行时产物存在性",
+        required=True,
+        status="passed" if artifact_passed else "failed",
+        detail="模型目录与插件二进制均存在。"
+        if artifact_passed
+        else "模型目录或插件二进制缺失。",
+    )
+    _set_checklist_item(
+        checklist,
+        code="license_gate",
+        label="License 门禁",
+        required=True,
+        status="passed" if license_valid else "failed",
+        detail="当前 capability 已通过 license 范围与版本约束校验。"
+        if license_valid
+        else "当前 capability 未通过 license 范围或版本约束校验。",
+    )
+    _set_checklist_item(
+        checklist,
+        code="runtime_probe",
+        label="运行时装载门禁",
+        required=False,
+        status="not_applicable",
+        detail="Python 内部验收外壳不执行 C++ 插件预装载探测，实际门禁由 C++ runtime 承担。",
+    )
+    return _finalize_checklist(checklist)
 
 
 def _ensure_instance_pool(capabilities: dict[str, dict[str, Any]], *, pool_size: int, gpu_available: bool) -> None:
@@ -361,6 +485,7 @@ def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict
         "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
         "pool_size": len(_INSTANCE_POOLS.get(capability_name, [])),
         "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
+        "admission_checklist": payload.get("admission_checklist", {}),
         "revision_id": _ACTIVE_REVISION_ID,
     }
 
@@ -380,6 +505,7 @@ def _serialize_runtime_capability_record(capability_name: str, payload: dict[str
         "instance_count": max(1, int(payload["instance_count"])) if payload.get("instance_count") else 0,
         "model_manifest": payload.get("model_manifest", {}),
         "plugin_manifest": payload.get("plugin_manifest", {}),
+        "admission_checklist": payload.get("admission_checklist", {}),
     }
 
 
@@ -412,6 +538,7 @@ def _restore_runtime_capability_records(detail: dict[str, Any]) -> dict[str, dic
             "instance_count": max(1, int(item["instance_count"])) if item.get("instance_count") else 0,
             "model_manifest": item.get("model_manifest", {}),
             "plugin_manifest": item.get("plugin_manifest", {}),
+            "admission_checklist": item.get("admission_checklist", {}),
         }
     return restored
 
@@ -509,6 +636,11 @@ def bootstrap_runtime(
             action="bootstrap",
             entity_id="bootstrap",
         )
+        for capability_name, capability in capabilities.items():
+            capability["admission_checklist"] = _build_admission_checklist(
+                capability,
+                license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+            )
         revision = RuntimeRevisionModel(
             revision_token=str(uuid4()),
             action="bootstrap",
@@ -728,6 +860,11 @@ def reload_runtime(
                 action="reload",
                 entity_id="reload",
             )
+            for capability_name, capability in capabilities.items():
+                capability["admission_checklist"] = _build_admission_checklist(
+                    capability,
+                    license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+                )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="reload",
@@ -774,6 +911,11 @@ def reload_runtime(
                 action="rollback",
                 entity_id=str(target_revision_id),
             )
+            for capability_name, capability in selected.items():
+                capability["admission_checklist"] = _build_admission_checklist(
+                    capability,
+                    license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+                )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="rollback",

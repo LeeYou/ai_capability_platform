@@ -34,6 +34,7 @@ struct CapabilityCatalogEntry {
     bool supports_concurrent_infer = true;
     bool allow_resource_sharing = false;
     int revision_id = 0;
+    nlohmann::json admission_checklist = nlohmann::json::object();
 };
 
 class CapabilityCatalog {

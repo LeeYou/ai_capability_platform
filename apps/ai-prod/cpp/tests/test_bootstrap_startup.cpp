@@ -289,6 +289,23 @@ int main(int argc, char** argv) {
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
         BuildPluginManifest("face_detect", "v3_0_0", "linux_x86_64", 3, 5));
+    WriteTextFile(
+        host_root / "models" / "broken_gate" / "v1_0_0" / "manifest.json",
+        BuildModelManifest(host_root / "models" / "broken_gate" / "v1_0_0", "broken_gate", "v1_0_0", 2, 180));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "broken_gate" / "manifest" / "manifest.json",
+        BuildPluginManifest("broken_gate", "v1_0_0", "linux_x86_64", 1, 0));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "broken_gate" / "lib" / "libbroken_gate.so",
+        "not-a-real-plugin");
+    license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "broken_gate"});
+    test_license_helpers::WriteLicenseBundle(license_root, license_payload);
+    const auto reload_license_result = client.Post("/api/v1/admin/license-reload", "{}", "application/json");
+    if (!Expect(reload_license_result && reload_license_result->status == 200, "license reload should succeed before runtime reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
     const auto reload_result = client.Post(
         "/api/v1/admin/reload",
         "{\"action\":\"reload\"}",
@@ -325,6 +342,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(infer_after_reload_payload["result"]["max_pending_request_count"] == 5, "reload should keep max pending request count")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto catalog_result = client.Get("/api/v1/admin/catalog");
+    if (!Expect(catalog_result && catalog_result->status == 200, "catalog should respond after reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto catalog_payload = nlohmann::json::parse(catalog_result->body);
+    if (!Expect(catalog_payload["items"].size() == 1, "gate should keep broken capability out of catalog")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["admission_checklist"]["ready"] == true, "catalog should expose capability admission checklist")) {
         proxy_server.Stop();
         proxy_thread.join();
         return 1;

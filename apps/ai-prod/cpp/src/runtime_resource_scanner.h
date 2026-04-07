@@ -33,6 +33,7 @@ struct RuntimeCapabilityRecord {
     bool allow_resource_sharing = false;
     nlohmann::json model_manifest = nlohmann::json::object();
     nlohmann::json plugin_manifest = nlohmann::json::object();
+    nlohmann::json admission_checklist = nlohmann::json::object();
 };
 
 struct RuntimeResourceScanResult {

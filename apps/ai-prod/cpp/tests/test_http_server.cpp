@@ -103,6 +103,7 @@ void WriteSnapshot(
         << "\"max_concurrent_requests\":3,"
         << "\"supports_concurrent_infer\":true,"
         << "\"allow_resource_sharing\":true,"
+        << "\"admission_checklist\":{\"ready\":true,\"items\":[],\"failed_codes\":[]},"
         << "\"revision_id\":" << revision_id
         << "}],"
         << "\"license_status\":{"
@@ -427,6 +428,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!Expect(catalog_payload["items"][0]["execution_metrics"].is_null(), "catalog should not expose execution metrics before first infer")) {
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["admission_checklist"]["ready"] == true, "catalog should expose passing admission checklist")) {
         return 1;
     }
     if (!Expect(catalog_payload["items"][0]["busy_count"] == 0, "catalog busy count should default to zero")) {
