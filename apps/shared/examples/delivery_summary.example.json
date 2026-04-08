@@ -1,0 +1,30 @@
+{
+  "package_id": 301,
+  "package_name": "face_detect_sdk_release",
+  "capability_name": "face_detect",
+  "model_version": "v1_0_0",
+  "requested_targets": [
+    "linux_x86_64",
+    "windows_x86_64"
+  ],
+  "jni_enabled": true,
+  "target_count": 2,
+  "acceptance_section_count": 3,
+  "checksum_entry_count": 8,
+  "delivery_files": [
+    "acceptance_checklist.json",
+    "version_manifest.json",
+    "delivery_summary.json",
+    "delivery_summary.md"
+  ],
+  "delivery_directories": [
+    "sdk_linux_x86_64",
+    "sdk_windows_x86_64"
+  ],
+  "recommended_steps": [
+    "核对 acceptance_checklist.json 并按目标平台逐项验收。",
+    "核对 version_manifest.json 中 capability/model/target/checksum 是否与现场交付一致。",
+    "进入对应 sdk_* 目录执行 validation/verify_sdk_package.py 快速校验目录完整性。"
+  ],
+  "version_manifest_path": "version_manifest.json"
+}

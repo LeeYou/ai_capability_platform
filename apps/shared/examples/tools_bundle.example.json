@@ -1,0 +1,21 @@
+{
+  "validation_scripts": [
+    "validation/acceptance_check.py",
+    "validation/pressure_smoke.py",
+    "validation/verify_delivery_package.py"
+  ],
+  "ops_scripts": [
+    "ops/health_check.sh",
+    "ops/init_host_root.sh"
+  ],
+  "license_tool": {
+    "version": "1.0.0",
+    "root": "license_tool",
+    "manifest_path": "license_tool/manifest.json",
+    "documents": [
+      "license_tool/README.md",
+      "license_tool/ERROR_CODES.md",
+      "license_tool/HARDWARE_FINGERPRINT.md"
+    ]
+  }
+}

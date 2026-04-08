@@ -4,16 +4,26 @@
   "type": "object",
   "required": [
     "capability_name",
+    "task_type",
     "model_version",
     "source_train_task_id",
     "task_name",
     "backend_type",
     "artifact_path",
     "status",
-    "checksum"
+    "checksum",
+    "preprocessing",
+    "thresholds",
+    "labels",
+    "validation",
+    "runtime_contract",
+    "delivery_metadata"
   ],
   "properties": {
     "capability_name": {
+      "type": "string"
+    },
+    "task_type": {
       "type": "string"
     },
     "model_version": {
@@ -36,6 +46,82 @@
     },
     "checksum": {
       "type": "string"
+    },
+    "preprocessing": {
+      "type": "object",
+      "required": ["input_type", "resize", "normalize"],
+      "properties": {
+        "input_type": {
+          "type": "string"
+        },
+        "resize": {
+          "type": "object",
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer" },
+            "height": { "type": "integer" }
+          }
+        },
+        "normalize": {
+          "type": "object",
+          "required": ["mean", "std"],
+          "properties": {
+            "mean": {
+              "type": "array",
+              "items": { "type": "number" }
+            },
+            "std": {
+              "type": "array",
+              "items": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "required": ["score_threshold", "nms_threshold"],
+      "properties": {
+        "score_threshold": { "type": "number" },
+        "nms_threshold": { "type": "number" }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "runtime_contract": {
+      "type": "object",
+      "required": ["task_type", "annotation_schema", "template_bundle", "model_files", "runtime_inputs"],
+      "properties": {
+        "task_type": { "type": "string" },
+        "annotation_schema": { "type": "object" },
+        "template_bundle": { "type": "object" },
+        "model_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "runtime_inputs": { "type": "object" }
+      }
+    },
+    "delivery_metadata": {
+      "type": "object",
+      "required": ["ai_test", "ai_builder", "training_summary"],
+      "properties": {
+        "ai_test": { "type": "object" },
+        "ai_builder": { "type": "object" },
+        "training_summary": { "type": "object" }
+      }
     }
   }
 }

@@ -18,7 +18,7 @@ bool Expect(bool condition, const char* message) {
 
 int main() {
     InFlightRequestTracker tracker;
-    tracker.Register("req-1", "face_detect", "face_detect-1", 0);
+    tracker.Register("req-1", "face_detect", "face_detect-1", 0, 120);
     if (!Expect(tracker.GetActiveCount() == 1, "tracker should count registered request")) {
         return 1;
     }
@@ -35,6 +35,18 @@ int main() {
     if (!Expect(snapshot[0].status == "executing", "tracker snapshot should record status")) {
         return 1;
     }
+    if (!Expect(snapshot[0].requested_deadline_ms == 120, "tracker snapshot should record requested deadline")) {
+        return 1;
+    }
+    if (!Expect(snapshot[0].sla_status == "pending", "tracker snapshot should record initial sla status")) {
+        return 1;
+    }
+    if (!Expect(snapshot[0].ElapsedMs(std::chrono::steady_clock::now()) >= 0, "tracker snapshot should calculate elapsed time")) {
+        return 1;
+    }
+    if (!Expect(tracker.MarkSlaStatus("req-1", "ok"), "tracker should mark sla status")) {
+        return 1;
+    }
     if (!Expect(tracker.MarkCompleted("req-1"), "tracker should complete request")) {
         return 1;
     }
@@ -42,7 +54,7 @@ int main() {
         return 1;
     }
 
-    tracker.Register("req-2", "ocr", "ocr-1", 1);
+    tracker.Register("req-2", "ocr", "ocr-1", 1, -1);
     std::thread worker([&]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         tracker.MarkFailed("req-2", "mock failed");

@@ -33,8 +33,12 @@ class TestCaseInputPayload:
 def initialize_database() -> None:
     from app.db.database import Base, get_engine
     from app.db import models  # noqa: F401
+    from app.db.database import get_session_factory
+    from app.services.baseline_service import initialize_default_performance_baselines
 
     Base.metadata.create_all(bind=get_engine())
+    with get_session_factory()() as session:
+        initialize_default_performance_baselines(session)
 
 
 def _infer_input_type(input_path: str) -> str:

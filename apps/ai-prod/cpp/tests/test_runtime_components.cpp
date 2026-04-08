@@ -35,7 +35,19 @@ int main() {
             << "\"backend_type\":\"onnxruntime\","
             << "\"active_source\":\"host\","
             << "\"device_mode\":\"gpu/cpu\","
+            << "\"capability_priority\":150,"
             << "\"pool_size\":2,"
+            << "\"max_batch_size\":8,"
+            << "\"min_batch_size\":2,"
+            << "\"batch_wait_timeout_ms\":35,"
+            << "\"queue_wait_timeout_ms\":260,"
+            << "\"max_pending_request_count\":6,"
+            << "\"infer_timeout_ms\":900,"
+            << "\"estimated_avg_infer_time_ms\":45,"
+            << "\"p95_infer_time_ms\":80,"
+            << "\"max_concurrent_requests\":3,"
+            << "\"supports_concurrent_infer\":true,"
+            << "\"allow_resource_sharing\":true,"
             << "\"revision_id\":12"
             << "},"
             << "{"
@@ -46,6 +58,7 @@ int main() {
             << "\"active_source\":\"image\","
             << "\"device_mode\":\"cpu\","
             << "\"pool_size\":1,"
+            << "\"max_batch_size\":2,"
             << "\"revision_id\":12"
             << "}"
             << "]"
@@ -68,6 +81,30 @@ int main() {
         return 1;
     }
     if (!Expect(face_detect->pool_size == 2, "face_detect pool size mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->max_batch_size == 8, "face_detect max batch size mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->min_batch_size == 2, "face_detect min batch size mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->batch_wait_timeout_ms == 35, "face_detect batch wait timeout mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->queue_wait_timeout_ms == 260, "face_detect queue wait timeout mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->max_pending_request_count == 6, "face_detect max pending request count mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->capability_priority == 150, "face_detect capability priority mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->infer_timeout_ms == 900, "face_detect infer timeout mismatch")) {
+        return 1;
+    }
+    if (!Expect(face_detect->allow_resource_sharing, "face_detect resource sharing mismatch")) {
         return 1;
     }
 
@@ -115,6 +152,77 @@ int main() {
         return 1;
     }
     if (!Expect(pool.Acquire().has_value(), "instance pool should recover after drain")) {
+        return 1;
+    }
+    if (!Expect(pool.GetBusyRejectCount() == 0, "busy reject count should stay zero without rejection")) {
+        return 1;
+    }
+
+    InstancePool queue_pool;
+    queue_pool.Reset("ocr", 1, false);
+    const auto queue_holder = queue_pool.Acquire();
+    if (!Expect(queue_holder.has_value(), "queue pool initial acquire should succeed")) {
+        return 1;
+    }
+    std::thread queue_release_thread([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        queue_pool.Release(queue_holder->slot_index);
+    });
+    const auto queued_acquire = queue_pool.AcquireWithWait(std::chrono::milliseconds(200), 2);
+    if (!Expect(queued_acquire.status == InstanceAcquireStatus::kAcquired, "queued acquire should eventually succeed")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queued_acquire.queue_wait_ms >= 20, "queued acquire should record wait time")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queue_pool.GetQueuedRequestCount() == 1, "queue pool should count queued success")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(queued_acquire.item->slot_index), "queued acquire release should succeed")) {
+        queue_release_thread.join();
+        return 1;
+    }
+    queue_release_thread.join();
+
+    const auto timeout_holder = queue_pool.Acquire();
+    if (!Expect(timeout_holder.has_value(), "timeout holder acquire should succeed")) {
+        return 1;
+    }
+    const auto timed_out = queue_pool.AcquireWithWait(std::chrono::milliseconds(20), 1);
+    if (!Expect(timed_out.status == InstanceAcquireStatus::kTimedOut, "queued acquire should time out when slot stays busy")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetQueueTimeoutCount() == 1, "queue timeout count should increment")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetBusyRejectCount() == 1, "busy reject count should include timed out queue")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(timeout_holder->slot_index), "timeout holder release should succeed")) {
+        return 1;
+    }
+
+    const auto deadline_holder = queue_pool.Acquire();
+    if (!Expect(deadline_holder.has_value(), "deadline holder acquire should succeed")) {
+        return 1;
+    }
+    const auto deadline_exceeded = queue_pool.AcquireWithWait(
+        std::chrono::milliseconds(100),
+        1,
+        std::chrono::milliseconds(10));
+    if (!Expect(deadline_exceeded.status == InstanceAcquireStatus::kDeadlineExceeded, "queued acquire should stop at request deadline")) {
+        return 1;
+    }
+    if (!Expect(deadline_exceeded.deadline_exceeded, "deadline exceeded result should mark deadline flag")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.GetDeadlineExceededCount() == 1, "deadline exceeded count should increment")) {
+        return 1;
+    }
+    if (!Expect(queue_pool.Release(deadline_holder->slot_index), "deadline holder release should succeed")) {
         return 1;
     }
 

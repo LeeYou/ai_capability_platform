@@ -19,9 +19,52 @@ from app.services.sdk_service import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SHARED_SCHEMAS_ROOT = REPO_ROOT / "apps" / "shared" / "schemas"
+
+
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _load_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_matches_schema(test_case: unittest.TestCase, schema: dict[str, object], payload: object, *, path: str = "$") -> None:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        test_case.assertIsInstance(payload, dict, f"{path} 必须为对象")
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        assert isinstance(payload, dict)
+        for key in required:
+            test_case.assertIn(key, payload, f"{path} 缺少字段 {key}")
+        for key, property_schema in properties.items():
+            if key in payload and isinstance(property_schema, dict):
+                _assert_matches_schema(test_case, property_schema, payload[key], path=f"{path}.{key}")
+        return
+
+    if schema_type == "array":
+        test_case.assertIsInstance(payload, list, f"{path} 必须为数组")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(payload):
+                _assert_matches_schema(test_case, item_schema, item, path=f"{path}[{index}]")
+        return
+
+    if schema_type == "string":
+        test_case.assertIsInstance(payload, str, f"{path} 必须为字符串")
+        return
+
+    if schema_type == "integer":
+        test_case.assertIsInstance(payload, int, f"{path} 必须为整数")
+        return
+
+    if schema_type == "boolean":
+        test_case.assertIsInstance(payload, bool, f"{path} 必须为布尔值")
+        return
 
 
 def _prepare_builder_output(host_root: Path, *, capability_name: str, model_version: str, target_name: str, jni_enabled: bool) -> None:
@@ -112,6 +155,41 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(linux_target["output_dir"]) / "docs" / "README_集成说明.md").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "examples" / "sample_c_api.c").is_file())
         self.assertTrue((Path(linux_target["output_dir"]) / "include" / "ai_sdk_error_codes.h").is_file())
+        self.assertEqual(Path(linux_target["output_dir"]).name, "sdk_linux_x86_64")
+        self.assertTrue((Path(linux_target["output_dir"]) / "manifest" / "manifest.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "manifest.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "LICENSE_DIAGNOSTICS.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "tools" / "license_tool" / "VALIDATION_VECTORS.json").is_file())
+        self.assertTrue((Path(linux_target["output_dir"]) / "validation" / "verify_sdk_package.py").is_file())
+        package_manifest = json.loads(Path(package_detail["manifest_path"]).read_text(encoding="utf-8"))
+        self.assertTrue(package_manifest["delivery_package_alignment"])
+        self.assertEqual(package_manifest["stage_status"]["S9"], "completed")
+        self.assertEqual(package_manifest["stage_status"]["S10"], "completed")
+        self.assertTrue((Path(payload["package_root_path"]) / "acceptance_checklist.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "version_manifest.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.json").is_file())
+        self.assertTrue((Path(payload["package_root_path"]) / "delivery_summary.md").is_file())
+        self.assertEqual(package_manifest["version_manifest_path"], "version_manifest.json")
+        self.assertEqual(package_manifest["delivery_summary"]["target_count"], 2)
+        self.assertGreaterEqual(package_manifest["delivery_summary"]["acceptance_section_count"], 3)
+        acceptance_checklist = _load_json(Path(payload["package_root_path"]) / "acceptance_checklist.json")
+        self.assertGreaterEqual(len(acceptance_checklist["sections"]), 3)
+        version_manifest = _load_json(Path(payload["package_root_path"]) / "version_manifest.json")
+        self.assertEqual(version_manifest["delivery_targets"], ["linux_x86_64", "windows_x86_64"])
+        self.assertEqual(len(version_manifest["sdk_items"]), 2)
+        self.assertGreaterEqual(len(version_manifest["delivery_checksums"]), 2)
+        self.assertIn("docs_bundle", version_manifest)
+        self.assertIn("tools_bundle", version_manifest)
+        self.assertIn("checksum", version_manifest["delivery_checksums"][0])
+        self.assertNotIn("sha256", version_manifest["delivery_checksums"][0])
+        self.assertIn("sdk_linux_x86_64/tools/license_tool/manifest.json", version_manifest["tools_bundle"]["license_tool_manifests"])
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "acceptance_checklist.json"), acceptance_checklist)
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "version_manifest.json"), version_manifest)
+        _assert_matches_schema(
+            self,
+            _load_json(SHARED_SCHEMAS_ROOT / "delivery_summary.json"),
+            _load_json(Path(payload["package_root_path"]) / "delivery_summary.json"),
+        )
 
     def test_create_sdk_package_with_jni_outputs_java_and_jni_files(self) -> None:
         with get_session_factory()() as session:
@@ -134,6 +212,13 @@ class SdkServiceTestCase(unittest.TestCase):
         target = package_detail["targets"][0]
         self.assertTrue((Path(target["output_dir"]) / "jni").is_dir())
         self.assertTrue((Path(target["output_dir"]) / "examples" / "NativeBridge.java").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "ACCEPTANCE_CHECKLIST.md").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "DEPLOYMENT_GUIDE.md").is_file())
+        self.assertTrue((Path(target["output_dir"]) / "docs" / "LICENSE_TOOL.md").is_file())
+        delivery_summary = json.loads((Path(payload["package_root_path"]) / "delivery_summary.json").read_text(encoding="utf-8"))
+        self.assertTrue(delivery_summary["jni_enabled"])
+        self.assertEqual(delivery_summary["target_count"], 1)
+        self.assertGreaterEqual(delivery_summary["acceptance_section_count"], 2)
 
     def test_audit_logs_and_target_listing(self) -> None:
         with get_session_factory()() as session:
@@ -155,3 +240,28 @@ class SdkServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(logs), 1)
         self.assertEqual(logs[0]["entity_type"], "sdk_package")
         self.assertEqual(len(list_sdk_targets()), 4)
+
+    def test_verify_sdk_package_script_passes_for_generated_target(self) -> None:
+        with get_session_factory()() as session:
+            payload = create_sdk_package(
+                session,
+                sdk_packages_root=get_settings().sdk_packages_root,
+                sdk_logs_root=get_settings().sdk_logs_root,
+                libs_root=get_settings().libs_root,
+                models_root=get_settings().models_root,
+                exports_root=get_settings().exports_root,
+                audit_log_path=get_settings().audit_log_path,
+                package_name="face_detect_sdk_verify",
+                capability_name="face_detect",
+                model_version="v1_0_0",
+                requested_targets=["linux_x86_64"],
+                jni_enabled=False,
+            )
+            package_detail = get_sdk_package(session, int(payload["package_id"]))
+
+        target = package_detail["targets"][0]
+        verify_script = Path(target["output_dir"]) / "validation" / "verify_sdk_package.py"
+        exit_code = os.system(f'python "{verify_script}" "{Path(target["output_dir"])}" > /dev/null')
+        self.assertEqual(exit_code, 0)
+        license_tool_manifest = _load_json(Path(target["output_dir"]) / "tools" / "license_tool" / "manifest.json")
+        self.assertEqual(license_tool_manifest["diagnostics_version"], "1.0")

@@ -1,6 +1,6 @@
 # ai-sdk backend
 
-单机交付 SDK 后端首期工程，提供 SDK 目录扫描、Linux/Windows/JNI 交付包生成、接入文档模板、示例工程与归档导出能力。
+单机交付 SDK 后端首期工程，提供 SDK 目录扫描、Linux/Windows/JNI 标准目录交付包生成、`license_tool`/验收文档/快速校验脚本输出，以及归档导出能力。
 
 ## 当前能力
 
@@ -8,8 +8,12 @@
 2. 固化 SDK ABI 共享头文件、错误码与线程安全说明
 3. 基于 ai-builder 产物生成 Linux / Windows / JNI 单机交付包
 4. 自动复制模型包、license、头文件、动态库与可选 JNI 产物
-5. 自动生成接入说明、错误码说明、C/C++ 示例与 Java 示例
-6. 记录包任务、目标、产物与审计日志
+5. 自动生成接入说明、错误码说明、部署说明、验收清单、C/C++ 示例与 Java 示例
+6. 自动附带 `tools/license_tool` source bundle、`validation/verify_sdk_package.py` 与 package 级 `acceptance_checklist.json`
+7. 自动生成 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`
+8. package 级验收清单、版本清单与交付摘要已对齐 shared schema，便于与 ai-builder 复用交付复审结构
+9. 记录包任务、目标、产物与审计日志
+10. `tools/license_tool` 现已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json` 与稳定授权诊断说明
 
 ## 本地运行
 

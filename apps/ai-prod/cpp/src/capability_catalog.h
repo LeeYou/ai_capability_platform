@@ -20,8 +20,21 @@ struct CapabilityCatalogEntry {
     std::string device_mode;
     std::string model_root;
     std::string binary_path;
+    int capability_priority = 100;
     int pool_size = 0;
+    int max_batch_size = 1;
+    int min_batch_size = 1;
+    int batch_wait_timeout_ms = -1;
+    int queue_wait_timeout_ms = -1;
+    int max_pending_request_count = -1;
+    int infer_timeout_ms = -1;
+    int estimated_avg_infer_time_ms = -1;
+    int p95_infer_time_ms = -1;
+    int max_concurrent_requests = -1;
+    bool supports_concurrent_infer = true;
+    bool allow_resource_sharing = false;
     int revision_id = 0;
+    nlohmann::json admission_checklist = nlohmann::json::object();
 };
 
 class CapabilityCatalog {

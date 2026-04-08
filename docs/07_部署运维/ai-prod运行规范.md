@@ -55,7 +55,7 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 
 ### 4.3 生产镜像默认启动方式
 
-`apps/ai-prod/Dockerfile` 当前已切换为双进程入口：镜像启动后先在容器内拉起 Python backend（`127.0.0.1:26014`），待健康后再启动 C++ HTTP 主服务（`0.0.0.0:26004`）。
+`apps/ai-prod/Dockerfile` 当前已切换为双进程入口：镜像启动后先在容器内拉起 Python backend（`127.0.0.1:26014`）作为内部验收壳层，再启动 C++ HTTP 主服务（`0.0.0.0:26004`）作为唯一公开生产入口。Python backend 不再暴露公开 `/api/v1/*` 生产运行接口。
 
 ## 5. 交付验收基线
 
@@ -65,23 +65,29 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 2. `/api/v1/capabilities` 可返回当前能力列表
 3. `/api/v1/license/status` 可返回标准 license 状态
 4. `/api/v1/admin/catalog` 可返回 catalog / pool 诊断信息
-5. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
-6. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用
+5. `/api/v1/admin/metrics` 可返回 endpoint 请求量、延迟分位、实例池利用率与能力级执行汇总
+6. catalog / metrics 应可看到 capability 级 `max_batch_size` 与实例池 `busy_reject_count`
+7. catalog / metrics 应可看到 `pending_request_count`、`queued_request_count`、`queue_timeout_count`、`avg_queue_wait_ms`
+8. `/api/v1/admin/revisions` 对外返回 `404`，确保内部接口未重新暴露
+9. 如存在已装载能力，至少完成一次 `/api/v1/infer/{capability}` 成功调用，并确认返回 `queue_wait_ms`
+10. 当 runtime snapshot 缺失或被人为删除时，`/api/v1/health` 与 `/api/v1/infer/{capability}` 应直接返回运行时错误，不允许回退 Python backend 承担生产请求
+11. 交付验收阶段必须完成一次公开链路 `reload -> infer -> rollback -> infer` 闭环，并确认 `runtime_revision_id` 按切换结果递增、切换后仍可成功推理
 
 ### 5.2 验收命令
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform
-python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004
+python3 apps/ai-prod/scripts/acceptance_check.py \
+  --base-url http://127.0.0.1:26004 \
+  --run-admin-checks \
+  --run-transition-checks
 ```
 
-如需在验收阶段同时检查 `license-reload`：
+如需单独执行公开健康检查，而暂不触发切换链路：
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform
-python3 apps/ai-prod/scripts/acceptance_check.py \
-  --base-url http://127.0.0.1:26004 \
-  --run-admin-checks
+python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004
 ```
 
 ## 6. 基础压测基线
@@ -97,7 +103,8 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
   --path /api/v1/health \
   --requests 32 \
   --concurrency 8 \
-  --max-p95-ms 5000
+  --max-p95-ms 5000 \
+  --include-metrics
 ```
 
 ### 6.2 推理接口并发 smoke（需已装载能力）
@@ -111,14 +118,15 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
   --body-json '{"input_type":"json","payload":"{\"image\":\"demo\"}","prefer_device":"auto","options":{}}' \
   --requests 16 \
   --concurrency 4 \
-  --max-p95-ms 10000
+  --max-p95-ms 10000 \
+  --include-metrics
 ```
 
 ## 7. 推荐运行阈值
 
 1. 健康/能力/license/catalog 查询：单次请求建议在 `1000ms` 内返回
 2. 基础并发 smoke：成功率应为 `100%`
-3. 推理并发 smoke：现场可按模型能力、硬件与 pool 配置单独放宽，但必须记录本次交付的 `p95/p99`
+3. 推理并发 smoke：现场可按模型能力、硬件与 pool 配置单独放宽，但必须记录本次交付的 `p95/p99`，并留存 `/api/v1/admin/metrics` 输出
 4. reload / rollback 前应确认当前无长时间卡住的 infer 请求
 5. 如使用容器部署，对外交付面只允许暴露 `26004`，`26014` 必须保持容器内可达
 

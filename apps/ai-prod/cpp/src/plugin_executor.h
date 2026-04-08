@@ -18,6 +18,14 @@ struct PluginExecutionResult {
     double infer_time_ms = 0.0;
 };
 
+enum class PluginFailureKind {
+    kNone = 0,
+    kBindingLoadFailure,
+    kLifecycleFailure,
+    kInferFailure,
+    kSlotUnavailable,
+};
+
 class PluginExecutor {
 public:
     PluginExecutor();
@@ -25,6 +33,17 @@ public:
 
     void SyncEntries(const std::vector<CapabilityCatalogEntry>& entries);
     std::optional<nlohmann::json> GetCapabilityMetrics(const std::string& capability_name) const;
+    void RecordFallback(const std::string& capability_name, const std::string& device, const std::string& reason);
+    void RecordLifecycleSample(
+        const std::string& capability_name,
+        const std::string& device,
+        double lifecycle_elapsed_ms);
+    bool Preflight(
+        const CapabilityCatalogEntry& entry,
+        const std::string& device,
+        nlohmann::json* plugin_info,
+        std::string* error_message,
+        PluginFailureKind* failure_kind = nullptr);
     bool Execute(
         const CapabilityCatalogEntry& entry,
         std::size_t slot_index,
@@ -34,7 +53,8 @@ public:
         const std::string& device,
         const std::string& request_id,
         PluginExecutionResult* result,
-        std::string* error_message);
+        std::string* error_message,
+        PluginFailureKind* failure_kind = nullptr);
 
 private:
     struct PluginBinding {
@@ -44,6 +64,7 @@ private:
         std::string model_root;
         std::string device;
         int pool_size = 1;
+        int max_batch_size = 1;
         void* library_handle = nullptr;
         fn_ai_plugin_destroy destroy = nullptr;
         fn_ai_plugin_infer infer = nullptr;
@@ -58,6 +79,9 @@ private:
         double total_infer_time_ms = 0.0;
         double min_infer_time_ms = 0.0;
         double max_infer_time_ms = 0.0;
+        double total_lifecycle_time_ms = 0.0;
+        double min_lifecycle_time_ms = 0.0;
+        double max_lifecycle_time_ms = 0.0;
         std::string last_request_id;
         std::string last_error_message;
         std::string last_executed_at_utc;
@@ -66,6 +90,9 @@ private:
         std::string health_check_status = "not_supported";
         std::string last_health_check_at_utc;
         std::string lifecycle_error_message;
+        int fallback_count = 0;
+        std::string last_fallback_at_utc;
+        std::string last_fallback_reason;
         AiPluginInfo plugin_info{};
         bool plugin_info_loaded = false;
     };

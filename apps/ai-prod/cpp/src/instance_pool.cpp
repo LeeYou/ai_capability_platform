@@ -1,10 +1,19 @@
 #include "instance_pool.h"
 
 #include <algorithm>
+#include <cassert>
 
 void InstancePool::Reset(const std::string& capability_name, int pool_size, bool gpu_available) {
     std::lock_guard<std::mutex> guard(mutex);
     draining = false;
+    busyRejectCount = 0;
+    pendingCount = 0;
+    maxPendingCount = 0;
+    queueTimeoutCount = 0;
+    deadlineExceededCount = 0;
+    queuedRequestCount = 0;
+    totalQueueWaitMs = 0;
+    maxQueueWaitMs = 0;
     items.clear();
     items.reserve(static_cast<std::size_t>(std::max(pool_size, 0)));
     for (int index = 0; index < pool_size; ++index) {
@@ -23,13 +32,95 @@ std::optional<InstancePoolItem> InstancePool::Acquire() {
     if (draining) {
         return std::nullopt;
     }
-    for (auto& item : items) {
-        if (!item.in_use) {
-            item.in_use = true;
-            return item;
-        }
+    const auto item = TryAcquireUnlocked();
+    if (item.has_value()) {
+        return item;
     }
+    busyRejectCount += 1;
     return std::nullopt;
+}
+
+InstanceAcquireResult InstancePool::AcquireWithWait(
+    std::chrono::milliseconds timeout,
+    int max_pending_requests,
+    std::optional<std::chrono::milliseconds> request_deadline) {
+    std::unique_lock<std::mutex> guard(mutex);
+    if (draining) {
+        return {InstanceAcquireStatus::kDraining, std::nullopt, 0, false};
+    }
+    if (const auto item = TryAcquireUnlocked(); item.has_value()) {
+        return {InstanceAcquireStatus::kAcquired, item, 0, false};
+    }
+    if (max_pending_requests > 0 && pendingCount >= max_pending_requests) {
+        busyRejectCount += 1;
+        return {InstanceAcquireStatus::kQueueRejected, std::nullopt, 0, false};
+    }
+
+    const auto queued_at = std::chrono::steady_clock::now();
+    const auto deadline = queued_at + timeout;
+    const auto request_deadline_at = request_deadline.has_value() ? queued_at + *request_deadline : deadline;
+    const bool deadline_driven_wait = request_deadline.has_value() && request_deadline_at <= deadline;
+    if (request_deadline.has_value() && request_deadline_at <= queued_at) {
+        busyRejectCount += 1;
+        deadlineExceededCount += 1;
+        return {InstanceAcquireStatus::kDeadlineExceeded, std::nullopt, 0, true};
+    }
+    pendingCount += 1;
+    maxPendingCount = std::max(maxPendingCount, pendingCount);
+
+    const auto cleanup_pending = [this]() {
+        assert(pendingCount > 0);
+        pendingCount -= 1;
+    };
+    while (true) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto effective_deadline = request_deadline.has_value()
+                                            ? std::min(deadline, request_deadline_at)
+                                            : deadline;
+        const auto remaining = effective_deadline > now
+                                   ? std::chrono::duration_cast<std::chrono::milliseconds>(effective_deadline - now)
+                                   : std::chrono::milliseconds(0);
+        if (condition.wait_for(guard, remaining, [&]() {
+                return draining || HasAvailableSlotUnlocked();
+            })) {
+            if (draining) {
+                cleanup_pending();
+                return {InstanceAcquireStatus::kDraining, std::nullopt, 0, false};
+            }
+            auto item = TryAcquireUnlocked();
+            if (item.has_value()) {
+                cleanup_pending();
+                const int queue_wait_ms = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - queued_at)
+                        .count());
+                queuedRequestCount += 1;
+                totalQueueWaitMs += queue_wait_ms;
+                maxQueueWaitMs = std::max(maxQueueWaitMs, queue_wait_ms);
+                return {
+                    InstanceAcquireStatus::kAcquired,
+                    item,
+                    queue_wait_ms,
+                    request_deadline.has_value() && std::chrono::steady_clock::now() > request_deadline_at};
+            }
+            continue;
+        }
+
+        cleanup_pending();
+        busyRejectCount += 1;
+        if (deadline_driven_wait || (request_deadline.has_value() && std::chrono::steady_clock::now() >= request_deadline_at)) {
+            deadlineExceededCount += 1;
+            return {InstanceAcquireStatus::kDeadlineExceeded, std::nullopt, static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - queued_at)
+                    .count()), true};
+        }
+        queueTimeoutCount += 1;
+        return {InstanceAcquireStatus::kTimedOut, std::nullopt, static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - queued_at)
+                .count()), false};
+    }
 }
 
 bool InstancePool::Release(std::size_t slot_index) {
@@ -41,7 +132,7 @@ bool InstancePool::Release(std::size_t slot_index) {
         return false;
     }
     items[slot_index].in_use = false;
-    if (IsIdleUnlocked()) {
+    if (pendingCount > 0 || IsIdleUnlocked()) {
         condition.notify_all();
     }
     return true;
@@ -79,6 +170,59 @@ int InstancePool::GetBusyCount() const {
         [](const InstancePoolItem& item) { return item.in_use; }));
 }
 
+int InstancePool::GetBusyRejectCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return busyRejectCount;
+}
+
+int InstancePool::GetPendingCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return pendingCount;
+}
+
+int InstancePool::GetMaxPendingCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return maxPendingCount;
+}
+
+int InstancePool::GetQueueTimeoutCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return queueTimeoutCount;
+}
+
+int InstancePool::GetDeadlineExceededCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return deadlineExceededCount;
+}
+
+int InstancePool::GetQueuedRequestCount() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return queuedRequestCount;
+}
+
+void InstancePool::RecordDeadlineExceeded() {
+    std::lock_guard<std::mutex> guard(mutex);
+    deadlineExceededCount += 1;
+}
+
+double InstancePool::GetAverageQueueWaitMs() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    if (queuedRequestCount <= 0) {
+        return 0.0;
+    }
+    return static_cast<double>(totalQueueWaitMs) / static_cast<double>(queuedRequestCount);
+}
+
+std::int64_t InstancePool::GetTotalQueueWaitMs() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return totalQueueWaitMs;
+}
+
+int InstancePool::GetMaxQueueWaitMs() const {
+    std::lock_guard<std::mutex> guard(mutex);
+    return maxQueueWaitMs;
+}
+
 int InstancePool::GetTotalSize() const {
     std::lock_guard<std::mutex> guard(mutex);
     return static_cast<int>(items.size());
@@ -87,6 +231,20 @@ int InstancePool::GetTotalSize() const {
 std::vector<InstancePoolItem> InstancePool::Snapshot() const {
     std::lock_guard<std::mutex> guard(mutex);
     return items;
+}
+
+std::optional<InstancePoolItem> InstancePool::TryAcquireUnlocked() {
+    for (auto& item : items) {
+        if (!item.in_use) {
+            item.in_use = true;
+            return item;
+        }
+    }
+    return std::nullopt;
+}
+
+bool InstancePool::HasAvailableSlotUnlocked() const {
+    return std::any_of(items.begin(), items.end(), [](const InstancePoolItem& item) { return !item.in_use; });
 }
 
 bool InstancePool::IsIdleUnlocked() const {

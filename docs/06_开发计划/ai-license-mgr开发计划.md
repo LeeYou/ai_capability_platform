@@ -15,13 +15,18 @@
 | L5 | 实现校验与导出 | 已完成 |
 | L6 | 实现授权镜像 | 已完成 |
 | L7 | 首期联调与验收 | 已完成 |
-| L8 | 与 ai-prod 运行态 License 规则收敛 | 未开始 |
-| L9 | license_tool 与交付材料收敛 | 未开始 |
-| L10 | 私钥管理、轮转与隔离策略增强 | 未开始 |
+| L8 | 与 ai-prod 运行态 License 规则收敛 | 已完成 |
+| L9 | license_tool 与交付材料收敛 | 已完成 |
+| L10 | 私钥管理、轮转与隔离策略增强 | 已完成 |
+| L11 | 授权核心金标准测试向量与一致性基线 | 已完成 |
+| L12 | 稳定授权失败原因 / 细节字段收敛 | 已完成 |
+| L13 | Python / C++ / SDK / license_tool 跨模块回归链路 | 已完成 |
+| L14 | 授权平台字段（操作系统/最低系统版本/架构/应用名）设计与签发工具收口 | 已完成 |
+| L15 | 平台准入诊断契约与 ai-prod / ai-sdk 同步 | 已完成 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RL-01 ~ RL-03。
 
 ## 4. 当前进度更新
 
@@ -32,14 +37,19 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已明确 ai-license-mgr 后续重点转向与 ai-prod 的运行时 License 规则完全收敛。
+1. 当前已完成 ai-license-mgr 本轮整改实施：建立授权金标准测试向量源，覆盖硬件指纹、版本约束与 license 校验场景。
+2. 当前已完成稳定授权诊断字段收敛：校验接口与签发记录已统一输出 `result` / `code` / `stage` / `details` / `diagnostics_version`。
+3. 当前已完成 `license_tool` source bundle 发布材料增强：manifest/README/ERROR_CODES 中已补齐稳定诊断 code，并附带 `LICENSE_DIAGNOSTICS.json` 与 `VALIDATION_VECTORS.json`。
+4. 当前已完成 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，形成跨模块基线。
+5. 当前已完成前端授权工作台增强：已展示稳定校验 code/细节，并补齐 diagnostics / vectors 导出入口。
+6. 当前已完成基线验证：ai-license-mgr backend unittest 与 frontend build/lint 均已通过。
+7. 当前已完成 L14：授权策略、签发载荷、签发记录、前端工作台与 `license_tool` source bundle 已统一新增 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 字段。
+8. 当前已完成 L15：稳定授权诊断契约已新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并已与 ai-prod / ai-sdk 交付物同步。
 
 ### 4.3 未完成
 
-1. `license_tool` 的标准交付与版本管理尚未完成。
-2. 与 ai-prod 的 License 双层校验逻辑尚未统一到同一参考实现。
-3. 私钥轮转、隔离与更细粒度策略控制仍需增强。
+1. 暂无；ai-license-mgr 模块当前轮 L11-L15 已全部完成，后续如继续推进将转入新的授权增量计划。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 已具备基础签发与管理能力，下一阶段的关键不再是“能签发”，而是“能与客户运行底座完全一致、可审计、可商业交付”。
+ai-license-mgr 本轮已完成 L11-L15：不仅延续了授权金标准测试向量、稳定诊断契约与 ai-prod Python 校验一致性回归基线，还进一步将 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段纳入策略、签发、校验、前端工作台与 `license_tool` source bundle；同时新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied` 稳定诊断结果码，并同步到 ai-prod / ai-sdk 契约与交付物。经 ai-license-mgr backend unittest 与 frontend build/lint 验证，当前模块本轮增量已完成。

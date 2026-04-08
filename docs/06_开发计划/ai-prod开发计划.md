@@ -30,10 +30,28 @@
 | P20 | 深化插件生命周期观测并补齐能力级执行指标 | 已完成 |
 | P21 | 补齐插件 warmup/health_check 生命周期钩子与观测 | 已完成 |
 | P22 | 补齐统一输入 payload codec 与多格式编解码收口 | 已完成 |
+| P23 | 补齐基于 revision 的能力快照持久化与真实回滚恢复 | 已完成 |
+| P24 | 完成 Python 验收外壳内化与 C++ 生产主链路去回退收口 | 已完成 |
+| P25 | 补齐统一运行时指标聚合与生产验收基线输出 | 已完成 |
+| P26 | 补齐 capability 级批处理元数据透传与繁忙拒绝观测 | 已完成 |
+| P27 | 补齐基础请求排队、等待超时与调度观测 | 已完成 |
+| P28 | 补齐 capability 级排队策略元数据透传与调度配置收口 | 已完成 |
+| P29 | 补齐 GPU 插件装载/生命周期失败时的 CPU 自动回退编排与观测 | 已完成 |
+| P30 | 补齐请求全生命周期耗时观测与能力级时延聚合 | 已完成 |
+| P31 | 补齐请求级 SLA 截止时间控制与 deadline 违约观测 | 已完成 |
+| P32 | 补齐结构化审计日志与请求关联字段统一收口 | 已完成 |
+| P33 | 补齐 capability 级短时批次聚合与批次调度观测 | 已完成 |
+| P34 | 补齐 capability 级运行时编排元数据与全局资源编排诊断 | 已完成 |
+| P35 | 模型包 manifest / 插件 manifest 强校验与强消费收敛 | 已完成 |
+| P36 | 授权校验、诊断字段与 C++ 公共核心收敛 | 已完成 |
+| P37 | capability 级新增接入检查清单与运行时门禁 | 已完成 |
+| P38 | 真实交付链 bootstrap / reload / infer / rollback 端到端校验 | 已完成 |
+| P39 | 平台授权字段消费、上下文采集与拒绝诊断收口 | 已完成 |
+| P40 | 平台授权契约与 ai-license-mgr / ai-sdk 一致性回归 | 已完成 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RP-01 ~ RP-03。
 
 ## 4. 当前进度更新
 
@@ -47,32 +65,21 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已开始 P9 第一轮实施，先引入可编译、可启动、可代理现有 Python 接口的 C++ HTTP 服务骨架。
-2. 当前阶段已明确 ai-prod 的基础版实现不是最终形态，后续继续收敛到 C++ HTTP + C++ Runtime 的真实运行底座。
-3. 本轮已新增 `apps/ai-prod/cpp/` 工程、环境变量配置解析、核心 API 代理路由与基础 CTest 校验。
-4. 当前继续推进 P9 第二轮实施，已开始将 C++ 路由层拆分为独立服务类，并补齐设计文档要求的 rollback 管理路由适配。
-5. 当前继续推进 P9 第三轮实施，已为 health/capabilities/license 查询接口引入基于 runtime snapshot 的 C++ 直接响应，并保留自动降级转发。
-6. 当前已启动 P10 首轮实施，在 C++ 侧新增 capability catalog 与轻量实例池骨架，并提供 `/api/v1/admin/catalog` 诊断接口。
-7. 当前继续推进 P10 第二轮实施，已让 infer 路由接入 capability catalog 与轻量实例池借还流程，并补齐未知能力/池繁忙保护。
-8. 当前已完成 P10 第三轮实施，在 C++ 侧为 reload/rollback 接入实例池 drain 编排、切换等待与切换后 catalog/pool 刷新。
-9. 当前已完成 P11：在 C++ 侧新增标准 license 文件直读、quick check、手动/自动 reload，并让 infer 与管理切换接口接入 license 校验；同时在 Python runtime 的 bootstrap / infer / reload / rollback 路径补齐按能力/版本维度的二次 license 校验与审计日志。
-10. 当前已完成 P12：将 Python/React 测试验收外壳的内部查询接口拆分到 `/internal/*`，前端显式标记为内部验收外壳，并让 Vite 开发代理直连 Python 后端；同时移除 C++ 生产主链路对 revision / operation 等内部查询接口的转发暴露。
-11. 当前已完成 P13：补齐 ai-prod 面向客户交付的默认环境模板、公共 API 验收脚本、基础并发压测脚本与运行规范文档，并在 Makefile / 运维文档中固化标准入口。
-12. 当前已完成 P9 收口：生产镜像与 docker-compose 已切换为“C++ HTTP 对外 26004 + Python backend 仅容器内 26014”的双进程主链路，C++ HTTP 正式成为交付主入口。
-13. 当前已完成 P14：在 runtime snapshot 可用时，`/api/v1/infer/{capability_name}` 已由 C++ 直接完成请求解析、license quick check、设备选择、实例池借还、结果生成与基础日志审计，仅在 snapshot 不可用时回退到 Python backend。
-14. 当前已完成 P15：`/api/v1/admin/reload` 与 `/api/v1/admin/rollback` 已由 C++ 直接完成资源扫描、revision/operation SQLite 持久化、runtime snapshot 重写与 catalog/pool 刷新，仅保留 Python 作为内部测试验收外壳与兼容壳层。
-15. 当前已完成 P16：C++ infer 主链路已接入真实插件动态加载、按实例槽位初始化与执行，runtime snapshot / capability catalog 已补齐 `model_root`、`binary_path` 元数据，默认由 C++ 直接调用插件返回结果，仅在 snapshot 不可用时回退 Python backend。
-16. 当前已完成 P17：当 runtime snapshot 缺失或不可用时，C++ 服务在启动阶段已可直接完成资源扫描、license quick check、bootstrap revision/operation SQLite 持久化与 runtime snapshot 初始写入，并在首启后立即刷新 catalog/pool 进入可服务状态。
-17. 当前已完成 P18：C++ 侧已新增 runtime 显式状态机，覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并为 reload/rollback 增加切换互斥保护；`/api/v1/admin/catalog` 现可输出运行时状态与错误信息，避免并发管理操作造成状态竞争。
-18. 当前已完成 P19：C++ infer 主链路已新增请求级 in-flight 跟踪与 RAII 请求租约，`/api/v1/admin/catalog` 可输出 active request 详情，reload/rollback drain 阶段会等待活动请求清空后再切换，进一步收口请求生命周期与切换安全。
-19. 当前已完成 P20：C++ 插件执行层已补齐能力级执行指标聚合与插件信息快照，`/api/v1/admin/catalog` 可输出 capability 级 `execution_metrics` 与 `plugin_info`，用于观测请求量、成功/失败次数、推理耗时及当前插件元数据。
-20. 当前已完成 P21：C++ 插件执行层已补齐可选 `warmup` / `health_check` 生命周期钩子装载与执行，生命周期状态、时间戳与失败信息会并入 capability 级 `execution_metrics`，并通过 `/api/v1/admin/catalog` 暴露，进一步收敛插件装载后的可观测性与自检能力。
-21. 当前已完成 P22：C++ 侧已新增统一输入 `payload codec`，对 `image / video / pdf` 请求补齐 base64 解码与格式校验，并将解码后的统一 payload 直接送入插件执行链路；推理结果与审计日志同时补齐 `input_metadata`，进一步收口多格式输入的 C++ 运行时处理能力。
+1. 当前已完成 P9-P38 全量收口，`apps/ai-prod/cpp/` 已成为面向客户交付的 C++ 生产主链路，实现了真实插件执行、bootstrap、reload/rollback、revision/operation 持久化、显式状态机、请求跟踪、批处理、deadline、审计日志、运行时编排诊断、manifest 强契约校验、capability 接入门禁与公开链路端到端验收收口。
+2. 当前已完成与 ai-license-mgr 的 License / 热更新 / 回滚语义统一：版本约束、`license_tool` 协同、密钥轮转后的运行态校验以及现场交付链路所需的能力范围与版本控制均已在代码与测试层完成对齐。
+3. 当前已完成 P36：Python / C++ runtime 已统一输出 `result / code / stage / details / diagnostics_version` 稳定授权诊断字段；C++ `infer` / `reload` 拒绝响应与审计日志也已补齐稳定 code/stage/details。
+4. 当前已完成内部验收外壳与交付材料收口：Python backend 仅保留 `/internal/*` 诊断能力，React 前端已补齐能力目录、在线控制台、revision/operation 视图、跨模块导航、共享 workspace 配置与总体联调复审展示。
+5. 当前已完成 P35：C++ runtime resource scanner 与 Python 验收外壳已对 ai-train 模型包 manifest、ai-builder 插件 manifest 建立强校验；无效资源会在 bootstrap / reload 阶段被跳过并记录到 `source_summary` 失败明细，模型版本不一致的能力也会被拒绝装载。
+6. 当前已完成 P37：C++ runtime 已在 bootstrap / reload / rollback 阶段为每个 capability 输出结构化接入检查清单，并执行插件预装载门禁；未通过 ABI / 运行时装载探测的能力会被拦截并写入 `source_summary.admission_gate_failures`，通过门禁的能力会在 snapshot / catalog 中暴露 `admission_checklist`。
+7. 当前已完成 P38：`apps/ai-prod/scripts/acceptance_check.py` 已补齐公开 `/api/v1/*` 主链路的 bootstrap / license-reload / reload / infer / rollback 端到端校验，验收时会校验 revision 切换、切换后再次推理与 `admission_checklist` / 稳定授权诊断字段输出。
+8. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 P35-P38 作为下一轮模块整改工作项，其中 P35-P38 已完成收口。
+9. 当前已完成 P39：Python / C++ runtime 已统一消费 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段，并通过环境变量/宿主机探测补齐运行态上下文。
+10. 当前已完成 P40：稳定诊断契约已新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并完成 ai-license-mgr / ai-prod / ai-sdk 三侧一致性回归。
 
 ### 4.3 未完成
 
-1. C++ 已完成 infer、启动 bootstrap、显式状态机、请求级跟踪、能力级执行观测、插件 lifecycle hook、统一输入 payload codec 与 reload/rollback 管理闭环，但更完整的运行时版本切换与最终 Python runtime 替换仍未完成，真实 C++ Runtime 的最终收口仍需继续推进。
+1. ai-prod 本轮整改项已全部完成，后续如继续推进应转入新一轮增量计划。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P9-P22：在已完成 P12/P13/P14/P15/P16/P17/P18/P19/P20/P21 的基础上，生产镜像/compose 已切换为“C++ HTTP 对外主入口 + Python backend 仅容器内壳层”的实际交付主链路，且不仅 infer 热路径与启动阶段 bootstrap 已由 C++ 直接完成，请求侧的 runtime 管理也已新增显式状态机、请求级 in-flight 跟踪、RAII 请求租约、能力级执行指标聚合、插件 `warmup` / `health_check` 生命周期钩子、统一输入 `payload codec` 与切换互斥保护，可稳定覆盖 `bootstrapping / ready / draining / transitioning / error` 状态流转，并通过 `/api/v1/admin/catalog` 暴露运行时状态、错误信息、active request 详情以及 capability 级 `execution_metrics` / `plugin_info` / lifecycle 状态；同时 `image / video / pdf` 输入已在 C++ 侧补齐 base64 解码、格式校验与输入元信息回填。当前后续重点继续转向更完整的运行时版本切换与最终 C++ Runtime 替换。
+ai-prod 当前已完成 P35-P40：在既有 manifest 强契约、capability 接入门禁、公开主链路验收闭环的基础上，又把 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段纳入 Python / C++ runtime 统一消费，并补齐宿主机自动探测 + 环境变量覆盖的运行上下文采集；同时新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied` 三个稳定诊断结果码，与 ai-license-mgr / ai-sdk 交付物保持一致。经 ai-prod backend unittest 与 C++ build/ctest 验证，当前 ai-prod 模块本轮增量已完成。

@@ -73,6 +73,13 @@ AI_PROD_DOCKER_SOURCES = (
     "apps/ai-prod/scripts",
     "ai_platform/third_party",
 )
+LICENSE_TOOL_VERSION = "1.0.0"
+LICENSE_TOOL_SOURCE_FILES = {
+    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
+}
 
 ACCEPTANCE_CHECKLIST_TEMPLATE = [
     (
@@ -583,13 +590,94 @@ def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
     tools_dir.mkdir(parents=True, exist_ok=True)
     validation_dir = tools_dir / "validation"
     ops_dir = tools_dir / "ops"
+    license_tool_dir = tools_dir / "license_tool"
     validation_dir.mkdir(parents=True, exist_ok=True)
     ops_dir.mkdir(parents=True, exist_ok=True)
+    license_tool_dir.mkdir(parents=True, exist_ok=True)
 
     _copy_file(REPO_ROOT / "apps/ai-prod/scripts/acceptance_check.py", validation_dir / "acceptance_check.py")
     _copy_file(REPO_ROOT / "apps/ai-prod/scripts/pressure_smoke.py", validation_dir / "pressure_smoke.py")
     _copy_file(REPO_ROOT / "scripts/docker/health_check.sh", ops_dir / "health_check.sh")
     _copy_file(REPO_ROOT / "scripts/docker/init_host_root.sh", ops_dir / "init_host_root.sh")
+    for relative_path, source_path in LICENSE_TOOL_SOURCE_FILES.items():
+        _copy_file(source_path, license_tool_dir / relative_path)
+    _write_text(license_tool_dir / "VERSION", LICENSE_TOOL_VERSION + "\n")
+    _write_text(
+        license_tool_dir / "manifest.json",
+        json.dumps(
+            {
+                "tool_name": "license_tool",
+                "version": LICENSE_TOOL_VERSION,
+                "bundle_format": "source_bundle",
+                "source_files": sorted(LICENSE_TOOL_SOURCE_FILES),
+                "build_command": "cmake -S . -B build && cmake --build build --parallel",
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+    _write_text(
+        license_tool_dir / "README.md",
+        "\n".join(
+            [
+                "# license_tool",
+                "",
+                "- 当前交付为标准 C++ source bundle，可在客户环境按需构建。",
+                f"- 版本：`{LICENSE_TOOL_VERSION}`",
+                "",
+                "## 构建方式",
+                "",
+                "```bash",
+                "cmake -S . -B build",
+                "cmake --build build --parallel",
+                "```",
+                "",
+                "## 常用命令",
+                "",
+                "```bash",
+                "./build/license_tool verify /path/to/license.bin",
+                "./build/license_tool generate /path/to/license.bin customer_name capability_a,capability_b",
+                "```",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        license_tool_dir / "ERROR_CODES.md",
+        "\n".join(
+            [
+                "# ERROR_CODES",
+                "",
+                "| 退出码 | 含义 |",
+                "| --- | --- |",
+                "| 1 | 参数不足或 mode 非法 |",
+                "| 2 | generate 参数错误 |",
+                "| 3 | 生成 license 文件失败 |",
+                "| 4 | 解析 license 文件失败 |",
+                "| 5 | 验证 license 失败 |",
+                "| 6 | 未知 mode |",
+                "",
+            ]
+        ),
+    )
+    _write_text(
+        license_tool_dir / "HARDWARE_FINGERPRINT.md",
+        "\n".join(
+            [
+                "# HARDWARE_FINGERPRINT",
+                "",
+                "硬件指纹采用 `key=value` 形式按 key 排序后，以 `|` 连接并计算 SHA256。",
+                "",
+                "示例：",
+                "",
+                "```text",
+                "cpu=intel-i7|disk=nvme-sn-001|mac=00:11:22:33:44:55",
+                "```",
+                "",
+            ]
+        ),
+    )
     _write_text(
         validation_dir / "verify_delivery_package.py",
         "\n".join(
@@ -616,6 +704,7 @@ def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
                 "        'version_manifest.json',",
                 "        'delivery_summary.json',",
                 "        'delivery_summary.md',",
+                "        'tools/license_tool/manifest.json',",
                 "    ]",
                 "    missing = [item for item in required if not (package_root / item).exists()]",
                 "    if missing:",
@@ -644,6 +733,7 @@ def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
                 "- validation/verify_delivery_package.py：交付目录结构快速校验脚本",
                 "- ops/health_check.sh：平台级健康检查脚本",
                 "- ops/init_host_root.sh：宿主机根目录初始化脚本",
+                "- license_tool/：标准授权工具 source bundle、README、错误码与硬件指纹说明",
                 "",
             ]
         ),
@@ -655,6 +745,16 @@ def _create_tools_bundle(tools_dir: Path) -> dict[str, object]:
             "validation/verify_delivery_package.py",
         ],
         "ops_scripts": ["ops/health_check.sh", "ops/init_host_root.sh"],
+        "license_tool": {
+            "version": LICENSE_TOOL_VERSION,
+            "root": "license_tool",
+            "manifest_path": "license_tool/manifest.json",
+            "documents": [
+                "license_tool/README.md",
+                "license_tool/ERROR_CODES.md",
+                "license_tool/HARDWARE_FINGERPRINT.md",
+            ],
+        },
     }
 
 
@@ -681,7 +781,8 @@ def _create_docs_bundle(
                 "1. 解压 delivery_package 并确认 docker / mount_template / tools / docs / sdk_* / licenses 目录齐全。",
                 "2. 参考 `mount_template/` 初始化宿主机目录，并将交付物放入对应挂载位置。",
                 "3. 参考 `docker/README.md` 构建 ai-prod 交付镜像。",
-                "4. 使用 `tools/validation/acceptance_check.py` 与 `tools/validation/pressure_smoke.py` 完成交付验收。",
+                "4. 如需现场核验授权，可先参考 `tools/license_tool/README.md` 构建并使用 `license_tool verify`。",
+                "5. 使用 `tools/validation/acceptance_check.py` 与 `tools/validation/pressure_smoke.py` 完成交付验收。",
                 "",
             ]
         ),
@@ -818,6 +919,10 @@ def _create_version_manifest(
         package_root / "licenses" / f"issue_{issue_record_id}" / "pubkey.pem",
         package_root / "licenses" / f"issue_{issue_record_id}" / "manifest.json",
         package_root / "docker" / "ai-prod_image_build_context.tar.gz",
+        package_root / "tools" / "license_tool" / "manifest.json",
+        package_root / "tools" / "license_tool" / "README.md",
+        package_root / "tools" / "license_tool" / "ERROR_CODES.md",
+        package_root / "tools" / "license_tool" / "HARDWARE_FINGERPRINT.md",
     ]
     checksum_entries = [
         _delivery_file_entry(path, package_root)

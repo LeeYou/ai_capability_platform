@@ -40,6 +40,13 @@ def percentile(values: list[int], ratio: float) -> int:
     return sorted(values)[index]
 
 
+def fetch_json(base_url: str, path: str, timeout: float) -> object:
+    request = urllib.request.Request(f"{base_url.rstrip('/')}{path}", headers={"Content-Type": "application/json"}, method="GET")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw_body = response.read().decode("utf-8")
+        return json.loads(raw_body) if raw_body else {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a lightweight concurrent smoke benchmark for ai-prod public APIs.")
     parser.add_argument("--base-url", default="http://127.0.0.1:26004")
@@ -51,6 +58,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--min-success-rate", type=float, default=1.0)
     parser.add_argument("--max-p95-ms", type=int, default=5000)
+    parser.add_argument("--metrics-path", default="/api/v1/admin/metrics")
+    parser.add_argument("--include-metrics", action="store_true")
     args = parser.parse_args()
 
     if args.requests < 1 or args.concurrency < 1:
@@ -98,6 +107,12 @@ def main() -> int:
         },
         "status_codes": dict(status_counter),
     }
+
+    if args.include_metrics:
+        try:
+            summary["runtime_metrics"] = fetch_json(args.base_url, args.metrics_path, args.timeout)
+        except Exception as exc:  # noqa: BLE001
+            summary["runtime_metrics_error"] = str(exc)
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

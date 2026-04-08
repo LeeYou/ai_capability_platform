@@ -44,7 +44,10 @@ ai-prod-cpp-test:
 	cd apps/ai-prod/cpp/build && cmake .. && cmake --build . --parallel && ctest --output-on-failure
 
 ai-prod-acceptance:
-	python3 apps/ai-prod/scripts/acceptance_check.py --base-url $${AI_PROD_ACCEPT_BASE_URL:-http://127.0.0.1:26004}
+	python3 apps/ai-prod/scripts/acceptance_check.py \
+		--base-url $${AI_PROD_ACCEPT_BASE_URL:-http://127.0.0.1:26004} \
+		--run-admin-checks \
+		--run-transition-checks
 
 ai-prod-pressure-smoke:
 	python3 apps/ai-prod/scripts/pressure_smoke.py \

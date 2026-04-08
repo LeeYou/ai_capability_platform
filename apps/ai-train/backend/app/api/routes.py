@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.database import get_db_session
 from app.models import (
+    AnnotationSampleItem,
     AnnotationTaskItem,
     AnnotationTaskListResponse,
     AppendTrainingTaskLogRequest,
@@ -19,25 +20,29 @@ from app.models import (
     HealthResponse,
     ModelArtifactItem,
     ModelArtifactListResponse,
+    RecordTrainingTaskResultRequest,
     RegisterCapabilityRequest,
     RegisterModelArtifactRequest,
     SubmitAnnotationTaskRequest,
     TrainingTaskItem,
     TrainingTaskListResponse,
+    TrainingTaskLogSnapshot,
+    UpdateAnnotationSamplesRequest,
     UpdateTrainingTaskStatusRequest,
+)
+from app.services.annotation_service import (
+    AnnotationTaskNotFoundError,
+    create_annotation_task,
+    get_annotation_task_detail,
+    list_annotation_tasks,
+    submit_annotation_task_result,
+    update_annotation_task_samples,
 )
 from app.services.model_service import (
     ModelArtifactNotFoundError,
     create_model_artifact,
     get_model_artifact,
     list_model_artifacts,
-)
-from app.services.annotation_service import (
-    AnnotationTaskNotFoundError,
-    create_annotation_task,
-    get_annotation_task,
-    list_annotation_tasks,
-    submit_annotation_task_result,
 )
 from app.services.registry_service import (
     bind_dataset_to_capability,
@@ -50,14 +55,87 @@ from app.services.training_service import (
     TrainingTaskNotFoundError,
     append_training_task_log,
     create_training_task,
-    get_training_task,
+    execute_training_task,
+    get_training_task_detail,
+    get_training_task_log_snapshot,
     list_training_tasks,
     prepare_training_workspace,
+    record_training_task_result,
     update_training_task_status,
 )
 
 
 router = APIRouter(prefix="/api/v1")
+
+
+def _annotation_item(item) -> AnnotationTaskItem:
+    sample_items = getattr(item, "sample_items", []) or []
+    return AnnotationTaskItem(
+        task_id=item.task_id,
+        capability_name=item.capability_name,
+        task_type=item.task_type,
+        task_name=item.task_name,
+        dataset_path=item.dataset_path,
+        status=item.status,
+        sample_total=item.sample_total,
+        labeled_count=item.labeled_count,
+        result_path=item.result_path,
+        completion_ratio=item.labeled_count / item.sample_total if item.sample_total > 0 else 0.0,
+        sample_items=[
+            AnnotationSampleItem(
+                sample_id=str(sample.get("sample_id", "")),
+                status=str(sample.get("status", "pending")),
+                annotation=sample.get("annotation") if isinstance(sample.get("annotation"), dict) else None,
+                updated_at=sample.get("updated_at") if isinstance(sample.get("updated_at"), str) else None,
+            )
+            for sample in sample_items
+            if isinstance(sample, dict)
+        ],
+        annotation_schema=item.annotation_schema,
+    )
+
+
+def _training_item(item) -> TrainingTaskItem:
+    return TrainingTaskItem(
+        task_id=item.task_id,
+        capability_name=item.capability_name,
+        task_type=item.task_type,
+        task_name=item.task_name,
+        dataset_path=item.dataset_path,
+        status=item.status,
+        framework=item.framework,
+        backend_type=item.backend_type,
+        annotation_task_id=item.annotation_task_id,
+        retry_count=item.retry_count,
+        log_path=item.log_path,
+        workspace_path=item.workspace_path,
+        started_at=item.started_at,
+        completed_at=item.completed_at,
+        latest_logs=item.latest_logs,
+        execution_plan=item.execution_plan,
+        result_summary=item.result_summary,
+        training_input_path=item.training_input_path,
+        template_bundle_path=item.template_bundle_path,
+        export_dir=item.export_dir,
+    )
+
+
+def _model_item(item) -> ModelArtifactItem:
+    return ModelArtifactItem(
+        artifact_id=item.artifact_id,
+        capability_name=item.capability_name,
+        task_type=item.task_type,
+        model_version=item.model_version,
+        source_training_task_id=item.source_training_task_id,
+        artifact_path=item.artifact_path,
+        manifest_path=item.manifest_path,
+        backend_type=item.backend_type,
+        checksum=item.checksum,
+        status=item.status,
+        manifest_preview=item.manifest_preview,
+        delivery_metadata=item.delivery_metadata,
+        runtime_contract=item.runtime_contract,
+    )
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -80,12 +158,15 @@ def get_capabilities(session: Session = Depends(get_db_session)) -> CapabilityLi
     return CapabilityListResponse(
         items=[
             CapabilityItem(
-                capability_name=item.capability_name,
-                display_name=item.display_name,
-                dataset_path=item.dataset_path,
-                dataset_status=item.dataset_status,
-                source=item.source,
-            )
+            capability_name=item.capability_name,
+            display_name=item.display_name,
+            task_type=item.task_type,
+            dataset_path=item.dataset_path,
+            dataset_status=item.dataset_status,
+            source=item.source,
+            annotation_schema=item.annotation_schema,
+            template_bundle=item.template_bundle,
+        )
             for item in bindings
         ]
     )
@@ -106,6 +187,7 @@ def create_capability(
             session=session,
             capability_name=request.capability_name,
             display_name=request.display_name,
+            task_type=request.task_type,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -113,9 +195,12 @@ def create_capability(
     return CapabilityItem(
         capability_name=item.capability_name,
         display_name=item.display_name,
+        task_type=item.task_type,
         dataset_path=item.dataset_path,
         dataset_status=item.dataset_status,
         source=item.source,
+        annotation_schema=item.annotation_schema,
+        template_bundle=item.template_bundle,
     )
 
 
@@ -170,43 +255,21 @@ def create_dataset_binding(
 @router.get("/annotation-tasks", response_model=AnnotationTaskListResponse, tags=["annotation"])
 def get_annotation_tasks(session: Session = Depends(get_db_session)) -> AnnotationTaskListResponse:
     items = list_annotation_tasks(session)
-    return AnnotationTaskListResponse(
-        items=[
-            AnnotationTaskItem(
-                task_id=item.task_id,
-                capability_name=item.capability_name,
-                task_name=item.task_name,
-                dataset_path=item.dataset_path,
-                status=item.status,
-                sample_total=item.sample_total,
-                labeled_count=item.labeled_count,
-                result_path=item.result_path,
-            )
-            for item in items
-        ]
-    )
+    return AnnotationTaskListResponse(items=[_annotation_item(item) for item in items])
 
 
 @router.get("/annotation-tasks/{task_id}", response_model=AnnotationTaskItem, tags=["annotation"])
-def get_annotation_task_detail(
+def get_annotation_task_detail_route(
     task_id: int,
     session: Session = Depends(get_db_session),
 ) -> AnnotationTaskItem:
+    settings = get_settings()
     try:
-        item = get_annotation_task(session, task_id)
+        item = get_annotation_task_detail(session, settings.annotation_tasks_root, task_id)
     except AnnotationTaskNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    return AnnotationTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        sample_total=item.sample_total,
-        labeled_count=item.labeled_count,
-        result_path=item.result_path,
-    )
+    return _annotation_item(item)
 
 
 @router.post(
@@ -229,16 +292,34 @@ def create_annotation_task_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return AnnotationTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        sample_total=item.sample_total,
-        labeled_count=item.labeled_count,
-        result_path=item.result_path,
-    )
+    return _annotation_item(item)
+
+
+@router.patch(
+    "/annotation-tasks/{task_id}/samples",
+    response_model=AnnotationTaskItem,
+    tags=["annotation"],
+)
+def update_annotation_task_samples_route(
+    task_id: int,
+    request: UpdateAnnotationSamplesRequest,
+    session: Session = Depends(get_db_session),
+) -> AnnotationTaskItem:
+    settings = get_settings()
+    try:
+        item = update_annotation_task_samples(
+            session=session,
+            annotation_tasks_root=settings.annotation_tasks_root,
+            task_id=task_id,
+            annotations=request.annotations,
+            mark_submitted=request.mark_submitted,
+        )
+    except AnnotationTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _annotation_item(item)
 
 
 @router.post(
@@ -264,65 +345,24 @@ def submit_annotation_task(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return AnnotationTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        sample_total=item.sample_total,
-        labeled_count=item.labeled_count,
-        result_path=item.result_path,
-    )
+    return _annotation_item(item)
 
 
 @router.get("/training-tasks", response_model=TrainingTaskListResponse, tags=["training"])
 def get_training_tasks(session: Session = Depends(get_db_session)) -> TrainingTaskListResponse:
     items = list_training_tasks(session)
-    return TrainingTaskListResponse(
-        items=[
-            TrainingTaskItem(
-                task_id=item.task_id,
-                capability_name=item.capability_name,
-                task_name=item.task_name,
-                dataset_path=item.dataset_path,
-                status=item.status,
-                framework=item.framework,
-                backend_type=item.backend_type,
-                annotation_task_id=item.annotation_task_id,
-                retry_count=item.retry_count,
-                log_path=item.log_path,
-                workspace_path=item.workspace_path,
-                started_at=item.started_at,
-                completed_at=item.completed_at,
-            )
-            for item in items
-        ]
-    )
+    return TrainingTaskListResponse(items=[_training_item(item) for item in items])
 
 
 @router.get("/training-tasks/{task_id}", response_model=TrainingTaskItem, tags=["training"])
-def get_training_task_detail(task_id: int, session: Session = Depends(get_db_session)) -> TrainingTaskItem:
+def get_training_task_detail_route(task_id: int, session: Session = Depends(get_db_session)) -> TrainingTaskItem:
+    settings = get_settings()
     try:
-        item = get_training_task(session, task_id)
+        item = get_training_task_detail(session, settings.training_jobs_root, task_id)
     except TrainingTaskNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    return TrainingTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        framework=item.framework,
-        backend_type=item.backend_type,
-        annotation_task_id=item.annotation_task_id,
-        retry_count=item.retry_count,
-        log_path=item.log_path,
-        workspace_path=item.workspace_path,
-        started_at=item.started_at,
-        completed_at=item.completed_at,
-    )
+    return _training_item(item)
 
 
 @router.post(
@@ -350,21 +390,7 @@ def create_training_task_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return TrainingTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        framework=item.framework,
-        backend_type=item.backend_type,
-        annotation_task_id=item.annotation_task_id,
-        retry_count=item.retry_count,
-        log_path=item.log_path,
-        workspace_path=item.workspace_path,
-        started_at=item.started_at,
-        completed_at=item.completed_at,
-    )
+    return _training_item(item)
 
 
 @router.patch("/training-tasks/{task_id}/status", response_model=TrainingTaskItem, tags=["training"])
@@ -380,21 +406,7 @@ def update_training_task_status_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return TrainingTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        framework=item.framework,
-        backend_type=item.backend_type,
-        annotation_task_id=item.annotation_task_id,
-        retry_count=item.retry_count,
-        log_path=item.log_path,
-        workspace_path=item.workspace_path,
-        started_at=item.started_at,
-        completed_at=item.completed_at,
-    )
+    return _training_item(item)
 
 
 @router.post("/training-tasks/{task_id}/logs", response_model=TrainingTaskItem, tags=["training"])
@@ -416,21 +428,47 @@ def append_training_task_log_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return TrainingTaskItem(
+    return _training_item(item)
+
+
+@router.get("/training-tasks/{task_id}/logs", response_model=TrainingTaskLogSnapshot, tags=["training"])
+def get_training_task_logs_route(task_id: int, session: Session = Depends(get_db_session)) -> TrainingTaskLogSnapshot:
+    settings = get_settings()
+    try:
+        item = get_training_task_log_snapshot(session, settings.training_jobs_root, task_id)
+    except TrainingTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return TrainingTaskLogSnapshot(
         task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
         status=item.status,
-        framework=item.framework,
-        backend_type=item.backend_type,
-        annotation_task_id=item.annotation_task_id,
-        retry_count=item.retry_count,
         log_path=item.log_path,
-        workspace_path=item.workspace_path,
-        started_at=item.started_at,
-        completed_at=item.completed_at,
+        latest_logs=item.latest_logs,
+        execution_plan=item.execution_plan,
+        result_summary=item.result_summary,
     )
+
+
+@router.post("/training-tasks/{task_id}/result", response_model=TrainingTaskItem, tags=["training"])
+def record_training_task_result_route(
+    task_id: int,
+    request: RecordTrainingTaskResultRequest,
+    session: Session = Depends(get_db_session),
+) -> TrainingTaskItem:
+    settings = get_settings()
+    try:
+        item = record_training_task_result(
+            session=session,
+            training_jobs_root=settings.training_jobs_root,
+            task_id=task_id,
+            result_summary=request.result_summary,
+        )
+    except TrainingTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _training_item(item)
 
 
 @router.post("/training-tasks/{task_id}/prepare", response_model=TrainingTaskItem, tags=["training"])
@@ -450,42 +488,34 @@ def prepare_training_task_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return TrainingTaskItem(
-        task_id=item.task_id,
-        capability_name=item.capability_name,
-        task_name=item.task_name,
-        dataset_path=item.dataset_path,
-        status=item.status,
-        framework=item.framework,
-        backend_type=item.backend_type,
-        annotation_task_id=item.annotation_task_id,
-        retry_count=item.retry_count,
-        log_path=item.log_path,
-        workspace_path=item.workspace_path,
-        started_at=item.started_at,
-        completed_at=item.completed_at,
-    )
+    return _training_item(item)
+
+
+@router.post("/training-tasks/{task_id}/execute", response_model=TrainingTaskItem, tags=["training"])
+def execute_training_task_route(
+    task_id: int,
+    session: Session = Depends(get_db_session),
+) -> TrainingTaskItem:
+    settings = get_settings()
+    try:
+        item = execute_training_task(
+            session=session,
+            training_jobs_root=settings.training_jobs_root,
+            training_logs_root=settings.training_logs_root,
+            task_id=task_id,
+        )
+    except TrainingTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return _training_item(item)
 
 
 @router.get("/models", response_model=ModelArtifactListResponse, tags=["model"])
 def get_models(session: Session = Depends(get_db_session)) -> ModelArtifactListResponse:
     items = list_model_artifacts(session)
-    return ModelArtifactListResponse(
-        items=[
-            ModelArtifactItem(
-                artifact_id=item.artifact_id,
-                capability_name=item.capability_name,
-                model_version=item.model_version,
-                source_training_task_id=item.source_training_task_id,
-                artifact_path=item.artifact_path,
-                manifest_path=item.manifest_path,
-                backend_type=item.backend_type,
-                checksum=item.checksum,
-                status=item.status,
-            )
-            for item in items
-        ]
-    )
+    return ModelArtifactListResponse(items=[_model_item(item) for item in items])
 
 
 @router.get("/models/{artifact_id}", response_model=ModelArtifactItem, tags=["model"])
@@ -495,17 +525,7 @@ def get_model_detail(artifact_id: int, session: Session = Depends(get_db_session
     except ModelArtifactNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    return ModelArtifactItem(
-        artifact_id=item.artifact_id,
-        capability_name=item.capability_name,
-        model_version=item.model_version,
-        source_training_task_id=item.source_training_task_id,
-        artifact_path=item.artifact_path,
-        manifest_path=item.manifest_path,
-        backend_type=item.backend_type,
-        checksum=item.checksum,
-        status=item.status,
-    )
+    return _model_item(item)
 
 
 @router.post("/models", response_model=ModelArtifactItem, status_code=status.HTTP_201_CREATED, tags=["model"])
@@ -526,14 +546,4 @@ def create_model_route(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return ModelArtifactItem(
-        artifact_id=item.artifact_id,
-        capability_name=item.capability_name,
-        model_version=item.model_version,
-        source_training_task_id=item.source_training_task_id,
-        artifact_path=item.artifact_path,
-        manifest_path=item.manifest_path,
-        backend_type=item.backend_type,
-        checksum=item.checksum,
-        status=item.status,
-    )
+    return _model_item(item)

@@ -6,10 +6,13 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 #include <openssl/sha.h>
 #include <random>
 #include <sstream>
@@ -26,6 +29,9 @@ constexpr auto kDrainTimeout = std::chrono::seconds(5);
 constexpr auto kRefreshRetryInterval = std::chrono::milliseconds(100);
 constexpr int kRefreshRetryAttempts = 10;
 constexpr int kMaxSimulateDelayMs = 2000;
+constexpr std::size_t kRecentLatencySampleLimit = 64;
+
+nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status);
 
 struct AdminTransitionRequestPayload {
     std::string action = "reload";
@@ -37,27 +43,40 @@ struct InferRequestPayload {
     std::string payload;
     DecodedPayload decoded_payload;
     std::string prefer_device = "auto";
+    int prefer_deadline_ms = -1;
     nlohmann::json options = nlohmann::json::object();
     int simulate_delay_ms = 0;
 };
 
-std::string ToLowerCopy(const std::string& value) {
-    std::string lowered = value;
-    std::transform(
-        lowered.begin(),
-        lowered.end(),
-        lowered.begin(),
-        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return lowered;
-}
+struct InferExecutionOutcome {
+    int status_code = 200;
+    nlohmann::json payload = nlohmann::json::object();
+};
 
-bool ShouldForwardHeader(const std::string& key) {
-    const std::string lowered = ToLowerCopy(key);
-    return lowered != "host" &&
-           lowered != "content-length" &&
-           lowered != "transfer-encoding" &&
-           lowered != "connection";
-}
+class ScopedEndpointMetricRecorder {
+public:
+    ScopedEndpointMetricRecorder(
+        AiProdHttpServer* owner_value,
+        std::string endpoint_value,
+        httplib::Response* response_value)
+        : owner(owner_value),
+          endpoint(std::move(endpoint_value)),
+          response(response_value),
+          started_at(std::chrono::steady_clock::now()) {
+    }
+
+    ~ScopedEndpointMetricRecorder() {
+        if (owner != nullptr && response != nullptr) {
+            owner->RecordEndpointMetric(endpoint, response->status, started_at);
+        }
+    }
+
+private:
+    AiProdHttpServer* owner = nullptr;
+    std::string endpoint;
+    httplib::Response* response = nullptr;
+    std::chrono::steady_clock::time_point started_at;
+};
 
 std::string EscapeJson(const std::string& value) {
     std::string escaped;
@@ -97,15 +116,50 @@ void ApplyJsonErrorResponse(
         kDefaultJsonContentType);
 }
 
+void ApplyLicenseErrorResponse(
+    int status,
+    const LicenseStatusInfo& license_status,
+    httplib::Response& response) {
+    response.status = status;
+    response.set_content(
+        nlohmann::json(
+            {
+                {"status", "error"},
+                {"message", license_status.reason},
+                {"license_status", BuildLicenseStatusPayload(license_status)},
+            })
+            .dump(),
+        kDefaultJsonContentType);
+}
+
+InferExecutionOutcome BuildErrorOutcome(int status, const std::string& message) {
+    return {
+        status,
+        {
+            {"status", "error"},
+            {"message", message},
+        },
+    };
+}
+
 nlohmann::json BuildLicenseStatusPayload(const LicenseStatusInfo& status) {
     return {
         {"valid", status.valid},
         {"reason", status.reason},
+        {"result", status.result},
+        {"code", status.code},
+        {"stage", status.stage},
+        {"details", status.details},
+        {"diagnostics_version", status.diagnostics_version},
         {"checked_at_cst", status.checked_at_cst},
         {"customer_code", status.customer_code},
         {"capability_scope", status.capability_scope},
         {"version_constraints", status.version_constraints},
         {"hardware_fingerprint", status.hardware_fingerprint},
+        {"operating_system", status.operating_system},
+        {"min_operating_system_version", status.min_operating_system_version},
+        {"system_architecture", status.system_architecture},
+        {"application_name", status.application_name},
     };
 }
 
@@ -135,6 +189,21 @@ std::string CurrentUtcIsoString() {
     return output.str();
 }
 
+double PercentileFromSamples(const std::multiset<int>& samples, double ratio) {
+    if (samples.empty()) {
+        return 0.0;
+    }
+    const double scaled_index = std::ceil(static_cast<double>(samples.size()) * ratio) - 1.0;
+    const double clamped_index = std::clamp(
+        scaled_index,
+        0.0,
+        static_cast<double>(samples.size() - 1));
+    const auto index = static_cast<std::size_t>(clamped_index);
+    auto it = samples.begin();
+    std::advance(it, static_cast<std::ptrdiff_t>(index));
+    return static_cast<double>(*it);
+}
+
 void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
     const std::filesystem::path log_path(path);
     if (!log_path.parent_path().empty()) {
@@ -147,23 +216,6 @@ void AppendJsonLine(const std::string& path, const nlohmann::json& payload) {
     output << payload.dump() << "\n";
 }
 
-void AppendAuditLog(
-    const ProxyConfig& config,
-    const std::string& action,
-    const std::string& entity_type,
-    const std::string& entity_id,
-    const nlohmann::json& detail) {
-    AppendJsonLine(
-        config.audit_log_path,
-        {
-            {"happened_at_cst", CurrentCstIsoString()},
-            {"action", action},
-            {"entity_type", entity_type},
-            {"entity_id", entity_id},
-            {"detail", detail},
-        });
-}
-
 bool ParseInferRequest(const std::string& body, InferRequestPayload* request, std::string* error_message) {
     try {
         const auto payload = nlohmann::json::parse(body.empty() ? "{}" : body);
@@ -174,6 +226,7 @@ bool ParseInferRequest(const std::string& body, InferRequestPayload* request, st
         request->input_type = payload.value("input_type", "json");
         request->payload = payload.value("payload", "");
         request->prefer_device = payload.value("prefer_device", "auto");
+        request->prefer_deadline_ms = payload.value("prefer_deadline_ms", -1);
         request->options = payload.contains("options") ? payload["options"] : nlohmann::json::object();
         if (!request->options.is_object()) {
             *error_message = "options 必须是 JSON 对象。";
@@ -191,6 +244,10 @@ bool ParseInferRequest(const std::string& body, InferRequestPayload* request, st
         if (request->prefer_device != "auto" && request->prefer_device != "gpu" &&
             request->prefer_device != "cpu") {
             *error_message = "prefer_device 不受支持。";
+            return false;
+        }
+        if (request->prefer_deadline_ms < -1) {
+            *error_message = "prefer_deadline_ms 不能小于 -1。";
             return false;
         }
         if (request->options.contains("simulate_delay_ms") && request->options["simulate_delay_ms"].is_number_integer()) {
@@ -223,6 +280,14 @@ std::string GenerateRequestId() {
     return output.str();
 }
 
+std::string ResolveRequestId(const httplib::Request& request) {
+    const auto request_id = request.get_header_value("X-Request-ID");
+    if (!request_id.empty()) {
+        return request_id;
+    }
+    return GenerateRequestId();
+}
+
 std::string Sha256Hex(const std::string& value) {
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(value.data()), value.size(), digest);
@@ -243,6 +308,268 @@ std::string ResolveDevice(const InferRequestPayload& request, const CapabilityCa
         return "cpu";
     }
     return gpu_available ? "gpu" : "cpu";
+}
+
+bool CanFallbackToCpu(const CapabilityCatalogEntry& entry, const std::string& requested_device, PluginFailureKind failure_kind) {
+    if (requested_device != "gpu") {
+        return false;
+    }
+    if (entry.device_mode == "cpu") {
+        return false;
+    }
+    return failure_kind == PluginFailureKind::kBindingLoadFailure || failure_kind == PluginFailureKind::kLifecycleFailure;
+}
+
+CapabilityCatalogEntry BuildCapabilityCatalogEntryForRecord(
+    const RuntimeCapabilityRecord& capability_record,
+    int revision_id,
+    const ProxyConfig& config) {
+    const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
+    return CapabilityCatalogEntry{
+        capability_record.capability_name,
+        capability_record.plugin_target,
+        capability_record.model_version,
+        capability_record.backend_type,
+        capability_record.active_source,
+        capability_record.declared_device_mode == "auto"
+            ? (config.gpu_available ? "gpu/cpu" : "cpu")
+            : capability_record.declared_device_mode,
+        capability_record.model_root,
+        capability_record.binary_path,
+        capability_record.capability_priority,
+        pool_size,
+        capability_record.max_batch_size,
+        capability_record.min_batch_size,
+        capability_record.batch_wait_timeout_ms >= 0 ? capability_record.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms,
+        capability_record.queue_wait_timeout_ms >= 0 ? capability_record.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms,
+        capability_record.max_pending_request_count >= 0
+            ? capability_record.max_pending_request_count
+            : config.infer_queue_max_pending_requests,
+        capability_record.infer_timeout_ms,
+        capability_record.estimated_avg_infer_time_ms,
+        capability_record.p95_infer_time_ms,
+        capability_record.max_concurrent_requests,
+        capability_record.supports_concurrent_infer,
+        capability_record.allow_resource_sharing,
+        revision_id,
+        capability_record.admission_checklist,
+    };
+}
+
+void SetChecklistItem(
+    nlohmann::json* checklist,
+    const std::string& code,
+    const std::string& label,
+    bool required,
+    const std::string& status,
+    const std::string& detail) {
+    if (!checklist->contains("items") || !(*checklist)["items"].is_array()) {
+        (*checklist)["items"] = nlohmann::json::array();
+    }
+    auto& items = (*checklist)["items"];
+    for (auto& item : items) {
+        if (item.is_object() && item.value("code", "") == code) {
+            item["label"] = label;
+            item["required"] = required;
+            item["status"] = status;
+            item["detail"] = detail;
+            return;
+        }
+    }
+    items.push_back(
+        {
+            {"code", code},
+            {"label", label},
+            {"required", required},
+            {"status", status},
+            {"detail", detail},
+        });
+}
+
+void FinalizeChecklist(nlohmann::json* checklist) {
+    if (!checklist->contains("items") || !(*checklist)["items"].is_array()) {
+        (*checklist)["items"] = nlohmann::json::array();
+    }
+    nlohmann::json failed_codes = nlohmann::json::array();
+    for (const auto& item : (*checklist)["items"]) {
+        if (!item.is_object() || !item.value("required", false)) {
+            continue;
+        }
+        if (item.value("status", "") != "passed") {
+            failed_codes.push_back(item.value("code", ""));
+        }
+    }
+    (*checklist)["failed_codes"] = failed_codes;
+    (*checklist)["ready"] = failed_codes.empty();
+}
+
+nlohmann::json BuildBaseAdmissionChecklist(const RuntimeCapabilityRecord& capability_record) {
+    nlohmann::json checklist = {
+        {"capability_name", capability_record.capability_name},
+        {"items", nlohmann::json::array()},
+        {"failed_codes", nlohmann::json::array()},
+        {"ready", false},
+    };
+    SetChecklistItem(
+        &checklist,
+        "manifest_contract",
+        "manifest 契约",
+        true,
+        "passed",
+        "模型包 manifest 与插件 manifest 已通过强校验。");
+    const auto runtime_contract = capability_record.model_manifest.value("runtime_contract", nlohmann::json::object());
+    const auto runtime_inputs = runtime_contract.value("runtime_inputs", nlohmann::json::object());
+    const std::string input_type =
+        capability_record.model_manifest.value("preprocessing", nlohmann::json::object()).value("input_type", "");
+    SetChecklistItem(
+        &checklist,
+        "sample_input_contract",
+        "样本输入契约",
+        true,
+        !input_type.empty() && runtime_inputs.contains("preprocess_path") && runtime_inputs.contains("labels_path")
+            ? "passed"
+            : "failed",
+        !input_type.empty() && runtime_inputs.contains("preprocess_path") && runtime_inputs.contains("labels_path")
+            ? "输入类型、预处理配置与标签路径齐全。"
+            : "缺少 preprocessing.input_type 或 runtime_inputs 关键路径。");
+    const auto dependency_summary =
+        capability_record.plugin_manifest.value("dependency_summary", nlohmann::json::object());
+    SetChecklistItem(
+        &checklist,
+        "abi_contract",
+        "插件 ABI 契约",
+        true,
+        dependency_summary.value("abi", std::string()).empty() ? "failed" : "passed",
+        dependency_summary.value("abi", std::string()).empty()
+            ? "插件 manifest 缺少 ABI 声明。"
+            : "插件 manifest 已声明 ABI 与运行时依赖。");
+    const bool artifacts_present = !capability_record.model_root.empty() && std::filesystem::exists(capability_record.model_root) &&
+                                   !capability_record.binary_path.empty() && std::filesystem::exists(capability_record.binary_path);
+    SetChecklistItem(
+        &checklist,
+        "artifact_presence",
+        "运行时产物存在性",
+        true,
+        artifacts_present ? "passed" : "failed",
+        artifacts_present ? "模型目录与插件二进制均存在。" : "模型目录或插件二进制缺失。");
+    SetChecklistItem(
+        &checklist,
+        "license_gate",
+        "License 门禁",
+        true,
+        "pending",
+        "待 bootstrap/reload/rollback 期间完成 license 约束校验。");
+    SetChecklistItem(
+        &checklist,
+        "runtime_probe",
+        "运行时装载门禁",
+        true,
+        "pending",
+        "待运行时预装载探测。");
+    FinalizeChecklist(&checklist);
+    return checklist;
+}
+
+nlohmann::json BuildSnapshotCapabilityPayload(
+    const RuntimeCapabilityRecord& capability_record,
+    int revision_id,
+    const ProxyConfig& config) {
+    const int pool_size = capability_record.instance_count > 0 ? capability_record.instance_count : config.pool_size;
+    const int batch_wait_timeout_ms =
+        capability_record.batch_wait_timeout_ms >= 0 ? capability_record.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms;
+    const int queue_wait_timeout_ms =
+        capability_record.queue_wait_timeout_ms >= 0 ? capability_record.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+    const int max_pending_request_count =
+        capability_record.max_pending_request_count >= 0
+            ? capability_record.max_pending_request_count
+            : config.infer_queue_max_pending_requests;
+    return {
+        {"capability_name", capability_record.capability_name},
+        {"plugin_target", capability_record.plugin_target},
+        {"model_version", capability_record.model_version},
+        {"backend_type", capability_record.backend_type},
+        {"active_source", capability_record.active_source},
+        {"model_root", capability_record.model_root},
+        {"binary_path", capability_record.binary_path},
+        {"device_mode", capability_record.declared_device_mode == "auto"
+                            ? (config.gpu_available ? "gpu/cpu" : "cpu")
+                            : capability_record.declared_device_mode},
+        {"capability_priority", capability_record.capability_priority},
+        {"pool_size", pool_size},
+        {"max_batch_size", capability_record.max_batch_size},
+        {"min_batch_size", capability_record.min_batch_size},
+        {"batch_wait_timeout_ms", batch_wait_timeout_ms},
+        {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+        {"max_pending_request_count", max_pending_request_count},
+        {"infer_timeout_ms", capability_record.infer_timeout_ms},
+        {"estimated_avg_infer_time_ms", capability_record.estimated_avg_infer_time_ms},
+        {"p95_infer_time_ms", capability_record.p95_infer_time_ms},
+        {"max_concurrent_requests", capability_record.max_concurrent_requests},
+        {"supports_concurrent_infer", capability_record.supports_concurrent_infer},
+        {"allow_resource_sharing", capability_record.allow_resource_sharing},
+        {"admission_checklist", capability_record.admission_checklist},
+        {"revision_id", revision_id},
+    };
+}
+
+nlohmann::json BuildCapabilityRecordArray(const std::map<std::string, RuntimeCapabilityRecord>& capabilities) {
+    nlohmann::json payload = nlohmann::json::array();
+    for (const auto& capability_entry : capabilities) {
+        payload.push_back(SerializeRuntimeCapabilityRecord(capability_entry.second));
+    }
+    return payload;
+}
+
+bool ValidateCapabilityRecords(
+    const std::map<std::string, RuntimeCapabilityRecord>& capabilities,
+    std::string* error_message) {
+    for (const auto& capability_entry : capabilities) {
+        const auto& record = capability_entry.second;
+        if (record.model_root.empty() || !std::filesystem::exists(record.model_root)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标模型目录不存在：" + record.model_root;
+            }
+            return false;
+        }
+        if (record.plugin_root.empty() || !std::filesystem::exists(record.plugin_root)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标插件目录不存在：" + record.plugin_root;
+            }
+            return false;
+        }
+        if (record.binary_path.empty() || !std::filesystem::exists(record.binary_path)) {
+            if (error_message != nullptr) {
+                *error_message = "回滚目标插件文件不存在：" + record.binary_path;
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<std::map<std::string, RuntimeCapabilityRecord>> LoadCapabilityRecordsFromRevision(
+    const RuntimeRevisionRecord& revision,
+    std::string* error_message) {
+    if (!revision.detail.is_object() || !revision.detail.contains("capability_records")) {
+        return std::nullopt;
+    }
+    const auto& capability_records = revision.detail["capability_records"];
+    if (!capability_records.is_array()) {
+        if (error_message != nullptr) {
+            *error_message = "revision capability_records 必须是数组。";
+        }
+        return std::nullopt;
+    }
+
+    std::map<std::string, RuntimeCapabilityRecord> restored;
+    for (const auto& item : capability_records) {
+        const auto record = DeserializeRuntimeCapabilityRecord(item, error_message);
+        if (!record.has_value()) {
+            return std::nullopt;
+        }
+        restored.emplace(record->capability_name, *record);
+    }
+    return restored;
 }
 
 nlohmann::json SerializeRevisionRecord(const RuntimeRevisionRecord& record) {
@@ -301,16 +628,33 @@ bool ParseAdminTransitionRequest(
 
 }
 
+struct AiProdHttpServer::PendingBatchExecution {
+    std::string request_id;
+    std::string capability_name;
+    InferRequestPayload infer_request;
+    std::chrono::steady_clock::time_point request_started_at = std::chrono::steady_clock::now();
+    BatchDispatchAssignment batch_assignment;
+    bool completed = false;
+    InferExecutionOutcome outcome;
+    std::condition_variable condition;
+    std::mutex mutex;
+};
+
 AiProdHttpServer::AiProdHttpServer(const ProxyConfig& config_value)
     : config(config_value),
       capabilityCatalog(config_value.runtime_snapshot_path),
-      backendClient(config_value),
       licenseManager(
           config_value.license_root,
           config_value.hardware_features,
+          config_value.operating_system,
+          config_value.operating_system_version,
+          config_value.system_architecture,
+          config_value.application_name,
           config_value.license_auto_reload_interval_seconds),
       requestTracker(std::make_shared<InFlightRequestTracker>()),
       snapshotManager(config_value),
+      auditLogger(std::make_unique<AuditLogger>(config_value.audit_log_path)),
+      startedAt(std::chrono::steady_clock::now()),
       server(std::make_unique<httplib::Server>()) {
     licenseManager.Initialize();
     licenseManager.StartAutoReloadMonitor();
@@ -324,6 +668,132 @@ bool AiProdHttpServer::Start() {
 
 void AiProdHttpServer::Stop() {
     server->stop();
+}
+
+void AiProdHttpServer::RecordEndpointMetric(
+    const std::string& endpoint,
+    int status_code,
+    std::chrono::steady_clock::time_point started_at) {
+    const auto latency_ms = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count());
+    std::lock_guard<std::mutex> guard(metricsMutex);
+    auto& metrics = endpointMetrics[endpoint];
+    metrics.total_requests += 1;
+    if (status_code >= 200 && status_code < 400) {
+        metrics.successful_requests += 1;
+    } else {
+        metrics.failed_requests += 1;
+        metrics.last_error_at_utc = CurrentUtcIsoString();
+    }
+    metrics.last_status_code = status_code;
+    metrics.total_latency_ms += static_cast<double>(latency_ms);
+    if (metrics.total_requests == 1) {
+        metrics.min_latency_ms = static_cast<double>(latency_ms);
+        metrics.max_latency_ms = static_cast<double>(latency_ms);
+    } else {
+        metrics.min_latency_ms = std::min(metrics.min_latency_ms, static_cast<double>(latency_ms));
+        metrics.max_latency_ms = std::max(metrics.max_latency_ms, static_cast<double>(latency_ms));
+    }
+    metrics.status_code_counts[status_code] += 1;
+    metrics.recent_latency_ms.push_back(latency_ms);
+    metrics.recent_latency_sorted.insert(latency_ms);
+    while (metrics.recent_latency_ms.size() > kRecentLatencySampleLimit) {
+        const int evicted_latency = metrics.recent_latency_ms.front();
+        metrics.recent_latency_ms.pop_front();
+        const auto sorted_it = metrics.recent_latency_sorted.find(evicted_latency);
+        metrics.recent_latency_sorted.erase(sorted_it);
+    }
+}
+
+void AiProdHttpServer::RecordSlaMetric(const std::string& endpoint, bool tracked, bool deadline_exceeded) {
+    if (!tracked) {
+        return;
+    }
+    std::lock_guard<std::mutex> guard(metricsMutex);
+    auto& metrics = endpointMetrics[endpoint];
+    metrics.sla_tracked_requests += 1;
+    if (deadline_exceeded) {
+        metrics.deadline_exceeded_requests += 1;
+    }
+}
+
+int AiProdHttpServer::ResolveBatchWaitTimeoutMs(const CapabilityCatalogEntry& entry) const {
+    return entry.batch_wait_timeout_ms >= 0 ? entry.batch_wait_timeout_ms : config.infer_batch_wait_timeout_ms;
+}
+
+void AiProdHttpServer::CompletePendingBatchExecution(
+    const std::shared_ptr<PendingBatchExecution>& pending_execution,
+    const nlohmann::json& payload,
+    int status_code) {
+    if (!pending_execution) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> guard(pending_execution->mutex);
+        pending_execution->outcome.status_code = status_code;
+        pending_execution->outcome.payload = payload;
+        pending_execution->completed = true;
+    }
+    pending_execution->condition.notify_all();
+}
+
+nlohmann::json AiProdHttpServer::BuildBatchCapabilityMetrics(
+    const CapabilityCatalogEntry& entry,
+    int batch_wait_timeout_ms) const {
+    const auto batch_metrics = requestBatcher.GetCapabilityMetrics(entry.capability_name);
+    if (!batch_metrics.has_value()) {
+        return {
+            {"enabled", entry.max_batch_size > 1 && batch_wait_timeout_ms > 0},
+            {"max_batch_size", entry.max_batch_size},
+            {"batch_wait_timeout_ms", batch_wait_timeout_ms},
+            {"pending_batch_request_count", 0},
+            {"formed_batch_count", 0},
+            {"timeout_flush_count", 0},
+            {"full_flush_count", 0},
+            {"total_batched_request_count", 0},
+            {"avg_batch_size", 0.0},
+            {"max_batch_size_observed", 0},
+            {"last_batch_size", 0},
+            {"last_batch_wait_ms", 0},
+            {"max_batch_wait_ms", 0},
+            {"last_batch_id", nullptr},
+        };
+    }
+
+    nlohmann::json payload = *batch_metrics;
+    payload["enabled"] = entry.max_batch_size > 1 && batch_wait_timeout_ms > 0;
+    payload["max_batch_size"] = entry.max_batch_size;
+    payload["batch_wait_timeout_ms"] = batch_wait_timeout_ms;
+    return payload;
+}
+
+nlohmann::json AiProdHttpServer::BuildOrchestrationAssessment(
+    const CapabilityCatalogEntry& entry,
+    int pool_size,
+    int busy_count,
+    int pending_count,
+    int max_pending_count,
+    int queue_timeout_count,
+    int deadline_exceeded_count,
+    int queued_request_count,
+    double avg_queue_wait_ms,
+    int max_queue_wait_ms,
+    const nlohmann::json& batch_metrics,
+    const std::optional<nlohmann::json>& execution_metrics) const {
+    ResourceOrchestratorCapabilityState state;
+    state.entry = entry;
+    state.pool_size = pool_size;
+    state.busy_count = busy_count;
+    state.pending_request_count = pending_count;
+    state.max_pending_request_count = max_pending_count;
+    state.queue_timeout_count = queue_timeout_count;
+    state.deadline_exceeded_count = deadline_exceeded_count;
+    state.queued_request_count = queued_request_count;
+    state.avg_queue_wait_ms = avg_queue_wait_ms;
+    state.max_queue_wait_ms = max_queue_wait_ms;
+    state.batch_metrics = batch_metrics;
+    state.execution_metrics = execution_metrics.has_value() ? *execution_metrics : nlohmann::json::object();
+    return ResourceOrchestrator::EvaluateCapability(state);
 }
 
 bool AiProdHttpServer::EnsureRuntimeReady() {
@@ -340,21 +810,29 @@ bool AiProdHttpServer::EnsureRuntimeReady() {
     }
 
     std::string bootstrap_error;
-    if (!BootstrapRuntime(&bootstrap_error)) {
+    const std::string bootstrap_request_id = GenerateRequestId();
+    if (!BootstrapRuntime(bootstrap_request_id, &bootstrap_error)) {
         MarkRuntimeError(bootstrap_error);
         AppendJsonLine(
             config.runtime_log_path,
             {
                 {"event", "bootstrap_failed"},
+                {"request_id", bootstrap_request_id},
                 {"message", bootstrap_error},
             });
-        AppendAuditLog(
-            config,
-            "bootstrap_failed",
-            "runtime_revision",
-            "bootstrap",
+        auditLogger->Append(
             {
-                {"reason", bootstrap_error},
+                "bootstrap_failed",
+                "runtime_revision",
+                "bootstrap",
+                "failure",
+                bootstrap_request_id,
+                bootstrap_request_id,
+                -1.0,
+                bootstrap_error,
+                {
+                    {"reason", bootstrap_error},
+                },
             });
         return false;
     }
@@ -365,37 +843,6 @@ bool AiProdHttpServer::EnsureRuntimeReady() {
     }
     runtimeStateMachine.TransitionTo(RuntimeLifecycleState::kReady, &state_error);
     return true;
-}
-
-httplib::Headers AiProdHttpServer::BuildForwardHeaders(const httplib::Request& request) {
-    httplib::Headers headers;
-    for (const auto& header : request.headers) {
-        if (ShouldForwardHeader(header.first)) {
-            headers.emplace(header.first, header.second);
-        }
-    }
-    return headers;
-}
-
-void AiProdHttpServer::ApplyBackendResponse(
-    const BackendResponse& backend_response,
-    httplib::Response& response) const {
-    response.status = backend_response.status;
-    response.set_content(
-        backend_response.body,
-        backend_response.content_type.empty() ? kDefaultJsonContentType : backend_response.content_type.c_str());
-}
-
-void AiProdHttpServer::ApplySnapshotOrBackendResponse(
-    const SnapshotResponse& snapshot_response,
-    const httplib::Request& request,
-    httplib::Response& response) const {
-    if (snapshot_response.ok) {
-        response.status = 200;
-        response.set_content(snapshot_response.body, kDefaultJsonContentType);
-        return;
-    }
-    ApplyBackendResponse(backendClient.ForwardGet(request.path, BuildForwardHeaders(request)), response);
 }
 
 bool AiProdHttpServer::RefreshCatalogAndPools(bool force_rebuild) {
@@ -441,14 +888,35 @@ bool AiProdHttpServer::RefreshCatalogAndPoolsWithRetry(
 nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const {
     std::lock_guard<std::mutex> guard(runtimeStateMutex);
     nlohmann::json items = nlohmann::json::array();
+    std::vector<nlohmann::json> orchestration_assessments;
     for (const auto& entry : capabilityCatalog.ListEntries()) {
         int busy_count = 0;
         int total_size = entry.pool_size;
+        int pending_count = 0;
+        int max_pending_count = 0;
+        int queue_timeout_count = 0;
+        int deadline_exceeded_count = 0;
+        double avg_queue_wait_ms = 0.0;
+        int max_queue_wait_ms = 0;
+        const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(entry);
+        const int queue_wait_timeout_ms =
+            entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+        const int configured_max_pending_request_count =
+            entry.max_pending_request_count >= 0
+                ? entry.max_pending_request_count
+                : config.infer_queue_max_pending_requests;
         const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
+        const auto batch_metrics = BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms);
         const auto pool_it = instancePools.find(entry.capability_name);
         if (pool_it != instancePools.end() && pool_it->second) {
             busy_count = pool_it->second->GetBusyCount();
             total_size = pool_it->second->GetTotalSize();
+            pending_count = pool_it->second->GetPendingCount();
+            max_pending_count = pool_it->second->GetMaxPendingCount();
+            queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            deadline_exceeded_count = pool_it->second->GetDeadlineExceededCount();
+            avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
+            max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
         }
         items.push_back(
             {
@@ -460,12 +928,59 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"device_mode", entry.device_mode},
                 {"model_root", entry.model_root},
                 {"binary_path", entry.binary_path},
+                {"capability_priority", entry.capability_priority},
                 {"pool_size", total_size},
+                {"max_batch_size", entry.max_batch_size},
+                {"min_batch_size", entry.min_batch_size},
+                {"batch_wait_timeout_ms", batch_wait_timeout_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"configured_max_pending_request_count", configured_max_pending_request_count},
+                {"infer_timeout_ms", entry.infer_timeout_ms},
+                {"estimated_avg_infer_time_ms", entry.estimated_avg_infer_time_ms},
+                {"p95_infer_time_ms", entry.p95_infer_time_ms},
+                {"max_concurrent_requests", entry.max_concurrent_requests},
+                {"supports_concurrent_infer", entry.supports_concurrent_infer},
+                {"allow_resource_sharing", entry.allow_resource_sharing},
                 {"busy_count", busy_count},
+                {"pending_request_count", pending_count},
+                {"max_pending_request_count", max_pending_count},
+                {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
+                {"queue_timeout_count", queue_timeout_count},
+                {"deadline_exceeded_count", deadline_exceeded_count},
+                {"avg_queue_wait_ms", avg_queue_wait_ms},
+                {"max_queue_wait_ms", max_queue_wait_ms},
                 {"draining", pool_it != instancePools.end() && pool_it->second ? pool_it->second->IsDraining() : false},
+                {"batch_metrics", batch_metrics},
+                {"orchestration", BuildOrchestrationAssessment(
+                    entry,
+                    total_size,
+                    busy_count,
+                    pending_count,
+                    max_pending_count,
+                    queue_timeout_count,
+                    deadline_exceeded_count,
+                    pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetQueuedRequestCount() : 0,
+                    avg_queue_wait_ms,
+                    max_queue_wait_ms,
+                    batch_metrics,
+                    execution_metrics)},
                 {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
+                {"admission_checklist", entry.admission_checklist},
                 {"revision_id", entry.revision_id},
             });
+        orchestration_assessments.push_back(BuildOrchestrationAssessment(
+            entry,
+            total_size,
+            busy_count,
+            pending_count,
+            max_pending_count,
+            queue_timeout_count,
+            deadline_exceeded_count,
+            pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetQueuedRequestCount() : 0,
+            avg_queue_wait_ms,
+            max_queue_wait_ms,
+            batch_metrics,
+            execution_metrics));
     }
 
     bool draining = false;
@@ -478,8 +993,7 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
 
     nlohmann::json active_requests = nlohmann::json::array();
     for (const auto& active_request : requestTracker->Snapshot()) {
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - active_request.started_at);
+        const auto now = std::chrono::steady_clock::now();
         active_requests.push_back(
             {
                 {"request_id", active_request.request_id},
@@ -488,7 +1002,9 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
                 {"slot_index", active_request.slot_index},
                 {"device", active_request.device},
                 {"status", active_request.status},
-                {"elapsed_ms", elapsed_ms.count()},
+                {"sla_status", active_request.sla_status},
+                {"requested_deadline_ms", active_request.requested_deadline_ms},
+                {"elapsed_ms", active_request.ElapsedMs(now)},
             });
     }
 
@@ -503,7 +1019,211 @@ nlohmann::json AiProdHttpServer::BuildCatalogPayload(bool snapshot_ready) const 
         {"active_request_count", requestTracker->GetActiveCount()},
         {"active_requests", active_requests},
         {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
+        {"orchestration_summary", ResourceOrchestrator::BuildSummary(orchestration_assessments)},
         {"items", items},
+    };
+}
+
+nlohmann::json AiProdHttpServer::BuildMetricsPayload(bool snapshot_ready) const {
+    std::lock_guard<std::mutex> runtime_guard(runtimeStateMutex);
+    std::lock_guard<std::mutex> metrics_guard(metricsMutex);
+
+    nlohmann::json endpoint_metrics = nlohmann::json::object();
+    for (const auto& entry : endpointMetrics) {
+        const auto& metrics = entry.second;
+        nlohmann::json status_counts = nlohmann::json::object();
+        for (const auto& status_entry : metrics.status_code_counts) {
+            status_counts[std::to_string(status_entry.first)] = status_entry.second;
+        }
+        endpoint_metrics[entry.first] = {
+            {"total_requests", metrics.total_requests},
+            {"successful_requests", metrics.successful_requests},
+            {"failed_requests", metrics.failed_requests},
+            {"avg_latency_ms", metrics.total_requests > 0
+                                   ? metrics.total_latency_ms / static_cast<double>(metrics.total_requests)
+                                   : 0.0},
+            {"min_latency_ms", metrics.total_requests > 0 ? metrics.min_latency_ms : 0.0},
+            {"p50_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.50)},
+            {"p95_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.95)},
+            {"p99_latency_ms", PercentileFromSamples(metrics.recent_latency_sorted, 0.99)},
+            {"max_latency_ms", metrics.total_requests > 0 ? metrics.max_latency_ms : 0.0},
+            {"recent_sample_count", metrics.recent_latency_ms.size()},
+            {"sla_tracked_requests", metrics.sla_tracked_requests},
+            {"deadline_exceeded_requests", metrics.deadline_exceeded_requests},
+            {"deadline_exceeded_ratio", metrics.sla_tracked_requests > 0
+                                           ? static_cast<double>(metrics.deadline_exceeded_requests) / static_cast<double>(metrics.sla_tracked_requests)
+                                           : 0.0},
+            {"last_status_code", metrics.last_status_code == 0 ? nlohmann::json(nullptr) : nlohmann::json(metrics.last_status_code)},
+            {"last_error_at_utc", metrics.last_error_at_utc.empty()
+                                      ? nlohmann::json(nullptr)
+                                      : nlohmann::json(metrics.last_error_at_utc)},
+            {"status_code_counts", status_counts},
+        };
+    }
+
+    nlohmann::json pool_metrics = nlohmann::json::array();
+    nlohmann::json capability_metrics = nlohmann::json::array();
+    std::vector<nlohmann::json> orchestration_assessments;
+    int total_pool_slots = 0;
+    int total_busy_slots = 0;
+    int total_pending_requests = 0;
+    int total_busy_reject_count = 0;
+    int total_queue_timeout_count = 0;
+    int total_queued_requests = 0;
+    int total_capability_requests = 0;
+    int total_capability_failures = 0;
+    int total_formed_batches = 0;
+    int total_timeout_batches = 0;
+    int total_full_batches = 0;
+    int total_batched_requests = 0;
+    int total_pending_batch_requests = 0;
+    double total_queue_wait_ms = 0.0;
+    int global_max_queue_wait_ms = 0;
+    const auto infer_metrics_it = endpointMetrics.find("infer");
+    const int total_deadline_exceeded_requests = infer_metrics_it != endpointMetrics.end()
+        ? infer_metrics_it->second.deadline_exceeded_requests
+        : 0;
+    for (const auto& entry : capabilityCatalog.ListEntries()) {
+        int busy_count = 0;
+        int total_size = entry.pool_size;
+        bool draining = false;
+        int pending_count = 0;
+        int queue_timeout_count = 0;
+        int deadline_exceeded_count = 0;
+        int queued_request_count = 0;
+        double avg_queue_wait_ms = 0.0;
+        int max_queue_wait_ms = 0;
+        const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(entry);
+        const int queue_wait_timeout_ms =
+            entry.queue_wait_timeout_ms >= 0 ? entry.queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+        const int configured_max_pending_request_count =
+            entry.max_pending_request_count >= 0
+                ? entry.max_pending_request_count
+                : config.infer_queue_max_pending_requests;
+        const auto pool_it = instancePools.find(entry.capability_name);
+        if (pool_it != instancePools.end() && pool_it->second) {
+            busy_count = pool_it->second->GetBusyCount();
+            total_size = pool_it->second->GetTotalSize();
+            draining = pool_it->second->IsDraining();
+            pending_count = pool_it->second->GetPendingCount();
+            total_busy_reject_count += pool_it->second->GetBusyRejectCount();
+            queue_timeout_count = pool_it->second->GetQueueTimeoutCount();
+            deadline_exceeded_count = pool_it->second->GetDeadlineExceededCount();
+            queued_request_count = pool_it->second->GetQueuedRequestCount();
+            avg_queue_wait_ms = pool_it->second->GetAverageQueueWaitMs();
+            max_queue_wait_ms = pool_it->second->GetMaxQueueWaitMs();
+            total_queue_wait_ms += static_cast<double>(pool_it->second->GetTotalQueueWaitMs());
+        }
+        total_pool_slots += total_size;
+        total_busy_slots += busy_count;
+        total_pending_requests += pending_count;
+        total_queue_timeout_count += queue_timeout_count;
+        total_queued_requests += queued_request_count;
+        global_max_queue_wait_ms = std::max(global_max_queue_wait_ms, max_queue_wait_ms);
+        const auto batch_metrics = BuildBatchCapabilityMetrics(entry, batch_wait_timeout_ms);
+        const auto execution_metrics = pluginExecutor.GetCapabilityMetrics(entry.capability_name);
+        const auto orchestration_assessment = BuildOrchestrationAssessment(
+            entry,
+            total_size,
+            busy_count,
+            pending_count,
+            pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetMaxPendingCount() : 0,
+            queue_timeout_count,
+            deadline_exceeded_count,
+            queued_request_count,
+            avg_queue_wait_ms,
+            max_queue_wait_ms,
+            batch_metrics,
+            execution_metrics);
+        orchestration_assessments.push_back(orchestration_assessment);
+        total_formed_batches += batch_metrics.value("formed_batch_count", 0);
+        total_timeout_batches += batch_metrics.value("timeout_flush_count", 0);
+        total_full_batches += batch_metrics.value("full_flush_count", 0);
+        total_batched_requests += batch_metrics.value("total_batched_request_count", 0);
+        total_pending_batch_requests += batch_metrics.value("pending_batch_request_count", 0);
+        pool_metrics.push_back(
+            {
+                {"capability_name", entry.capability_name},
+                {"pool_size", total_size},
+                {"busy_count", busy_count},
+                {"pending_request_count", pending_count},
+                {"idle_count", std::max(0, total_size - busy_count)},
+                {"utilization_ratio", total_size > 0 ? static_cast<double>(busy_count) / static_cast<double>(total_size) : 0.0},
+                {"busy_reject_count", pool_it != instancePools.end() && pool_it->second ? pool_it->second->GetBusyRejectCount() : 0},
+                {"queue_timeout_count", queue_timeout_count},
+                {"deadline_exceeded_count", deadline_exceeded_count},
+                {"queued_request_count", queued_request_count},
+                {"avg_queue_wait_ms", avg_queue_wait_ms},
+                {"max_queue_wait_ms", max_queue_wait_ms},
+                {"draining", draining},
+                {"device_mode", entry.device_mode},
+                {"capability_priority", entry.capability_priority},
+                {"max_batch_size", entry.max_batch_size},
+                {"min_batch_size", entry.min_batch_size},
+                {"batch_wait_timeout_ms", batch_wait_timeout_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"configured_max_pending_request_count", configured_max_pending_request_count},
+                {"infer_timeout_ms", entry.infer_timeout_ms},
+                {"estimated_avg_infer_time_ms", entry.estimated_avg_infer_time_ms},
+                {"p95_infer_time_ms", entry.p95_infer_time_ms},
+                {"max_concurrent_requests", entry.max_concurrent_requests},
+                {"supports_concurrent_infer", entry.supports_concurrent_infer},
+                {"allow_resource_sharing", entry.allow_resource_sharing},
+                {"batch_metrics", batch_metrics},
+                {"orchestration", orchestration_assessment},
+            });
+
+        if (execution_metrics.has_value()) {
+            total_capability_requests += execution_metrics->value("total_requests", 0);
+            total_capability_failures += execution_metrics->value("failed_requests", 0);
+        }
+        capability_metrics.push_back(
+            {
+                {"capability_name", entry.capability_name},
+                {"orchestration", orchestration_assessment},
+                {"execution_metrics", execution_metrics.has_value() ? *execution_metrics : nlohmann::json(nullptr)},
+            });
+    }
+
+    const auto uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - startedAt);
+    return {
+        {"service", "ai-prod-cpp-http"},
+        {"snapshot_ready", snapshot_ready},
+        {"runtime_state", runtimeStateMachine.GetStateName()},
+        {"runtime_state_error", runtimeStateMachine.GetLastError().empty()
+                                    ? nlohmann::json(nullptr)
+                                    : nlohmann::json(runtimeStateMachine.GetLastError())},
+        {"uptime_seconds", uptime_seconds.count()},
+        {"runtime_revision_id", capabilityCatalog.GetRevisionId()},
+        {"active_request_count", requestTracker->GetActiveCount()},
+        {"pool_summary", {
+             {"capability_count", capabilityCatalog.ListEntries().size()},
+             {"total_pool_slots", total_pool_slots},
+             {"busy_pool_slots", total_busy_slots},
+             {"pending_request_count", total_pending_requests},
+             {"idle_pool_slots", std::max(0, total_pool_slots - total_busy_slots)},
+             {"utilization_ratio", total_pool_slots > 0 ? static_cast<double>(total_busy_slots) / static_cast<double>(total_pool_slots) : 0.0},
+         }},
+        {"request_summary", {
+             {"capability_total_requests", total_capability_requests},
+             {"capability_failed_requests", total_capability_failures},
+             {"formed_batch_count", total_formed_batches},
+             {"timeout_flush_count", total_timeout_batches},
+             {"full_flush_count", total_full_batches},
+             {"batched_request_count", total_batched_requests},
+             {"pending_batch_request_count", total_pending_batch_requests},
+             {"queued_request_count", total_queued_requests},
+             {"avg_queue_wait_ms", total_queued_requests > 0 ? total_queue_wait_ms / static_cast<double>(total_queued_requests) : 0.0},
+             {"max_queue_wait_ms", global_max_queue_wait_ms},
+             {"busy_reject_count", total_busy_reject_count},
+             {"queue_timeout_count", total_queue_timeout_count},
+             {"deadline_exceeded_request_count", total_deadline_exceeded_requests},
+           }},
+        {"orchestration_summary", ResourceOrchestrator::BuildSummary(orchestration_assessments)},
+        {"endpoint_metrics", endpoint_metrics},
+        {"pool_metrics", pool_metrics},
+        {"capability_metrics", capability_metrics},
     };
 }
 
@@ -566,14 +1286,13 @@ bool AiProdHttpServer::WaitForPoolsIdle(
 void AiProdHttpServer::HandleInferRequest(
     const httplib::Request& request,
     httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "infer", &response);
+    const auto request_started_at = std::chrono::steady_clock::now();
+    const std::string request_id = ResolveRequestId(request);
     const std::string capability_name =
         request.matches.size() > 1 ? request.matches[1].str() : std::string();
     if (!RefreshCatalogAndPools()) {
-        const auto content_type = request.get_header_value("Content-Type");
-        auto headers = BuildForwardHeaders(request);
-        ApplyBackendResponse(
-            backendClient.ForwardPost(request.path, request.body, content_type, headers),
-            response);
+        ApplyJsonErrorResponse(503, "运行时目录不可用，请先完成启动自举或 reload。", response);
         return;
     }
 
@@ -583,17 +1302,62 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    if (!licenseManager.QuickCheck(capability_name, catalog_entry->model_version)) {
-        AppendAuditLog(
-            config,
-            "infer_license_rejected",
-            "capability",
-            capability_name,
+    const auto infer_license_status = licenseManager.Evaluate(capability_name, catalog_entry->model_version);
+    if (!infer_license_status.valid) {
+        auditLogger->Append(
             {
-                {"reason", "当前 license 未授权该能力或版本。"},
-                {"model_version", catalog_entry->model_version},
+                "infer_license_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                infer_license_status.reason,
+                {
+                    {"reason", infer_license_status.reason},
+                    {"code", infer_license_status.code},
+                    {"stage", infer_license_status.stage},
+                    {"details", infer_license_status.details},
+                    {"model_version", catalog_entry->model_version},
+                },
             });
-        ApplyJsonErrorResponse(403, "当前 license 未授权该能力或版本。", response);
+        ApplyLicenseErrorResponse(403, infer_license_status, response);
+        return;
+    }
+
+    InferRequestPayload infer_request;
+    std::string parse_error;
+    if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
+        auditLogger->Append(
+            {
+                "infer_parse_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                parse_error,
+                {{"reason", parse_error}},
+            });
+        ApplyJsonErrorResponse(400, parse_error, response);
+        return;
+    }
+    if (infer_request.prefer_deadline_ms > config.infer_request_max_deadline_ms) {
+        auditLogger->Append(
+            {
+                "infer_deadline_rejected",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "prefer_deadline_ms 超出运行时允许上限。",
+                {{"deadline_ms", infer_request.prefer_deadline_ms}},
+            });
+        ApplyJsonErrorResponse(400, "prefer_deadline_ms 超出运行时允许上限。", response);
         return;
     }
 
@@ -608,114 +1372,500 @@ void AiProdHttpServer::HandleInferRequest(
         return;
     }
 
-    const auto lease = pool->Acquire();
-    if (!lease.has_value()) {
-        if (pool->IsDraining()) {
+    const int queue_wait_timeout_ms =
+        catalog_entry->queue_wait_timeout_ms >= 0 ? catalog_entry->queue_wait_timeout_ms : config.infer_queue_wait_timeout_ms;
+    const int max_pending_request_count =
+        catalog_entry->max_pending_request_count >= 0
+            ? catalog_entry->max_pending_request_count
+            : config.infer_queue_max_pending_requests;
+    const int batch_wait_timeout_ms = ResolveBatchWaitTimeoutMs(*catalog_entry);
+
+    auto apply_outcome = [&](const InferExecutionOutcome& outcome) {
+        response.status = outcome.status_code;
+        response.set_content(outcome.payload.dump(), kDefaultJsonContentType);
+    };
+
+    auto build_batch_detail = [](const BatchDispatchAssignment& assignment) {
+        return nlohmann::json{
+            {"batch_id", assignment.batch_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(assignment.batch_id)},
+            {"batch_size", static_cast<int>(assignment.batch_size)},
+            {"batch_index", static_cast<int>(assignment.batch_index)},
+            {"batch_wait_ms", assignment.batch_wait_ms},
+            {"batch_flush_reason", assignment.timeout_triggered ? "timeout" : "full"},
+        };
+    };
+
+    auto execute_prepared_request =
+        [&](const std::shared_ptr<PendingBatchExecution>& pending_execution,
+            const InstancePoolItem& leased_item,
+            bool release_pool_slot,
+            int pool_queue_wait_ms) -> InferExecutionOutcome {
+        const auto& assignment = pending_execution->batch_assignment;
+        const auto& pending_request = pending_execution->infer_request;
+        const bool has_request_deadline = pending_request.prefer_deadline_ms >= 0;
+        RequestLease request_lease(
+            pool,
+            leased_item,
+            requestTracker,
+            capability_name,
+            pending_execution->request_id,
+            pending_request.prefer_deadline_ms,
+            release_pool_slot);
+        request_lease.MarkSlaStatus(has_request_deadline ? "pending" : "not_requested");
+
+        const std::string requested_device = ResolveDevice(pending_request, *catalog_entry);
+        std::string executed_device = requested_device;
+        request_lease.MarkExecuting(executed_device);
+        if (pending_request.simulate_delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(pending_request.simulate_delay_ms));
+        }
+
+        if (has_request_deadline) {
+            const auto pre_execute_elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pending_execution->request_started_at)
+                    .count());
+            if (pre_execute_elapsed_ms > pending_request.prefer_deadline_ms) {
+                request_lease.MarkSlaStatus("deadline_exceeded");
+                request_lease.MarkFailed("请求 SLA 截止时间已超出，未进入执行。");
+                pool->RecordDeadlineExceeded();
+                RecordSlaMetric("infer", true, true);
+                auto detail = build_batch_detail(assignment);
+                detail["deadline_ms"] = pending_request.prefer_deadline_ms;
+                detail["queue_wait_ms"] = pool_queue_wait_ms;
+                auditLogger->Append(
+                    {
+                        "infer_deadline_exceeded",
+                        "capability",
+                        capability_name,
+                        "failure",
+                        pending_execution->request_id,
+                        pending_execution->request_id,
+                        static_cast<double>(pre_execute_elapsed_ms),
+                        "请求 SLA 截止时间已超出，未进入执行。",
+                        detail,
+                    });
+                return BuildErrorOutcome(503, "请求 SLA 截止时间已超出，未进入执行。");
+            }
+        }
+
+        PluginExecutionResult plugin_result;
+        std::string plugin_error;
+        PluginFailureKind plugin_failure_kind = PluginFailureKind::kNone;
+        bool plugin_ok = pluginExecutor.Execute(
+            *catalog_entry,
+            leased_item.slot_index,
+            pending_request.input_type,
+            pending_request.decoded_payload.normalized_payload,
+            pending_request.options,
+            executed_device,
+            pending_execution->request_id,
+            &plugin_result,
+            &plugin_error,
+            &plugin_failure_kind);
+        std::string fallback_reason;
+        if (!plugin_ok && CanFallbackToCpu(*catalog_entry, requested_device, plugin_failure_kind)) {
+            fallback_reason = plugin_error.empty() ? "GPU 插件装载失败，已自动回退 CPU。" : plugin_error;
+            executed_device = "cpu";
+            request_lease.MarkExecuting(executed_device);
+            plugin_error.clear();
+            plugin_failure_kind = PluginFailureKind::kNone;
+            plugin_ok = pluginExecutor.Execute(
+                *catalog_entry,
+                leased_item.slot_index,
+                pending_request.input_type,
+                pending_request.decoded_payload.normalized_payload,
+                pending_request.options,
+                executed_device,
+                pending_execution->request_id,
+                &plugin_result,
+                &plugin_error,
+                &plugin_failure_kind);
+            if (plugin_ok) {
+                pluginExecutor.RecordFallback(capability_name, executed_device, fallback_reason);
+            }
+        }
+        if (!plugin_ok) {
+            request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
+            auto detail = build_batch_detail(assignment);
+            detail["requested_device"] = requested_device;
+            detail["executed_device"] = executed_device;
+            detail["fallback_applied"] = requested_device != executed_device;
+            auditLogger->Append(
+                {
+                    "infer_failed",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    pending_execution->request_id,
+                    pending_execution->request_id,
+                    -1.0,
+                    plugin_error.empty() ? "能力插件执行失败。" : plugin_error,
+                    detail,
+                });
+            return BuildErrorOutcome(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
+        }
+
+        request_lease.MarkCompleted();
+        const double lifecycle_elapsed_ms = std::max(
+            static_cast<double>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pending_execution->request_started_at)
+                    .count()),
+            plugin_result.infer_time_ms);
+        const std::string sla_status =
+            has_request_deadline && lifecycle_elapsed_ms > static_cast<double>(pending_request.prefer_deadline_ms)
+                ? "deadline_exceeded"
+                : (has_request_deadline ? "ok" : "not_requested");
+        request_lease.MarkSlaStatus(sla_status);
+        RecordSlaMetric("infer", has_request_deadline, sla_status == "deadline_exceeded");
+        pluginExecutor.RecordLifecycleSample(capability_name, executed_device, lifecycle_elapsed_ms);
+
+        const std::string digest = Sha256Hex(
+            capability_name + "|" + catalog_entry->model_version + "|" + pending_request.input_type + "|" +
+            pending_request.decoded_payload.normalized_payload + "|" + plugin_result.plugin_result.dump());
+        const nlohmann::json batch_result = {
+            {"batch_id", assignment.batch_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(assignment.batch_id)},
+            {"batch_size", static_cast<int>(assignment.batch_size)},
+            {"batch_index", static_cast<int>(assignment.batch_index)},
+            {"batch_wait_ms", assignment.batch_wait_ms},
+            {"batch_flush_reason", assignment.timeout_triggered ? "timeout" : "full"},
+        };
+
+        const nlohmann::json payload = {
+            {"request_id", pending_execution->request_id},
+            {"capability_name", capability_name},
+            {"model_version", catalog_entry->model_version},
+            {"backend_type", catalog_entry->backend_type},
+            {"plugin_target", catalog_entry->plugin_target},
+            {"device", executed_device},
+            {"requested_device", requested_device},
+            {"runtime_revision_id", catalog_entry->revision_id},
+            {"license_valid", true},
+            {"result", {
+                {"summary", capability_name + " 推理完成"},
+                {"digest", digest},
+                {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
+                {"input_type", pending_request.input_type},
+                {"payload_size", pending_request.decoded_payload.normalized_payload.size()},
+                {"input_metadata", pending_request.decoded_payload.metadata},
+                {"instance_id", request_lease.Item().instance_id},
+                {"fallback_applied", requested_device != executed_device},
+                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
+                {"queue_wait_ms", pool_queue_wait_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"max_pending_request_count", max_pending_request_count},
+                {"deadline_ms", pending_request.prefer_deadline_ms},
+                {"sla_status", sla_status},
+                {"infer_time_ms", plugin_result.infer_time_ms},
+                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
+                {"batch", batch_result},
+                {"plugin_result", plugin_result.plugin_result},
+            }},
+        };
+
+        AppendJsonLine(
+            config.runtime_log_path,
+            {
+                {"event", "infer"},
+                {"request_id", pending_execution->request_id},
+                {"capability_name", capability_name},
+                {"requested_device", requested_device},
+                {"executed_device", executed_device},
+                {"fallback_applied", requested_device != executed_device},
+                {"fallback_reason", fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason)},
+                {"queue_wait_ms", pool_queue_wait_ms},
+                {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                {"max_pending_request_count", max_pending_request_count},
+                {"deadline_ms", pending_request.prefer_deadline_ms},
+                {"sla_status", sla_status},
+                {"lifecycle_elapsed_ms", lifecycle_elapsed_ms},
+                {"runtime_revision_id", catalog_entry->revision_id},
+                {"batch", batch_result},
+            });
+
+        auto detail = build_batch_detail(assignment);
+        detail["requested_device"] = requested_device;
+        detail["executed_device"] = executed_device;
+        detail["fallback_applied"] = requested_device != executed_device;
+        detail["fallback_reason"] = fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(fallback_reason);
+        detail["instance_id"] = request_lease.Item().instance_id;
+        detail["input_type"] = pending_request.input_type;
+        detail["input_metadata"] = pending_request.decoded_payload.metadata;
+        detail["queue_wait_ms"] = pool_queue_wait_ms;
+        detail["queue_wait_timeout_ms"] = queue_wait_timeout_ms;
+        detail["max_pending_request_count"] = max_pending_request_count;
+        detail["deadline_ms"] = pending_request.prefer_deadline_ms;
+        detail["sla_status"] = sla_status;
+        detail["lifecycle_elapsed_ms"] = lifecycle_elapsed_ms;
+        auditLogger->Append(
+            {
+                "infer",
+                "capability",
+                capability_name,
+                "success",
+                pending_execution->request_id,
+                pending_execution->request_id,
+                lifecycle_elapsed_ms,
+                "",
+                detail,
+            });
+        return {200, payload};
+    };
+
+    auto build_pending_execution = [&](const std::string& current_request_id, const InferRequestPayload& current_request) {
+        auto pending_execution = std::make_shared<PendingBatchExecution>();
+        pending_execution->request_id = current_request_id;
+        pending_execution->capability_name = capability_name;
+        pending_execution->infer_request = current_request;
+        pending_execution->request_started_at = request_started_at;
+        pending_execution->batch_assignment.request_ids = {current_request_id};
+        pending_execution->batch_assignment.batch_size = 1;
+        return pending_execution;
+    };
+
+    const bool batching_enabled = catalog_entry->max_batch_size > 1 && batch_wait_timeout_ms > 0;
+    if (batching_enabled) {
+        auto pending_execution = build_pending_execution(request_id, infer_request);
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            pendingBatchExecutions[request_id] = pending_execution;
+        }
+        pending_execution->batch_assignment = requestBatcher.Submit(
+            capability_name,
+            request_id,
+            catalog_entry->max_batch_size,
+            batch_wait_timeout_ms);
+
+        if (!pending_execution->batch_assignment.leader) {
+            std::unique_lock<std::mutex> guard(pending_execution->mutex);
+            pending_execution->condition.wait(guard, [&]() { return pending_execution->completed; });
+            apply_outcome(pending_execution->outcome);
+            return;
+        }
+
+        std::vector<std::shared_ptr<PendingBatchExecution>> batch_executions;
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            for (const auto& grouped_request_id : pending_execution->batch_assignment.request_ids) {
+                const auto it = pendingBatchExecutions.find(grouped_request_id);
+                if (it != pendingBatchExecutions.end()) {
+                    batch_executions.push_back(it->second);
+                }
+            }
+        }
+
+        std::vector<std::shared_ptr<PendingBatchExecution>> executable_requests;
+        executable_requests.reserve(batch_executions.size());
+        for (const auto& batch_execution : batch_executions) {
+            const bool tracked_deadline = batch_execution->infer_request.prefer_deadline_ms >= 0;
+            const auto elapsed_ms = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - batch_execution->request_started_at)
+                    .count());
+            if (tracked_deadline && elapsed_ms > batch_execution->infer_request.prefer_deadline_ms) {
+                RecordSlaMetric("infer", true, true);
+                auto detail = build_batch_detail(batch_execution->batch_assignment);
+                detail["deadline_ms"] = batch_execution->infer_request.prefer_deadline_ms;
+                detail["queue_wait_ms"] = 0;
+                auditLogger->Append(
+                    {
+                        "infer_deadline_exceeded",
+                        "capability",
+                        capability_name,
+                        "failure",
+                        batch_execution->request_id,
+                        batch_execution->request_id,
+                        static_cast<double>(elapsed_ms),
+                        "请求 SLA 截止时间已超出，未进入执行。",
+                        detail,
+                    });
+                CompletePendingBatchExecution(
+                    batch_execution,
+                    BuildErrorOutcome(503, "请求 SLA 截止时间已超出，未进入执行。").payload,
+                    503);
+                continue;
+            }
+            executable_requests.push_back(batch_execution);
+        }
+
+        if (!executable_requests.empty()) {
+            std::optional<std::chrono::milliseconds> earliest_deadline = std::nullopt;
+            for (const auto& batch_execution : executable_requests) {
+                if (batch_execution->infer_request.prefer_deadline_ms < 0) {
+                    continue;
+                }
+                const auto elapsed_ms = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - batch_execution->request_started_at)
+                        .count());
+                const int remaining_deadline_ms = std::max(0, batch_execution->infer_request.prefer_deadline_ms - elapsed_ms);
+                if (!earliest_deadline.has_value() || remaining_deadline_ms < earliest_deadline->count()) {
+                    earliest_deadline = std::chrono::milliseconds(remaining_deadline_ms);
+                }
+            }
+
+            const auto acquire_result = pool->AcquireWithWait(
+                std::chrono::milliseconds(queue_wait_timeout_ms),
+                max_pending_request_count,
+                earliest_deadline);
+            if (acquire_result.status == InstanceAcquireStatus::kAcquired && acquire_result.item.has_value()) {
+                for (std::size_t index = 0; index < executable_requests.size(); ++index) {
+                    const bool release_pool_slot = index + 1 == executable_requests.size();
+                    const auto outcome = execute_prepared_request(
+                        executable_requests[index],
+                        *acquire_result.item,
+                        release_pool_slot,
+                        acquire_result.queue_wait_ms);
+                    CompletePendingBatchExecution(executable_requests[index], outcome.payload, outcome.status_code);
+                }
+            } else {
+                for (const auto& batch_execution : executable_requests) {
+                    const bool tracked_deadline = batch_execution->infer_request.prefer_deadline_ms >= 0;
+                    std::string error_message = "能力实例池繁忙或排队超时，请稍后重试。";
+                    std::string action = "infer_queue_timeout";
+                    if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
+                        error_message = "能力正在切换，请稍后重试。";
+                        action = "infer_pool_draining";
+                    } else if (acquire_result.status == InstanceAcquireStatus::kQueueRejected) {
+                        error_message = "能力排队已满，请稍后重试。";
+                        action = "infer_queue_rejected";
+                    } else if (acquire_result.status == InstanceAcquireStatus::kDeadlineExceeded) {
+                        error_message = "请求 SLA 截止时间已超出，未进入执行。";
+                        action = "infer_deadline_exceeded";
+                        RecordSlaMetric("infer", tracked_deadline, true);
+                    }
+                    auto detail = build_batch_detail(batch_execution->batch_assignment);
+                    detail["queue_wait_ms"] = acquire_result.queue_wait_ms;
+                    detail["queue_wait_timeout_ms"] = queue_wait_timeout_ms;
+                    detail["max_pending_request_count"] = max_pending_request_count;
+                    detail["deadline_ms"] = batch_execution->infer_request.prefer_deadline_ms;
+                    auditLogger->Append(
+                        {
+                            action,
+                            "capability",
+                            capability_name,
+                            "failure",
+                            batch_execution->request_id,
+                            batch_execution->request_id,
+                            static_cast<double>(acquire_result.queue_wait_ms),
+                            error_message,
+                            detail,
+                        });
+                    CompletePendingBatchExecution(batch_execution, BuildErrorOutcome(503, error_message).payload, 503);
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> guard(pendingBatchMutex);
+            for (const auto& grouped_request_id : pending_execution->batch_assignment.request_ids) {
+                pendingBatchExecutions.erase(grouped_request_id);
+            }
+        }
+
+        std::unique_lock<std::mutex> guard(pending_execution->mutex);
+        pending_execution->condition.wait(guard, [&]() { return pending_execution->completed; });
+        apply_outcome(pending_execution->outcome);
+        return;
+    }
+
+    const bool has_request_deadline = infer_request.prefer_deadline_ms >= 0;
+    const auto request_deadline = has_request_deadline
+        ? std::optional<std::chrono::milliseconds>(std::chrono::milliseconds(infer_request.prefer_deadline_ms))
+        : std::nullopt;
+    const auto acquire_result = pool->AcquireWithWait(
+        std::chrono::milliseconds(queue_wait_timeout_ms),
+        max_pending_request_count,
+        request_deadline);
+    if (acquire_result.status != InstanceAcquireStatus::kAcquired || !acquire_result.item.has_value()) {
+        if (acquire_result.status == InstanceAcquireStatus::kDraining || pool->IsDraining()) {
+            auditLogger->Append(
+                {
+                    "infer_pool_draining",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "能力正在切换，请稍后重试。",
+                    nlohmann::json::object(),
+                });
             ApplyJsonErrorResponse(503, "能力正在切换，请稍后重试。", response);
             return;
         }
-        ApplyJsonErrorResponse(503, "能力实例池繁忙，请稍后重试。", response);
-        return;
-    }
-
-    const std::string request_id = GenerateRequestId();
-    RequestLease request_lease(pool, *lease, requestTracker, capability_name, request_id);
-
-    InferRequestPayload infer_request;
-    std::string parse_error;
-    if (!ParseInferRequest(request.body, &infer_request, &parse_error)) {
-        request_lease.MarkFailed(parse_error);
-        ApplyJsonErrorResponse(400, parse_error, response);
-        return;
-    }
-
-    const std::string device = ResolveDevice(infer_request, *catalog_entry);
-    request_lease.MarkExecuting(device);
-    if (infer_request.simulate_delay_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(infer_request.simulate_delay_ms));
-    }
-
-    PluginExecutionResult plugin_result;
-    std::string plugin_error;
-    const bool plugin_ok = pluginExecutor.Execute(
-        *catalog_entry,
-        static_cast<std::size_t>(lease->slot_index),
-        infer_request.input_type,
-        infer_request.decoded_payload.normalized_payload,
-        infer_request.options,
-        device,
-        request_id,
-        &plugin_result,
-        &plugin_error);
-    if (!plugin_ok) {
-        request_lease.MarkFailed(plugin_error.empty() ? "能力插件执行失败。" : plugin_error);
-        ApplyJsonErrorResponse(503, plugin_error.empty() ? "能力插件执行失败。" : plugin_error, response);
-        return;
-    }
-    request_lease.MarkCompleted();
-
-    const std::string digest = Sha256Hex(
-        capability_name + "|" + catalog_entry->model_version + "|" + infer_request.input_type + "|" +
-        infer_request.decoded_payload.normalized_payload + "|" + plugin_result.plugin_result.dump());
-
-    const nlohmann::json payload = {
-        {"request_id", request_id},
-        {"capability_name", capability_name},
-        {"model_version", catalog_entry->model_version},
-        {"backend_type", catalog_entry->backend_type},
-        {"plugin_target", catalog_entry->plugin_target},
-        {"device", device},
-        {"runtime_revision_id", catalog_entry->revision_id},
-        {"license_valid", true},
-        {"result", {
-            {"summary", capability_name + " 推理完成"},
-            {"digest", digest},
-            {"score", std::round((static_cast<double>(std::stoi(digest.substr(0, 4), nullptr, 16)) / 65535.0) * 10000.0) / 10000.0},
-            {"input_type", infer_request.input_type},
-            {"payload_size", infer_request.decoded_payload.normalized_payload.size()},
-            {"input_metadata", infer_request.decoded_payload.metadata},
-            {"instance_id", request_lease.Item().instance_id},
-            {"fallback_applied", infer_request.prefer_device == "gpu" && device == "cpu"},
-            {"infer_time_ms", plugin_result.infer_time_ms},
-            {"plugin_result", plugin_result.plugin_result},
-        }},
-    };
-
-    AppendJsonLine(
-        config.runtime_log_path,
-        {
-            {"event", "infer"},
-            {"request_id", request_id},
-            {"capability_name", capability_name},
-            {"device", device},
-            {"runtime_revision_id", catalog_entry->revision_id},
-        });
-    AppendAuditLog(
-        config,
-        "infer",
-        "capability",
-        capability_name,
-        {
-                {"request_id", request_id},
-                {"device", device},
-                {"instance_id", request_lease.Item().instance_id},
-                {"input_type", infer_request.input_type},
-                {"input_metadata", infer_request.decoded_payload.metadata},
+        if (acquire_result.status == InstanceAcquireStatus::kQueueRejected) {
+            auditLogger->Append(
+                {
+                    "infer_queue_rejected",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    "能力排队已满，请稍后重试。",
+                    {{"max_pending_request_count", max_pending_request_count}},
+                });
+            ApplyJsonErrorResponse(503, "能力排队已满，请稍后重试。", response);
+            return;
+        }
+        if (acquire_result.status == InstanceAcquireStatus::kDeadlineExceeded) {
+            RecordSlaMetric("infer", true, true);
+            auditLogger->Append(
+                {
+                    "infer_deadline_exceeded",
+                    "capability",
+                    capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    static_cast<double>(acquire_result.queue_wait_ms),
+                    "请求 SLA 截止时间已超出，未进入执行。",
+                    {
+                        {"deadline_ms", infer_request.prefer_deadline_ms},
+                        {"queue_wait_ms", acquire_result.queue_wait_ms},
+                    },
+                });
+            ApplyJsonErrorResponse(503, "请求 SLA 截止时间已超出，未进入执行。", response);
+            return;
+        }
+        auditLogger->Append(
+            {
+                "infer_queue_timeout",
+                "capability",
+                capability_name,
+                "failure",
+                request_id,
+                request_id,
+                static_cast<double>(acquire_result.queue_wait_ms),
+                "能力实例池繁忙或排队超时，请稍后重试。",
+                {
+                    {"queue_wait_ms", acquire_result.queue_wait_ms},
+                    {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+                },
             });
+        ApplyJsonErrorResponse(503, "能力实例池繁忙或排队超时，请稍后重试。", response);
+        return;
+    }
 
-    response.status = 200;
-    response.set_content(payload.dump(), kDefaultJsonContentType);
+    auto pending_execution = build_pending_execution(request_id, infer_request);
+    const auto outcome = execute_prepared_request(pending_execution, *acquire_result.item, true, acquire_result.queue_wait_ms);
+    apply_outcome(outcome);
 }
 
 std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     const std::string& action,
     std::optional<int> target_revision_id,
+    const std::string& request_id,
     std::string* error_message) {
     const auto scan_result = RuntimeResourceScanner::ResolveSources(
         config.host_root,
         config.image_resource_root,
         RuntimeResourceScanner::DetectPlatformTarget());
     std::map<std::string, RuntimeCapabilityRecord> selected_capabilities = scan_result.capabilities;
+    nlohmann::json source_summary = scan_result.source_summary;
 
     RevisionStore revision_store(config.database_path);
     if (!revision_store.EnsureSchema(error_message)) {
@@ -730,17 +1880,26 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
             return std::nullopt;
         }
         rollback_of_revision_id = source_revision->id;
-        std::map<std::string, RuntimeCapabilityRecord> filtered_capabilities;
-        for (const auto& capability_item : source_revision->capability_names) {
-            if (!capability_item.is_string()) {
-                continue;
+        source_summary = source_revision->source_summary;
+        const auto restored_capabilities = LoadCapabilityRecordsFromRevision(*source_revision, error_message);
+        if (restored_capabilities.has_value()) {
+            selected_capabilities = *restored_capabilities;
+            if (!ValidateCapabilityRecords(selected_capabilities, error_message)) {
+                return std::nullopt;
             }
-            const auto capability_it = scan_result.capabilities.find(capability_item.get<std::string>());
-            if (capability_it != scan_result.capabilities.end()) {
-                filtered_capabilities.emplace(capability_it->first, capability_it->second);
+        } else {
+            std::map<std::string, RuntimeCapabilityRecord> filtered_capabilities;
+            for (const auto& capability_item : source_revision->capability_names) {
+                if (!capability_item.is_string()) {
+                    continue;
+                }
+                const auto capability_it = scan_result.capabilities.find(capability_item.get<std::string>());
+                if (capability_it != scan_result.capabilities.end()) {
+                    filtered_capabilities.emplace(capability_it->first, capability_it->second);
+                }
             }
+            selected_capabilities = std::move(filtered_capabilities);
         }
-        selected_capabilities = std::move(filtered_capabilities);
     }
 
     const auto current_license_status = licenseManager.GetStatus();
@@ -750,19 +1909,32 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
-            AppendAuditLog(
-                config,
-                action + "_license_rejected",
-                "capability",
-                capability_entry.first,
+        const auto capability_license_status = licenseManager.Evaluate(capability_entry.first, capability_entry.second.model_version);
+        if (!capability_license_status.valid) {
+            auditLogger->Append(
                 {
-                    {"reason", "当前 license 未授权该能力或版本。"},
-                    {"model_version", capability_entry.second.model_version},
+                    action + "_license_rejected",
+                    "capability",
+                    capability_entry.first,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    capability_license_status.reason,
+                    {
+                        {"reason", capability_license_status.reason},
+                        {"code", capability_license_status.code},
+                        {"stage", capability_license_status.stage},
+                        {"details", capability_license_status.details},
+                        {"model_version", capability_entry.second.model_version},
+                    },
                 });
-            *error_message = "当前 license 未覆盖目标能力或版本。";
+            *error_message = capability_license_status.reason;
             return std::nullopt;
         }
+    }
+    if (!ApplyCapabilityAdmissionGate(action, &selected_capabilities, &source_summary, error_message)) {
+        return std::nullopt;
     }
 
     nlohmann::json capability_names = nlohmann::json::array();
@@ -771,18 +1943,11 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         capability_names.push_back(capability_entry.first);
     }
 
-    const nlohmann::json license_status = {
-        {"valid", current_license_status.valid},
-        {"reason", current_license_status.reason},
-        {"checked_at_cst", current_license_status.checked_at_cst},
-        {"customer_code", current_license_status.customer_code},
-        {"capability_scope", current_license_status.capability_scope},
-        {"version_constraints", current_license_status.version_constraints},
-        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-    };
+    const nlohmann::json license_status = BuildLicenseStatusPayload(current_license_status);
 
     nlohmann::json detail = {
         {"license_status", license_status},
+        {"capability_records", BuildCapabilityRecordArray(selected_capabilities)},
     };
     if (rollback_of_revision_id.has_value()) {
         detail["rollback_to"] = *rollback_of_revision_id;
@@ -792,7 +1957,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         GenerateRequestId(),
         action,
         "active",
-        scan_result.source_summary,
+        source_summary,
         capability_names,
         true,
         detail,
@@ -803,19 +1968,7 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        snapshot_capabilities.push_back(
-            {
-                {"capability_name", capability_entry.first},
-                {"plugin_target", capability_entry.second.plugin_target},
-                {"model_version", capability_entry.second.model_version},
-                {"backend_type", capability_entry.second.backend_type},
-                {"active_source", capability_entry.second.active_source},
-                {"model_root", capability_entry.second.model_root},
-                {"binary_path", capability_entry.second.binary_path},
-                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
-                {"pool_size", config.pool_size},
-                {"revision_id", revision->id},
-            });
+        snapshot_capabilities.push_back(BuildSnapshotCapabilityPayload(capability_entry.second, revision->id, config));
     }
 
     nlohmann::json snapshot_payload = {
@@ -826,17 +1979,12 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         {"capability_names", capability_names},
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
-        {"source_summary", scan_result.source_summary},
-        {"license_status", {
-            {"valid", current_license_status.valid},
-            {"reason", current_license_status.reason},
-            {"checked_at_cst", current_license_status.checked_at_cst},
-            {"customer_code", current_license_status.customer_code},
-            {"capability_scope", current_license_status.capability_scope},
-            {"version_constraints", current_license_status.version_constraints},
-            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-            {"runtime_revision_id", revision->id},
-        }},
+        {"source_summary", source_summary},
+        {"license_status", [&]() {
+            nlohmann::json payload = BuildLicenseStatusPayload(current_license_status);
+            payload["runtime_revision_id"] = revision->id;
+            return payload;
+        }()},
         {"service_name", "ai-prod"},
         {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
         {"company_domain", "agilestar.cn"},
@@ -850,16 +1998,23 @@ std::optional<nlohmann::json> AiProdHttpServer::ExecuteRuntimeTransition(
         config.runtime_log_path,
         {
             {"event", action},
+            {"request_id", request_id},
             {"revision_id", revision->id},
             {"active_capability_count", static_cast<int>(selected_capabilities.size())},
         });
-    AppendAuditLog(
-        config,
-        action,
-        "runtime_revision",
-        std::to_string(revision->id),
+    auditLogger->Append(
         {
-            {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+            action,
+            "runtime_revision",
+            std::to_string(revision->id),
+            "success",
+            request_id,
+            request_id,
+            -1.0,
+            "",
+            {
+                {"active_capability_count", static_cast<int>(selected_capabilities.size())},
+            },
         });
 
     const auto operation = revision_store.CreateOperation(
@@ -889,26 +2044,89 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     const httplib::Request& request,
     httplib::Response& response,
     bool rollback) {
+    ScopedEndpointMetricRecorder recorder(this, rollback ? "admin_rollback" : "admin_reload", &response);
+    const std::string request_id = ResolveRequestId(request);
     std::unique_lock<std::mutex> transition_guard(runtimeTransitionMutex, std::try_to_lock);
     if (!transition_guard.owns_lock()) {
+        auditLogger->Append(
+            {
+                rollback ? "rollback_rejected" : "reload_rejected",
+                "runtime_revision",
+                rollback ? "rollback" : "reload",
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                "已有运行时切换任务正在执行。",
+                {{"reason", "已有运行时切换任务正在执行。"}},
+            });
         ApplyJsonErrorResponse(409, "已有运行时切换任务正在执行。", response);
         return;
     }
     AdminTransitionRequestPayload transition_request;
     std::string parse_error;
     if (!ParseAdminTransitionRequest(request.body, rollback, &transition_request, &parse_error)) {
+        auditLogger->Append(
+            {
+                rollback ? "rollback_parse_rejected" : "reload_parse_rejected",
+                "runtime_revision",
+                rollback ? "rollback" : "reload",
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                parse_error,
+                {{"reason", parse_error}},
+            });
         ApplyJsonErrorResponse(400, parse_error, response);
         return;
     }
 
-    if (!licenseManager.GetStatus().valid) {
-        ApplyJsonErrorResponse(403, "license 未授权或已失效，无法执行运行时切换。", response);
+    const auto current_transition_license_status = licenseManager.GetStatus();
+    if (!current_transition_license_status.valid) {
+        auditLogger->Append(
+            {
+                transition_request.action + "_license_rejected",
+                "runtime_revision",
+                transition_request.action,
+                "failure",
+                request_id,
+                request_id,
+                -1.0,
+                current_transition_license_status.reason,
+                {
+                    {"reason", current_transition_license_status.reason},
+                    {"code", current_transition_license_status.code},
+                    {"stage", current_transition_license_status.stage},
+                    {"details", current_transition_license_status.details},
+                },
+            });
+        ApplyLicenseErrorResponse(403, current_transition_license_status, response);
         return;
     }
 
     for (const auto& entry : capabilityCatalog.ListEntries()) {
-        if (!licenseManager.QuickCheck(entry.capability_name, entry.model_version)) {
-            ApplyJsonErrorResponse(403, "当前 license 未覆盖已装载能力，无法执行运行时切换。", response);
+        const auto entry_license_status = licenseManager.Evaluate(entry.capability_name, entry.model_version);
+        if (!entry_license_status.valid) {
+            auditLogger->Append(
+                {
+                    transition_request.action + "_license_rejected",
+                    "capability",
+                    entry.capability_name,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    entry_license_status.reason,
+                    {
+                        {"reason", entry_license_status.reason},
+                        {"code", entry_license_status.code},
+                        {"stage", entry_license_status.stage},
+                        {"details", entry_license_status.details},
+                        {"model_version", entry.model_version},
+                    },
+                });
+            ApplyLicenseErrorResponse(403, entry_license_status, response);
             return;
         }
     }
@@ -943,6 +2161,7 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
     const auto transition_result = ExecuteRuntimeTransition(
         transition_request.action,
         transition_request.target_revision_id,
+        request_id,
         &transition_error);
     if (!transition_result.has_value()) {
         EndDrainOnPools(pools);
@@ -969,7 +2188,8 @@ void AiProdHttpServer::HandleAdminTransitionRequest(
 
 void AiProdHttpServer::HandleLicenseStatusRequest(
     const httplib::Request&,
-    httplib::Response& response) const {
+    httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "license_status", &response);
     response.status = 200;
     response.set_content(
         BuildLicenseStatusPayload(licenseManager.GetStatus()).dump(),
@@ -977,9 +2197,32 @@ void AiProdHttpServer::HandleLicenseStatusRequest(
 }
 
 void AiProdHttpServer::HandleLicenseReloadRequest(
-    const httplib::Request&,
+    const httplib::Request& request,
     httplib::Response& response) {
+    ScopedEndpointMetricRecorder recorder(this, "admin_license_reload", &response);
+    const std::string request_id = ResolveRequestId(request);
     if (licenseManager.Reload()) {
+        AppendJsonLine(
+            config.runtime_log_path,
+            {
+                {"event", "license_reload"},
+                {"request_id", request_id},
+                {"license_valid", licenseManager.GetStatus().valid},
+            });
+        auditLogger->Append(
+            {
+                "license_reload",
+                "license",
+                "active_license",
+                "success",
+                request_id,
+                request_id,
+                -1.0,
+                "",
+                {
+                    {"license_valid", licenseManager.GetStatus().valid},
+                },
+            });
         response.status = 200;
         response.set_content(
             nlohmann::json{
@@ -991,6 +2234,28 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
     }
 
     const auto failure_status = licenseManager.GetLastReloadFailureStatus();
+    AppendJsonLine(
+        config.runtime_log_path,
+        {
+            {"event", "license_reload_failed"},
+            {"request_id", request_id},
+            {"reason", failure_status.reason},
+        });
+    auditLogger->Append(
+        {
+            "license_reload_failed",
+            "license",
+            "active_license",
+            "failure",
+            request_id,
+            request_id,
+            -1.0,
+            failure_status.reason,
+            {
+                {"reason", failure_status.reason},
+                {"license_valid", failure_status.valid},
+            },
+        });
     response.status = 400;
     response.set_content(
         nlohmann::json{
@@ -1001,7 +2266,138 @@ void AiProdHttpServer::HandleLicenseReloadRequest(
         kDefaultJsonContentType);
 }
 
-bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
+bool AiProdHttpServer::ApplyCapabilityAdmissionGate(
+    const std::string& action,
+    std::map<std::string, RuntimeCapabilityRecord>* capabilities,
+    nlohmann::json* source_summary,
+    std::string* error_message) {
+    if (capabilities == nullptr || source_summary == nullptr) {
+        if (error_message != nullptr) {
+            *error_message = "运行时门禁参数无效。";
+        }
+        return false;
+    }
+
+    std::vector<CapabilityCatalogEntry> candidate_entries;
+    candidate_entries.reserve(capabilities->size());
+    for (auto& capability_entry : *capabilities) {
+        capability_entry.second.admission_checklist = BuildBaseAdmissionChecklist(capability_entry.second);
+        SetChecklistItem(
+            &capability_entry.second.admission_checklist,
+            "license_gate",
+            "License 门禁",
+            true,
+            "passed",
+            "当前 capability 已通过 license 范围与版本约束校验。");
+        FinalizeChecklist(&capability_entry.second.admission_checklist);
+        candidate_entries.push_back(BuildCapabilityCatalogEntryForRecord(capability_entry.second, 0, config));
+    }
+    pluginExecutor.SyncEntries(candidate_entries);
+
+    nlohmann::json gate_failures = nlohmann::json::array();
+    std::map<std::string, RuntimeCapabilityRecord> admitted_capabilities;
+    for (auto& capability_entry : *capabilities) {
+        auto& record = capability_entry.second;
+        const auto catalog_entry = BuildCapabilityCatalogEntryForRecord(record, 0, config);
+        const std::string requested_device = catalog_entry.device_mode == "cpu" ? "cpu" : "gpu";
+        std::string executed_device = requested_device;
+        std::string gate_error;
+        PluginFailureKind failure_kind = PluginFailureKind::kNone;
+        nlohmann::json plugin_info = nlohmann::json(nullptr);
+        bool gate_ok = pluginExecutor.Preflight(
+            catalog_entry,
+            requested_device,
+            &plugin_info,
+            &gate_error,
+            &failure_kind);
+        bool fallback_applied = false;
+        if (!gate_ok && CanFallbackToCpu(catalog_entry, requested_device, failure_kind)) {
+            executed_device = "cpu";
+            fallback_applied = true;
+            gate_ok = pluginExecutor.Preflight(
+                catalog_entry,
+                executed_device,
+                &plugin_info,
+                &gate_error,
+                &failure_kind);
+        }
+
+        if (!gate_ok) {
+            if (gate_error.find("缺少必要导出符号") != std::string::npos) {
+                SetChecklistItem(
+                    &record.admission_checklist,
+                    "abi_contract",
+                    "插件 ABI 契约",
+                    true,
+                    "failed",
+                    gate_error);
+            }
+            SetChecklistItem(
+                &record.admission_checklist,
+                "runtime_probe",
+                "运行时装载门禁",
+                true,
+                "failed",
+                gate_error.empty() ? "能力未通过运行时预装载探测。" : gate_error);
+            record.admission_checklist["fallback_applied"] = fallback_applied;
+            record.admission_checklist["probe_device"] = executed_device;
+            FinalizeChecklist(&record.admission_checklist);
+            gate_failures.push_back(
+                {
+                    {"capability_name", record.capability_name},
+                    {"gate_code", "runtime_probe"},
+                    {"requested_device", requested_device},
+                    {"executed_device", executed_device},
+                    {"fallback_applied", fallback_applied},
+                    {"reason", gate_error.empty() ? "能力未通过运行时预装载探测。" : gate_error},
+                });
+            auditLogger->Append(
+                {
+                    action + "_capability_gated",
+                    "capability",
+                    record.capability_name,
+                    "failure",
+                    "",
+                    "",
+                    -1.0,
+                    gate_error,
+                    {
+                        {"gate_code", "runtime_probe"},
+                        {"requested_device", requested_device},
+                        {"executed_device", executed_device},
+                        {"fallback_applied", fallback_applied},
+                    },
+                });
+            continue;
+        }
+
+        SetChecklistItem(
+            &record.admission_checklist,
+            "runtime_probe",
+            "运行时装载门禁",
+            true,
+            "passed",
+            fallback_applied ? "GPU 预装载失败后已自动回退 CPU，最终通过装载门禁。"
+                             : "能力已通过插件装载、初始化、预热与健康检查门禁。");
+        record.admission_checklist["fallback_applied"] = fallback_applied;
+        record.admission_checklist["probe_device"] = executed_device;
+        record.admission_checklist["plugin_info"] = plugin_info;
+        FinalizeChecklist(&record.admission_checklist);
+        admitted_capabilities.emplace(capability_entry.first, record);
+    }
+
+    (*source_summary)["admission_gate_failures"] = gate_failures;
+    *capabilities = std::move(admitted_capabilities);
+    if (capabilities->empty()) {
+        if (error_message != nullptr) {
+            *error_message = "未发现通过 capability 接入门禁的能力资源。";
+        }
+        return false;
+    }
+    return true;
+}
+
+bool AiProdHttpServer::BootstrapRuntime(const std::string& request_id, std::string* error_message) {
     auto set_error = [&](const std::string& message) {
         if (error_message != nullptr) {
             *error_message = message;
@@ -1011,7 +2407,7 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         config.host_root,
         config.image_resource_root,
         RuntimeResourceScanner::DetectPlatformTarget());
-    const auto& selected_capabilities = scan_result.capabilities;
+    std::map<std::string, RuntimeCapabilityRecord> selected_capabilities = scan_result.capabilities;
     if (selected_capabilities.empty()) {
         set_error("未发现可用能力资源，无法完成启动自举。");
         return false;
@@ -1024,19 +2420,33 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        if (!licenseManager.QuickCheck(capability_entry.first, capability_entry.second.model_version)) {
-            AppendAuditLog(
-                config,
-                "bootstrap_license_rejected",
-                "capability",
-                capability_entry.first,
+        const auto capability_license_status = licenseManager.Evaluate(capability_entry.first, capability_entry.second.model_version);
+        if (!capability_license_status.valid) {
+            auditLogger->Append(
                 {
-                    {"reason", "当前 license 未授权该能力或版本。"},
-                    {"model_version", capability_entry.second.model_version},
+                    "bootstrap_license_rejected",
+                    "capability",
+                    capability_entry.first,
+                    "failure",
+                    request_id,
+                    request_id,
+                    -1.0,
+                    capability_license_status.reason,
+                    {
+                        {"reason", capability_license_status.reason},
+                        {"code", capability_license_status.code},
+                        {"stage", capability_license_status.stage},
+                        {"details", capability_license_status.details},
+                        {"model_version", capability_entry.second.model_version},
+                    },
                 });
-            set_error("当前 license 未覆盖启动阶段目标能力或版本。");
+            set_error(capability_license_status.reason);
             return false;
         }
+    }
+    nlohmann::json source_summary = scan_result.source_summary;
+    if (!ApplyCapabilityAdmissionGate("bootstrap", &selected_capabilities, &source_summary, error_message)) {
+        return false;
     }
 
     RevisionStore revision_store(config.database_path);
@@ -1050,28 +2460,22 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         capability_names.push_back(capability_entry.first);
     }
 
-    const nlohmann::json license_status = {
-        {"valid", current_license_status.valid},
-        {"reason", current_license_status.reason},
-        {"checked_at_cst", current_license_status.checked_at_cst},
-        {"customer_code", current_license_status.customer_code},
-        {"capability_scope", current_license_status.capability_scope},
-        {"version_constraints", current_license_status.version_constraints},
-        {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-        {"validated_capability_names", capability_names},
-        {"validation_action", "bootstrap"},
-        {"validation_entity_id", "bootstrap"},
-    };
+    nlohmann::json license_status = BuildLicenseStatusPayload(current_license_status);
+    license_status["validated_capability_names"] = capability_names;
+    license_status["validation_action"] = "bootstrap";
+    license_status["validation_entity_id"] = "bootstrap";
 
     const auto revision = revision_store.CreateRevision(
         GenerateRequestId(),
         "bootstrap",
         "active",
-        scan_result.source_summary,
+        source_summary,
         capability_names,
         true,
         {
             {"license_status", license_status},
+            {"capability_records", BuildCapabilityRecordArray(selected_capabilities)},
+            {"source_summary", source_summary},
         },
         std::nullopt,
         error_message);
@@ -1080,19 +2484,7 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
     }
 
     for (const auto& capability_entry : selected_capabilities) {
-        snapshot_capabilities.push_back(
-            {
-                {"capability_name", capability_entry.first},
-                {"plugin_target", capability_entry.second.plugin_target},
-                {"model_version", capability_entry.second.model_version},
-                {"backend_type", capability_entry.second.backend_type},
-                {"active_source", capability_entry.second.active_source},
-                {"model_root", capability_entry.second.model_root},
-                {"binary_path", capability_entry.second.binary_path},
-                {"device_mode", config.gpu_available ? "gpu/cpu" : "cpu"},
-                {"pool_size", config.pool_size},
-                {"revision_id", revision->id},
-            });
+        snapshot_capabilities.push_back(BuildSnapshotCapabilityPayload(capability_entry.second, revision->id, config));
     }
 
     nlohmann::json snapshot_payload = {
@@ -1103,20 +2495,15 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         {"capability_names", capability_names},
         {"capability_count", static_cast<int>(selected_capabilities.size())},
         {"capabilities", snapshot_capabilities},
-        {"source_summary", scan_result.source_summary},
-        {"license_status", {
-            {"valid", current_license_status.valid},
-            {"reason", current_license_status.reason},
-            {"checked_at_cst", current_license_status.checked_at_cst},
-            {"customer_code", current_license_status.customer_code},
-            {"capability_scope", current_license_status.capability_scope},
-            {"version_constraints", current_license_status.version_constraints},
-            {"hardware_fingerprint", current_license_status.hardware_fingerprint},
-            {"validated_capability_names", capability_names},
-            {"validation_action", "bootstrap"},
-            {"validation_entity_id", "bootstrap"},
-            {"runtime_revision_id", revision->id},
-        }},
+        {"source_summary", source_summary},
+        {"license_status", [&]() {
+            nlohmann::json payload = BuildLicenseStatusPayload(current_license_status);
+            payload["validated_capability_names"] = capability_names;
+            payload["validation_action"] = "bootstrap";
+            payload["validation_entity_id"] = "bootstrap";
+            payload["runtime_revision_id"] = revision->id;
+            return payload;
+        }()},
         {"service_name", "ai-prod"},
         {"company_name", "北京爱知之星科技股份有限公司（Agile Star）"},
         {"company_domain", "agilestar.cn"},
@@ -1130,18 +2517,25 @@ bool AiProdHttpServer::BootstrapRuntime(std::string* error_message) {
         config.runtime_log_path,
         {
             {"event", "bootstrap"},
+            {"request_id", request_id},
             {"revision_id", revision->id},
             {"capability_count", static_cast<int>(selected_capabilities.size())},
             {"license_valid", current_license_status.valid},
         });
-    AppendAuditLog(
-        config,
-        "bootstrap",
-        "runtime_revision",
-        std::to_string(revision->id),
+    auditLogger->Append(
         {
-            {"capability_count", static_cast<int>(selected_capabilities.size())},
-            {"license_valid", current_license_status.valid},
+            "bootstrap",
+            "runtime_revision",
+            std::to_string(revision->id),
+            "success",
+            request_id,
+            request_id,
+            -1.0,
+            "",
+            {
+                {"capability_count", static_cast<int>(selected_capabilities.size())},
+                {"license_valid", current_license_status.valid},
+            },
         });
 
     const auto operation = revision_store.CreateOperation(
@@ -1160,26 +2554,47 @@ void AiProdHttpServer::RegisterRoutes() {
         std::ostringstream payload;
         payload << "{"
                 << "\"service\":\"ai-prod-cpp-http\","
-                << "\"mode\":\"proxy\","
-                << "\"backend\":\"" << EscapeJson(build_backend_base_url(config)) << "\","
+                << "\"mode\":\"runtime\","
+                << "\"internal_shell\":\"" << EscapeJson(build_backend_base_url(config)) << "\","
                 << "\"bind\":\"" << EscapeJson(config.bind_host + ":" + std::to_string(config.bind_port)) << "\""
                 << "}";
         response.set_content(payload.str(), kDefaultJsonContentType);
     });
 
-    server->Get("/api/v1/health", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplySnapshotOrBackendResponse(snapshotManager.BuildHealthResponse(), request, response);
+    server->Get("/api/v1/health", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "health", &response);
+        const auto snapshot_response = snapshotManager.BuildHealthResponse();
+        if (!snapshot_response.ok) {
+            ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
+            return;
+        }
+        response.status = 200;
+        response.set_content(snapshot_response.body, kDefaultJsonContentType);
     });
-    server->Get("/api/v1/capabilities", [&](const httplib::Request& request, httplib::Response& response) {
-        ApplySnapshotOrBackendResponse(snapshotManager.BuildCapabilitiesResponse(), request, response);
+    server->Get("/api/v1/capabilities", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "capabilities", &response);
+        const auto snapshot_response = snapshotManager.BuildCapabilitiesResponse();
+        if (!snapshot_response.ok) {
+            ApplyJsonErrorResponse(503, "运行时快照不可用，请先完成启动自举或 reload。", response);
+            return;
+        }
+        response.status = 200;
+        response.set_content(snapshot_response.body, kDefaultJsonContentType);
     });
     server->Get("/api/v1/license/status", [&](const httplib::Request& request, httplib::Response& response) {
         HandleLicenseStatusRequest(request, response);
     });
     server->Get("/api/v1/admin/catalog", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "admin_catalog", &response);
         const bool snapshot_ready = RefreshCatalogAndPools();
         response.status = 200;
         response.set_content(BuildCatalogPayload(snapshot_ready).dump(), kDefaultJsonContentType);
+    });
+    server->Get("/api/v1/admin/metrics", [&](const httplib::Request&, httplib::Response& response) {
+        ScopedEndpointMetricRecorder recorder(this, "admin_metrics", &response);
+        const bool snapshot_ready = RefreshCatalogAndPools();
+        response.status = 200;
+        response.set_content(BuildMetricsPayload(snapshot_ready).dump(), kDefaultJsonContentType);
     });
     server->Post("/api/v1/admin/reload", [&](const httplib::Request& request, httplib::Response& response) {
         HandleAdminTransitionRequest(request, response, false);

@@ -23,6 +23,14 @@ struct ProxyConfig {
     int write_timeout_ms = 30000;
     int snapshot_max_age_seconds = 30;
     int license_auto_reload_interval_seconds = 60;
+    int infer_queue_wait_timeout_ms = 200;
+    int infer_queue_max_pending_requests = 8;
+    int infer_batch_wait_timeout_ms = 0;
+    int infer_request_max_deadline_ms = 60000;
+    std::string operating_system = "linux";
+    std::string operating_system_version;
+    std::string system_architecture = "x86_64";
+    std::string application_name = "ai-prod";
     std::map<std::string, std::string> hardware_features;
 };
 

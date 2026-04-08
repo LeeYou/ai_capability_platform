@@ -44,6 +44,10 @@ int main() {
 
     nlohmann::json payload = {
         {"customer_code", "cust_prod"},
+        {"application_name", "ai-prod"},
+        {"operating_system", "linux"},
+        {"min_operating_system_version", "5.4.0"},
+        {"system_architecture", "x86_64"},
         {"capability_scope", nlohmann::json::array({"face_detect"})},
         {"hardware_fingerprint", test_license_helpers::BuildHardwareFingerprint(hardware_features)},
         {"start_at_cst", NowCstWithOffset(-1)},
@@ -52,12 +56,18 @@ int main() {
     };
     test_license_helpers::WriteLicenseBundle(license_root, payload);
 
-    LicenseManager manager(license_root.string(), hardware_features, 1);
+    LicenseManager manager(license_root.string(), hardware_features, "linux", "5.15.0", "x86_64", "ai-prod", 1);
     if (!Expect(manager.Initialize(), "license manager should initialize with valid license")) {
         return 1;
     }
     const auto valid_status = manager.GetStatus();
     if (!Expect(valid_status.valid, "valid license should report valid status")) {
+        return 1;
+    }
+    if (!Expect(valid_status.code == "license_valid", "valid license should expose stable code")) {
+        return 1;
+    }
+    if (!Expect(valid_status.stage == "success", "valid license should expose success stage")) {
         return 1;
     }
     if (!Expect(manager.QuickCheck("face_detect", "v1_0_0"), "licensed capability should pass quick check")) {
@@ -69,8 +79,40 @@ int main() {
     if (!Expect(!manager.QuickCheck("face_detect", "v10_0_0"), "capability outside version range should fail quick check")) {
         return 1;
     }
+    payload["version_constraints"] = {
+        {"prefix", "v1."},
+        {"min_version", "v1.2.0"},
+        {"max_version", "v1.10.0"},
+    };
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(manager.Reload(), "reload should succeed with prefix-based version constraints")) {
+        return 1;
+    }
+    if (!Expect(manager.QuickCheck("face_detect", "v1.10.0"), "numeric version comparison should allow upper bound")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", "v1.11.0"), "numeric version comparison should reject beyond upper bound")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", ""), "configured version constraints should reject missing version")) {
+        return 1;
+    }
+    payload["version_constraints"] = {
+        {"allowed_versions", nlohmann::json::array({"v1.2.0", "v1.10.0"})},
+    };
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(manager.Reload(), "reload should succeed with allowed_versions constraints")) {
+        return 1;
+    }
+    if (!Expect(manager.QuickCheck("face_detect", "v1.10.0"), "allowed_versions should accept exact configured version")) {
+        return 1;
+    }
+    if (!Expect(!manager.QuickCheck("face_detect", "v1.10.1"), "allowed_versions should reject unmatched version")) {
+        return 1;
+    }
 
     payload["capability_scope"] = nlohmann::json::array({"ocr"});
+    payload["version_constraints"] = {{"min_version", "v1_0_0"}, {"max_version", "v9_9_9"}};
     test_license_helpers::WriteLicenseBundle(license_root, payload);
     if (!Expect(manager.Reload(), "reload should succeed with another valid license")) {
         return 1;
@@ -91,6 +133,9 @@ int main() {
     if (!Expect(invalid_signature_status.reason == "签名校验失败。", "invalid signature should expose reason")) {
         return 1;
     }
+    if (!Expect(invalid_signature_status.code == "signature_invalid", "invalid signature should expose stable code")) {
+        return 1;
+    }
 
     payload["signature"] = nullptr;
     payload["expire_at_cst"] = NowCstWithOffset(-1);
@@ -100,6 +145,9 @@ int main() {
     }
     const auto expired_status = manager.GetLastReloadFailureStatus();
     if (!Expect(expired_status.reason == "license 已过期。", "expired license should expose reason")) {
+        return 1;
+    }
+    if (!Expect(expired_status.code == "time_window_expired", "expired license should expose stable code")) {
         return 1;
     }
 
@@ -113,8 +161,23 @@ int main() {
     if (!Expect(mismatch_status.reason == "硬件指纹不匹配。", "fingerprint mismatch should expose reason")) {
         return 1;
     }
+    if (!Expect(mismatch_status.code == "hardware_fingerprint_mismatch", "fingerprint mismatch should expose stable code")) {
+        return 1;
+    }
 
     payload["hardware_fingerprint"] = test_license_helpers::BuildHardwareFingerprint(hardware_features);
+    payload["operating_system"] = "windows";
+    test_license_helpers::WriteLicenseBundle(license_root, payload);
+    if (!Expect(!manager.Reload(), "reload should fail for operating system mismatch")) {
+        return 1;
+    }
+    const auto os_mismatch_status = manager.GetLastReloadFailureStatus();
+    if (!Expect(os_mismatch_status.code == "operating_system_denied", "operating system mismatch should expose stable code")) {
+        return 1;
+    }
+
+    payload["hardware_fingerprint"] = test_license_helpers::BuildHardwareFingerprint(hardware_features);
+    payload["operating_system"] = "linux";
     payload["capability_scope"] = nlohmann::json::array({"face_detect"});
     test_license_helpers::WriteLicenseBundle(license_root, payload);
     if (!Expect(manager.Reload(), "reload should recover to valid license")) {

@@ -10,9 +10,11 @@ from app.config import get_settings, reset_settings_cache
 from app.db.database import get_session_factory, reset_database_cache
 from app.services.annotation_service import (
     create_annotation_task,
+    get_annotation_task_detail,
     get_annotation_task,
     list_annotation_tasks,
     submit_annotation_task_result,
+    update_annotation_task_samples,
 )
 from app.services.registry_service import bind_dataset_to_capability, initialize_database, register_capability
 
@@ -143,6 +145,83 @@ class AnnotationServiceTestCase(unittest.TestCase):
                     task_id=created.task_id,
                     annotations=[{}],
                 )
+
+    def test_update_annotation_task_samples_exposes_sample_level_detail(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "layout_review").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="layout_review", display_name="Layout Review")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="layout_review",
+                dataset_path="layout_review",
+            )
+            created = create_annotation_task(
+                session=session,
+                capability_name="layout_review",
+                task_name="版面样本标注",
+                sample_total=2,
+            )
+            updated = update_annotation_task_samples(
+                session=session,
+                annotation_tasks_root=get_settings().annotation_tasks_root,
+                task_id=created.task_id,
+                annotations=[{"sample_id": "sample_1", "label": "title", "bbox": [0, 0, 10, 10]}],
+                mark_submitted=False,
+            )
+            detail = get_annotation_task_detail(
+                session=session,
+                annotation_tasks_root=get_settings().annotation_tasks_root,
+                task_id=created.task_id,
+            )
+
+        self.assertEqual(updated.status, "annotating")
+        self.assertEqual(len(detail.sample_items), 2)
+        self.assertEqual(detail.sample_items[0]["status"], "labeled")
+        self.assertEqual(detail.sample_items[0]["annotation"]["label"], "title")
+        self.assertEqual(detail.sample_items[1]["status"], "pending")
+
+    def test_update_annotation_task_samples_validates_detection_schema(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "face_detect").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(
+                session,
+                capability_name="face_detect",
+                display_name="Face Detect",
+                task_type="detection",
+            )
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="face_detect",
+                dataset_path="face_detect",
+            )
+            created = create_annotation_task(
+                session=session,
+                capability_name="face_detect",
+                task_name="检测标注",
+                sample_total=1,
+            )
+            detail = update_annotation_task_samples(
+                session=session,
+                annotation_tasks_root=get_settings().annotation_tasks_root,
+                task_id=created.task_id,
+                annotations=[
+                    {
+                        "sample_id": "sample_1",
+                        "objects": [{"label": "face", "bbox": [0, 0, 10, 10]}],
+                    }
+                ],
+                mark_submitted=False,
+            )
+
+        self.assertEqual(detail.task_type, "detection")
+        self.assertEqual(detail.annotation_schema["task_type"], "detection")
+        self.assertEqual(detail.sample_items[0]["annotation"]["objects"][0]["label"], "face")
 
 
 if __name__ == "__main__":

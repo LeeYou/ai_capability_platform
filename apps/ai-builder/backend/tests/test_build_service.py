@@ -21,6 +21,49 @@ from app.services.build_service import (
 from app.services.catalog_service import get_builder_catalog, write_builder_catalog_snapshot
 
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SHARED_SCHEMAS_ROOT = REPO_ROOT / "apps" / "shared" / "schemas"
+
+
+def _load_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_matches_schema(test_case: unittest.TestCase, schema: dict[str, object], payload: object, *, path: str = "$") -> None:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        test_case.assertIsInstance(payload, dict, f"{path} 必须为对象")
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        assert isinstance(payload, dict)
+        for key in required:
+            test_case.assertIn(key, payload, f"{path} 缺少字段 {key}")
+        for key, property_schema in properties.items():
+            if key in payload and isinstance(property_schema, dict):
+                _assert_matches_schema(test_case, property_schema, payload[key], path=f"{path}.{key}")
+        return
+
+    if schema_type == "array":
+        test_case.assertIsInstance(payload, list, f"{path} 必须为数组")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(payload):
+                _assert_matches_schema(test_case, item_schema, item, path=f"{path}[{index}]")
+        return
+
+    if schema_type == "string":
+        test_case.assertIsInstance(payload, str, f"{path} 必须为字符串")
+        return
+
+    if schema_type == "integer":
+        test_case.assertIsInstance(payload, int, f"{path} 必须为整数")
+        return
+
+    if schema_type == "boolean":
+        test_case.assertIsInstance(payload, bool, f"{path} 必须为布尔值")
+        return
+
+
 class BuildServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
@@ -160,6 +203,9 @@ class BuildServiceTestCase(unittest.TestCase):
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "mount_template" / "scripts" / "init_host_root.sh").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "validation" / "acceptance_check.py").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "validation" / "verify_delivery_package.py").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "license_tool" / "manifest.json").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "license_tool" / "README.md").is_file())
+        self.assertTrue((Path(task_detail["delivery_package_dir"]) / "tools" / "license_tool" / "HARDWARE_FINGERPRINT.md").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "docs" / "DEPLOYMENT.md").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "acceptance_checklist.json").is_file())
         self.assertTrue((Path(task_detail["delivery_package_dir"]) / "version_manifest.json").is_file())
@@ -169,13 +215,32 @@ class BuildServiceTestCase(unittest.TestCase):
         self.assertEqual(manifest_payload["stage_status"]["B10"], "completed")
         self.assertEqual(manifest_payload["stage_status"]["B11"], "completed")
         self.assertIn("ai-prod_image_build_context.tar.gz", manifest_payload["docker"]["archive_path"])
-        acceptance_payload = json.loads((Path(task_detail["delivery_package_dir"]) / "acceptance_checklist.json").read_text(encoding="utf-8"))
+        acceptance_payload = _load_json(Path(task_detail["delivery_package_dir"]) / "acceptance_checklist.json")
         self.assertGreaterEqual(len(acceptance_payload["sections"]), 5)
-        version_payload = json.loads((Path(task_detail["delivery_package_dir"]) / "version_manifest.json").read_text(encoding="utf-8"))
+        version_payload = _load_json(Path(task_detail["delivery_package_dir"]) / "version_manifest.json")
         self.assertEqual(version_payload["capability_name"], "face_detect")
         self.assertGreaterEqual(len(version_payload["delivery_checksums"]), 4)
-        summary_payload = json.loads((Path(task_detail["delivery_package_dir"]) / "delivery_summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(version_payload["tools_bundle"]["license_tool"]["version"], "1.0.0")
+        summary_payload = _load_json(Path(task_detail["delivery_package_dir"]) / "delivery_summary.json")
         self.assertEqual(summary_payload["sdk_count"], 2)
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "acceptance_checklist.json"), acceptance_payload)
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "version_manifest.json"), version_payload)
+        _assert_matches_schema(self, _load_json(SHARED_SCHEMAS_ROOT / "delivery_summary.json"), summary_payload)
+        _assert_matches_schema(
+            self,
+            _load_json(SHARED_SCHEMAS_ROOT / "mount_template.json"),
+            manifest_payload["mount_template"],
+        )
+        _assert_matches_schema(
+            self,
+            _load_json(SHARED_SCHEMAS_ROOT / "tools_bundle.json"),
+            manifest_payload["tools"],
+        )
+        _assert_matches_schema(
+            self,
+            _load_json(SHARED_SCHEMAS_ROOT / "docs_bundle.json"),
+            manifest_payload["docs"],
+        )
         self.assertIsNotNone(task_detail["manifest"])
         self.assertIn("delivery_package", task_detail["manifest"]["manifest"])
         self.assertTrue(task_detail["manifest"]["manifest"]["delivery_package"]["acceptance_checklist_path"].endswith("acceptance_checklist.json"))

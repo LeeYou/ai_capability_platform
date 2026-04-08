@@ -105,8 +105,16 @@ class ModelServiceTestCase(unittest.TestCase):
         self.assertEqual(detail.model_version, "v1.0.0")
         manifest = json.loads(Path(created.manifest_path).read_text(encoding="utf-8"))
         self.assertEqual(manifest["capability_name"], "ocr_review")
+        self.assertEqual(manifest["task_type"], "classification")
         self.assertEqual(manifest["source_train_task_id"], training_task.task_id)
         self.assertEqual(manifest["checksum"], created.checksum)
+        self.assertIn("preprocessing", manifest)
+        self.assertIn("labels", manifest)
+        self.assertIn("runtime_contract", manifest)
+        self.assertIn("delivery_metadata", manifest)
+        self.assertTrue((Path(created.artifact_path) / "preprocess.json").is_file())
+        self.assertTrue((Path(created.artifact_path) / "labels.json").is_file())
+        self.assertTrue((Path(created.artifact_path) / "validation" / "acceptance_checklist.json").is_file())
 
     def test_create_model_artifact_rejects_duplicate_version(self) -> None:
         datasets_root = get_settings().datasets_root

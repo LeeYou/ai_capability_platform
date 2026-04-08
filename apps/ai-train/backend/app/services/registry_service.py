@@ -4,12 +4,18 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.db.database import Base, get_engine
 from app.db.models import CapabilityRegistryModel, DatasetBindingModel
 from app.services.dataset_service import normalize_dataset_path, scan_dataset_bindings
+from app.services.task_contracts import (
+    build_annotation_schema,
+    build_template_bundle,
+    default_input_type_for_task,
+    normalize_task_type,
+)
 
 
 _CAPABILITY_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -19,9 +25,12 @@ _CAPABILITY_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 class CapabilitySummary:
     capability_name: str
     display_name: str
+    task_type: str
     dataset_path: str
     dataset_status: str
     source: str
+    annotation_schema: dict[str, object]
+    template_bundle: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -33,7 +42,18 @@ class DatasetSummary:
 
 
 def initialize_database() -> None:
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    if "capability_registry" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("capability_registry")}
+    if "task_type" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE capability_registry ADD COLUMN task_type VARCHAR(64) DEFAULT 'classification'")
+            )
 
 
 def normalize_capability_name(capability_name: str) -> str:
@@ -54,10 +74,12 @@ def register_capability(
     session: Session,
     capability_name: str,
     display_name: str | None = None,
+    task_type: str | None = None,
     source: str = "manual",
 ) -> CapabilitySummary:
     normalized_name = normalize_capability_name(capability_name)
     normalized_display_name = display_name.strip() if display_name else _default_display_name(normalized_name)
+    normalized_task_type = normalize_task_type(task_type)
 
     capability = session.scalar(
         select(CapabilityRegistryModel).where(CapabilityRegistryModel.capability_name == normalized_name)
@@ -66,6 +88,8 @@ def register_capability(
         capability = CapabilityRegistryModel(
             capability_name=normalized_name,
             display_name=normalized_display_name,
+            task_type=normalized_task_type,
+            input_type=default_input_type_for_task(normalized_task_type),
             source=source,
         )
         session.add(capability)
@@ -75,6 +99,10 @@ def register_capability(
         changed = False
         if normalized_display_name and capability.display_name != normalized_display_name:
             capability.display_name = normalized_display_name
+            changed = True
+        if capability.task_type != normalized_task_type:
+            capability.task_type = normalized_task_type
+            capability.input_type = default_input_type_for_task(normalized_task_type)
             changed = True
         if source and capability.source != source:
             capability.source = source
@@ -87,9 +115,12 @@ def register_capability(
     return CapabilitySummary(
         capability_name=capability.capability_name,
         display_name=capability.display_name,
+        task_type=capability.task_type or normalized_task_type,
         dataset_path=binding.dataset_path if binding is not None else "",
         dataset_status=binding.dataset_status if binding is not None else "unbound",
         source=binding.source if binding is not None else capability.source,
+        annotation_schema=build_annotation_schema(capability.task_type or normalized_task_type),
+        template_bundle=build_template_bundle(capability.capability_name, capability.task_type or normalized_task_type),
     )
 
 
@@ -158,6 +189,8 @@ def sync_dataset_bindings_from_filesystem(session: Session, datasets_root: Path)
             capability = CapabilityRegistryModel(
                 capability_name=item.capability_name,
                 display_name=item.display_name,
+                task_type="classification",
+                input_type=default_input_type_for_task("classification"),
                 source=item.source,
             )
             session.add(capability)
@@ -205,9 +238,12 @@ def list_capabilities(session: Session) -> list[CapabilitySummary]:
         CapabilitySummary(
             capability_name=item.capability_name,
             display_name=item.display_name,
+            task_type=item.task_type or "classification",
             dataset_path=item.dataset_binding.dataset_path if item.dataset_binding is not None else "",
             dataset_status=item.dataset_binding.dataset_status if item.dataset_binding is not None else "unbound",
             source=item.dataset_binding.source if item.dataset_binding is not None else item.source,
+            annotation_schema=build_annotation_schema(item.task_type or "classification"),
+            template_bundle=build_template_bundle(item.capability_name, item.task_type or "classification"),
         )
         for item in capabilities
     ]

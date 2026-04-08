@@ -15,6 +15,7 @@ class CapabilityRegistryModel(Base):
     capability_name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(64), default="manual")
+    task_type: Mapped[str] = mapped_column(String(64), default="classification")
     input_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     output_schema: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

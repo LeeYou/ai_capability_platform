@@ -72,6 +72,72 @@ void WriteTextFile(const std::filesystem::path& path, const std::string& content
     output << content;
 }
 
+std::string BuildModelManifest(
+    const std::filesystem::path& model_root,
+    const std::string& capability_name,
+    const std::string& model_version,
+    int max_batch_size,
+    int queue_wait_timeout_ms) {
+    const auto preprocess_path = model_root / "preprocess.json";
+    const auto labels_path = model_root / "labels.json";
+    const auto validation_path = model_root / "validation" / "acceptance_checklist.json";
+    const auto delivery_metadata_path = model_root / "delivery_metadata.json";
+    const auto runtime_contract_path = model_root / "runtime_contract.json";
+    WriteTextFile(preprocess_path, R"({"input_type":"image","resize":{"width":640,"height":640},"normalize":{"mean":[0.5],"std":[0.5]}})");
+    WriteTextFile(labels_path, R"({"labels":["ok","ng"]})");
+    WriteTextFile(validation_path, R"({"required_cases":["acceptance_check"]})");
+    WriteTextFile(delivery_metadata_path, R"({"ai_builder":{"manifest_schema_path":"apps/shared/schemas/manifest_model.json"}})");
+    const nlohmann::json runtime_contract = {
+        {"task_type", "detection"},
+        {"annotation_schema", {{"type", "object"}}},
+        {"template_bundle", {{"name", capability_name}}},
+        {"model_files", nlohmann::json::array({"model.onnx"})},
+        {"runtime_inputs", {{"preprocess_path", preprocess_path.string()}, {"labels_path", labels_path.string()}}},
+    };
+    WriteTextFile(runtime_contract_path, runtime_contract.dump());
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"task_type", "detection"},
+        {"model_version", model_version},
+        {"source_train_task_id", 1},
+        {"task_name", capability_name + "_task"},
+        {"backend_type", "onnxruntime"},
+        {"artifact_path", model_root.string()},
+        {"status", "ready"},
+        {"checksum", capability_name + "-" + model_version + "-checksum"},
+        {"preprocessing", {{"input_type", "image"}, {"resize", {{"width", 640}, {"height", 640}}}, {"normalize", {{"mean", nlohmann::json::array({0.5})}, {"std", nlohmann::json::array({0.5})}}}}},
+        {"thresholds", {{"score_threshold", 0.5}, {"nms_threshold", 0.45}}},
+        {"labels", nlohmann::json::array({"ok", "ng"})},
+        {"validation", {{"artifacts", nlohmann::json::array({"preprocess.json", "labels.json", "validation/acceptance_checklist.json", "delivery_metadata.json", "runtime_contract.json"})}}},
+        {"runtime_contract", runtime_contract},
+        {"delivery_metadata", {{"ai_test", {{"task_type", "acceptance"}}}, {"ai_builder", {{"manifest_schema_path", "apps/shared/schemas/manifest_model.json"}}}, {"training_summary", {{"backend_type", "onnxruntime"}}}}},
+        {"max_batch_size", max_batch_size},
+        {"queue_wait_timeout_ms", queue_wait_timeout_ms},
+    }.dump();
+}
+
+std::string BuildPluginManifest(
+    const std::string& capability_name,
+    const std::string& model_version,
+    const std::string& target_name,
+    int instance_count,
+    int max_pending_request_count) {
+    return nlohmann::json{
+        {"capability_name", capability_name},
+        {"model_version", model_version},
+        {"target_name", target_name},
+        {"artifact_format", "so"},
+        {"build_mode", "native"},
+        {"toolchain_name", "cmake-native"},
+        {"jni_enabled", false},
+        {"customer_code", "cust_prod"},
+        {"issue_record_id", 1},
+        {"dependency_summary", {{"runtime", "onnxruntime"}, {"abi", "cxx17"}, {"license_required", true}, {"build_params_controlled", true}}},
+        {"instance_count", instance_count},
+        {"max_pending_request_count", max_pending_request_count},
+    }.dump();
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -93,10 +159,10 @@ int main(int argc, char** argv) {
 
     WriteTextFile(
         host_root / "models" / "face_detect" / "v2_0_0" / "manifest.json",
-        R"({"capability_name":"face_detect","model_version":"v2_0_0","backend_type":"onnxruntime"})");
+        BuildModelManifest(host_root / "models" / "face_detect" / "v2_0_0", "face_detect", "v2_0_0", 5, 280));
     WriteTextFile(
         host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
-        R"({"capability_name":"face_detect","target_name":"linux_x86_64","build_mode":"release"})");
+        BuildPluginManifest("face_detect", "v2_0_0", "linux_x86_64", 3, 5));
     std::filesystem::create_directories(host_root / "libs" / "linux_x86_64" / "face_detect" / "lib");
     std::filesystem::copy_file(
         built_plugin_path,
@@ -192,6 +258,155 @@ int main(int argc, char** argv) {
     }
     const auto infer_payload = nlohmann::json::parse(infer_result->body);
     if (!Expect(infer_payload["result"]["plugin_result"]["mock"] == true, "infer should use plugin execution after bootstrap")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["plugin_result"]["max_batch_size"] == 5, "bootstrap infer should pass max batch size to plugin")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["queue_wait_timeout_ms"] == 280, "bootstrap infer should expose queue wait timeout")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_payload["result"]["max_pending_request_count"] == 5, "bootstrap infer should expose max pending request count")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_payload["model_version"] == "v2_0_0", "bootstrap infer should expose initial model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    WriteTextFile(
+        host_root / "models" / "face_detect" / "v3_0_0" / "manifest.json",
+        BuildModelManifest(host_root / "models" / "face_detect" / "v3_0_0", "face_detect", "v3_0_0", 6, 320));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "face_detect" / "manifest" / "manifest.json",
+        BuildPluginManifest("face_detect", "v3_0_0", "linux_x86_64", 3, 5));
+    WriteTextFile(
+        host_root / "models" / "broken_gate" / "v1_0_0" / "manifest.json",
+        BuildModelManifest(host_root / "models" / "broken_gate" / "v1_0_0", "broken_gate", "v1_0_0", 2, 180));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "broken_gate" / "manifest" / "manifest.json",
+        BuildPluginManifest("broken_gate", "v1_0_0", "linux_x86_64", 1, 0));
+    WriteTextFile(
+        host_root / "libs" / "linux_x86_64" / "broken_gate" / "lib" / "libbroken_gate.so",
+        "not-a-real-plugin");
+    license_payload["capability_scope"] = nlohmann::json::array({"face_detect", "broken_gate"});
+    test_license_helpers::WriteLicenseBundle(license_root, license_payload);
+    const auto reload_license_result = client.Post("/api/v1/admin/license-reload", "{}", "application/json");
+    if (!Expect(reload_license_result && reload_license_result->status == 200, "license reload should succeed before runtime reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto reload_result = client.Post(
+        "/api/v1/admin/reload",
+        "{\"action\":\"reload\"}",
+        "application/json");
+    if (!Expect(reload_result && reload_result->status == 200, "reload should succeed after adding new model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto reload_payload = nlohmann::json::parse(reload_result->body);
+    if (!Expect(reload_payload["revision"]["action"] == "reload", "reload should return reload revision payload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(reload_payload["revision"]["source_summary"]["admission_gate_failures"].size() == 1, "reload should expose gated capability failures")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto infer_after_reload = client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"demo-reload\"}",
+        "application/json");
+    if (!Expect(infer_after_reload && infer_after_reload->status == 200, "infer should succeed after reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto infer_after_reload_payload = nlohmann::json::parse(infer_after_reload->body);
+    if (!Expect(infer_after_reload_payload["model_version"] == "v3_0_0", "reload should switch to latest model version")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_after_reload_payload["result"]["plugin_result"]["max_batch_size"] == 6, "reload should refresh max batch size")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_after_reload_payload["result"]["queue_wait_timeout_ms"] == 320, "reload should refresh queue wait timeout")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(infer_after_reload_payload["result"]["max_pending_request_count"] == 5, "reload should keep max pending request count")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto catalog_result = client.Get("/api/v1/admin/catalog");
+    if (!Expect(catalog_result && catalog_result->status == 200, "catalog should respond after reload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto catalog_payload = nlohmann::json::parse(catalog_result->body);
+    if (!Expect(catalog_payload["items"].size() == 1, "gate should keep broken capability out of catalog")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(catalog_payload["items"][0]["admission_checklist"]["ready"] == true, "catalog should expose capability admission checklist")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto rollback_result = client.Post(
+        "/api/v1/admin/rollback",
+        "{\"target_revision_id\":1}",
+        "application/json");
+    if (!Expect(rollback_result && rollback_result->status == 200, "rollback should restore bootstrap revision")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto rollback_payload = nlohmann::json::parse(rollback_result->body);
+    if (!Expect(rollback_payload["revision"]["action"] == "rollback", "rollback should return rollback revision payload")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    if (!Expect(rollback_payload["revision"]["rollback_of_revision_id"] == 1, "rollback should point back to bootstrap revision")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+
+    const auto infer_after_rollback = client.Post(
+        "/api/v1/infer/face_detect",
+        "{\"input_type\":\"json\",\"payload\":\"demo-rollback\"}",
+        "application/json");
+    if (!Expect(infer_after_rollback && infer_after_rollback->status == 200, "infer should succeed after rollback")) {
+        proxy_server.Stop();
+        proxy_thread.join();
+        return 1;
+    }
+    const auto infer_after_rollback_payload = nlohmann::json::parse(infer_after_rollback->body);
+    if (!Expect(infer_after_rollback_payload["model_version"] == "v2_0_0", "rollback should restore bootstrap model version")) {
         proxy_server.Stop();
         proxy_thread.join();
         return 1;

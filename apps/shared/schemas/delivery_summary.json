@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "交付摘要",
+  "type": "object",
+  "required": [
+    "capability_name",
+    "model_version",
+    "delivery_files",
+    "delivery_directories",
+    "recommended_steps",
+    "version_manifest_path"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "integer"
+    },
+    "package_id": {
+      "type": "integer"
+    },
+    "package_name": {
+      "type": "string"
+    },
+    "capability_name": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    },
+    "issue_record_id": {
+      "type": "integer"
+    },
+    "requested_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "jni_enabled": {
+      "type": "boolean"
+    },
+    "sdk_count": {
+      "type": "integer"
+    },
+    "target_count": {
+      "type": "integer"
+    },
+    "acceptance_section_count": {
+      "type": "integer"
+    },
+    "checksum_entry_count": {
+      "type": "integer"
+    },
+    "delivery_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "delivery_directories": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_steps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version_manifest_path": {
+      "type": "string"
+    }
+  }
+}

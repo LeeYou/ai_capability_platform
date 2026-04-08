@@ -40,6 +40,10 @@ class KeyPairItem(BaseModel):
     public_key_path: str = Field(description="公钥路径")
     private_key_path: str = Field(description="私钥路径")
     status: str = Field(description="状态")
+    rotation_version: int = Field(description="轮转版本")
+    predecessor_key_pair_id: int | None = Field(default=None, description="前序密钥对 ID")
+    status_changed_at_cst: str | None = Field(default=None, description="状态变更时间")
+    status_reason: str | None = Field(default=None, description="状态变更原因")
 
 
 class KeyPairListResponse(BaseModel):
@@ -48,6 +52,21 @@ class KeyPairListResponse(BaseModel):
 
 class CreateKeyPairRequest(BaseModel):
     key_name: str = Field(min_length=1, max_length=128, description="密钥名称")
+
+
+class RotateKeyPairRequest(BaseModel):
+    new_key_name: str | None = Field(default=None, min_length=1, max_length=128, description="新密钥名称")
+    reason: str | None = Field(default=None, max_length=2000, description="轮转原因")
+
+
+class IsolateKeyPairRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000, description="隔离原因")
+
+
+class RotateKeyPairResponse(BaseModel):
+    source_key_pair: KeyPairItem = Field(description="原密钥对")
+    new_key_pair: KeyPairItem = Field(description="新密钥对")
+    migrated_policy_ids: list[int] = Field(default_factory=list, description="已迁移策略 ID 列表")
 
 
 class LicensePolicyItem(BaseModel):
@@ -60,6 +79,10 @@ class LicensePolicyItem(BaseModel):
     capability_scope: list[str] = Field(default_factory=list, description="能力范围")
     version_constraints: dict[str, Any] = Field(default_factory=dict, description="版本约束")
     hardware_fingerprint: str | None = Field(default=None, description="硬件指纹")
+    operating_system: str = Field(description="操作系统")
+    min_operating_system_version: str | None = Field(default=None, description="最低操作系统版本")
+    system_architecture: str | None = Field(default=None, description="系统架构")
+    application_name: str = Field(description="应用名称")
     start_at_cst: str = Field(description="生效时间")
     expire_at_cst: str = Field(description="到期时间")
     status: str = Field(description="状态")
@@ -77,6 +100,10 @@ class CreateLicensePolicyRequest(BaseModel):
     capability_scope: list[str] = Field(default_factory=list, description="能力范围")
     version_constraints: dict[str, Any] = Field(default_factory=dict, description="版本约束")
     hardware_fingerprint: str | None = Field(default=None, min_length=1, max_length=128, description="硬件指纹")
+    operating_system: str = Field(min_length=1, max_length=32, description="操作系统")
+    min_operating_system_version: str | None = Field(default=None, max_length=64, description="最低操作系统版本")
+    system_architecture: str | None = Field(default=None, max_length=64, description="系统架构")
+    application_name: str = Field(min_length=1, max_length=255, description="应用名称")
     start_at_cst: str = Field(min_length=1, description="生效时间，必须为 CST 时区 ISO 8601")
     expire_at_cst: str = Field(min_length=1, description="到期时间，必须为 CST 时区 ISO 8601")
     notes: str | None = Field(default=None, max_length=2000, description="备注")
@@ -97,11 +124,17 @@ class LicenseIssueItem(BaseModel):
     hardware_fingerprint: str | None = Field(default=None, description="硬件指纹")
     capability_scope: list[str] = Field(default_factory=list, description="能力范围")
     version_constraints: dict[str, Any] = Field(default_factory=dict, description="版本约束")
+    operating_system: str = Field(description="操作系统")
+    min_operating_system_version: str | None = Field(default=None, description="最低操作系统版本")
+    system_architecture: str | None = Field(default=None, description="系统架构")
+    application_name: str = Field(description="应用名称")
     license_path: str = Field(description="license 文件路径")
     public_key_export_path: str = Field(description="公钥文件路径")
     issued_at_cst: str = Field(description="签发时间")
     last_validation_at: str | None = Field(default=None, description="最近校验时间")
     last_validation_result: str | None = Field(default=None, description="最近校验结果")
+    last_validation_code: str | None = Field(default=None, description="最近校验稳定结果码")
+    last_validation_details: dict[str, Any] = Field(default_factory=dict, description="最近校验稳定细节")
 
 
 class LicenseIssueDetailResponse(LicenseIssueItem):
@@ -116,11 +149,19 @@ class ValidateLicenseRequest(BaseModel):
     hardware_fingerprint: str | None = Field(default=None, max_length=128, description="待校验硬件指纹")
     capability_name: str | None = Field(default=None, max_length=128, description="待校验能力")
     product_version: str | None = Field(default=None, max_length=128, description="待校验产品版本")
+    operating_system: str | None = Field(default=None, max_length=32, description="待校验操作系统")
+    operating_system_version: str | None = Field(default=None, max_length=64, description="待校验操作系统版本")
+    system_architecture: str | None = Field(default=None, max_length=64, description="待校验系统架构")
 
 
 class ValidateLicenseResponse(BaseModel):
     valid: bool = Field(description="校验结果")
     reason: str = Field(description="校验说明")
+    result: str = Field(description="稳定校验结果")
+    code: str = Field(description="稳定校验结果码")
+    stage: str = Field(description="校验阶段")
+    details: dict[str, Any] = Field(default_factory=dict, description="稳定校验细节")
+    diagnostics_version: str = Field(description="诊断契约版本")
     issue_record_id: int = Field(description="签发记录 ID")
     checked_at_cst: str = Field(description="校验时间")
 
@@ -130,12 +171,40 @@ class ExportLicenseResponse(BaseModel):
     export_format: str = Field(description="导出格式")
 
 
+class LicenseToolReleaseItem(BaseModel):
+    release_id: int = Field(description="工具发布记录 ID")
+    tool_name: str = Field(description="工具名称")
+    version: str = Field(description="工具版本")
+    status: str = Field(description="状态")
+    archive_path: str = Field(description="归档包路径")
+    manifest_path: str = Field(description="manifest 路径")
+    readme_path: str = Field(description="README 路径")
+    checksum_sha256: str = Field(description="归档包 SHA256")
+
+
+class LicenseToolReleaseListResponse(BaseModel):
+    items: list[LicenseToolReleaseItem] = Field(default_factory=list)
+
+
 class GenerateFingerprintRequest(BaseModel):
     features: dict[str, str] = Field(default_factory=dict, description="硬件特征键值对")
 
 
 class GenerateFingerprintResponse(BaseModel):
     hardware_fingerprint: str = Field(description="硬件指纹")
+
+
+class LicenseValidationContractResponse(BaseModel):
+    diagnostics_version: str = Field(description="诊断契约版本")
+    fields: dict[str, Any] = Field(default_factory=dict, description="稳定字段定义")
+    code_catalog: dict[str, Any] = Field(default_factory=dict, description="稳定结果码目录")
+
+
+class LicenseValidationVectorsResponse(BaseModel):
+    diagnostics_version: str = Field(description="诊断契约版本")
+    fingerprint_vectors: list[dict[str, Any]] = Field(default_factory=list, description="硬件指纹测试向量")
+    version_constraint_vectors: list[dict[str, Any]] = Field(default_factory=list, description="版本约束测试向量")
+    license_validation_vectors: list[dict[str, Any]] = Field(default_factory=list, description="license 校验测试向量")
 
 
 class AuditLogItem(BaseModel):

@@ -148,7 +148,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     double total_infer_time_ms = 0.0;
     double min_infer_time_ms = std::numeric_limits<double>::max();
     double max_infer_time_ms = 0.0;
+    double total_lifecycle_time_ms = 0.0;
+    double min_lifecycle_time_ms = std::numeric_limits<double>::max();
+    double max_lifecycle_time_ms = 0.0;
     bool has_latency_sample = false;
+    bool has_lifecycle_sample = false;
     std::string last_request_id;
     std::string last_error_message;
     std::string last_executed_at_utc;
@@ -157,6 +161,9 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     std::string last_warmup_at_utc;
     std::string last_health_check_at_utc;
     std::string lifecycle_error_message;
+    int fallback_count = 0;
+    std::string last_fallback_at_utc;
+    std::string last_fallback_reason;
 
     for (const auto& item : bindings) {
         const auto& binding = item.second;
@@ -164,10 +171,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
             continue;
         }
         bindings_payload.push_back(
-            {
-                {"device", binding.device},
-                {"pool_size", binding.pool_size},
-                {"total_requests", binding.total_execute_count},
+                {
+                    {"device", binding.device},
+                    {"pool_size", binding.pool_size},
+                    {"max_batch_size", binding.max_batch_size},
+                    {"total_requests", binding.total_execute_count},
                 {"successful_requests", binding.successful_execute_count},
                 {"failed_requests", binding.failed_execute_count},
                 {"avg_infer_time_ms", binding.successful_execute_count > 0
@@ -175,6 +183,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
                                           : 0.0},
                 {"min_infer_time_ms", binding.successful_execute_count > 0 ? binding.min_infer_time_ms : 0.0},
                 {"max_infer_time_ms", binding.successful_execute_count > 0 ? binding.max_infer_time_ms : 0.0},
+                {"avg_lifecycle_time_ms", binding.successful_execute_count > 0
+                                              ? binding.total_lifecycle_time_ms / static_cast<double>(binding.successful_execute_count)
+                                              : 0.0},
+                {"min_lifecycle_time_ms", binding.successful_execute_count > 0 ? binding.min_lifecycle_time_ms : 0.0},
+                {"max_lifecycle_time_ms", binding.successful_execute_count > 0 ? binding.max_lifecycle_time_ms : 0.0},
                 {"last_request_id", binding.last_request_id},
                 {"last_error_message", binding.last_error_message.empty()
                                            ? nlohmann::json(nullptr)
@@ -188,11 +201,18 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
                                            : nlohmann::json(binding.last_warmup_at_utc)},
                 {"health_check_status", binding.health_check_status},
                 {"last_health_check_at_utc", binding.last_health_check_at_utc.empty()
-                                                 ? nlohmann::json(nullptr)
-                                                 : nlohmann::json(binding.last_health_check_at_utc)},
+                                                  ? nlohmann::json(nullptr)
+                                                  : nlohmann::json(binding.last_health_check_at_utc)},
                 {"lifecycle_error_message", binding.lifecycle_error_message.empty()
-                                                ? nlohmann::json(nullptr)
-                                                : nlohmann::json(binding.lifecycle_error_message)},
+                                                 ? nlohmann::json(nullptr)
+                                                 : nlohmann::json(binding.lifecycle_error_message)},
+                {"fallback_count", binding.fallback_count},
+                {"last_fallback_at_utc", binding.last_fallback_at_utc.empty()
+                                             ? nlohmann::json(nullptr)
+                                             : nlohmann::json(binding.last_fallback_at_utc)},
+                {"last_fallback_reason", binding.last_fallback_reason.empty()
+                                              ? nlohmann::json(nullptr)
+                                              : nlohmann::json(binding.last_fallback_reason)},
                 {"plugin_info", binding.plugin_info_loaded ? SerializePluginInfo(binding.plugin_info) : nlohmann::json(nullptr)},
             });
 
@@ -200,10 +220,14 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         successful_requests += binding.successful_execute_count;
         failed_requests += binding.failed_execute_count;
         total_infer_time_ms += binding.total_infer_time_ms;
+        total_lifecycle_time_ms += binding.total_lifecycle_time_ms;
         if (binding.successful_execute_count > 0) {
             min_infer_time_ms = std::min(min_infer_time_ms, binding.min_infer_time_ms);
             max_infer_time_ms = std::max(max_infer_time_ms, binding.max_infer_time_ms);
             has_latency_sample = true;
+            min_lifecycle_time_ms = std::min(min_lifecycle_time_ms, binding.min_lifecycle_time_ms);
+            max_lifecycle_time_ms = std::max(max_lifecycle_time_ms, binding.max_lifecycle_time_ms);
+            has_lifecycle_sample = true;
         }
         if (binding.last_executed_at_utc >= last_executed_at_utc) {
             last_request_id = binding.last_request_id;
@@ -221,6 +245,11 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         if (!binding.lifecycle_error_message.empty()) {
             lifecycle_error_message = binding.lifecycle_error_message;
         }
+        fallback_count += binding.fallback_count;
+        if (binding.last_fallback_at_utc >= last_fallback_at_utc) {
+            last_fallback_at_utc = binding.last_fallback_at_utc;
+            last_fallback_reason = binding.last_fallback_reason;
+        }
     }
 
     if (bindings_payload.empty()) {
@@ -228,12 +257,16 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
     }
 
     return nlohmann::json{
+        {"max_batch_size", bindings_payload[0].value("max_batch_size", 1)},
         {"total_requests", total_requests},
         {"successful_requests", successful_requests},
         {"failed_requests", failed_requests},
         {"avg_infer_time_ms", successful_requests > 0 ? total_infer_time_ms / static_cast<double>(successful_requests) : 0.0},
         {"min_infer_time_ms", has_latency_sample ? min_infer_time_ms : 0.0},
         {"max_infer_time_ms", has_latency_sample ? max_infer_time_ms : 0.0},
+        {"avg_lifecycle_time_ms", successful_requests > 0 ? total_lifecycle_time_ms / static_cast<double>(successful_requests) : 0.0},
+        {"min_lifecycle_time_ms", has_lifecycle_sample ? min_lifecycle_time_ms : 0.0},
+        {"max_lifecycle_time_ms", has_lifecycle_sample ? max_lifecycle_time_ms : 0.0},
         {"last_request_id", last_request_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_request_id)},
         {"last_error_message", last_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_error_message)},
         {"last_executed_at_utc", last_executed_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_executed_at_utc)},
@@ -242,8 +275,92 @@ std::optional<nlohmann::json> PluginExecutor::GetCapabilityMetrics(const std::st
         {"health_check_status", health_check_status == "unknown" ? "not_supported" : health_check_status},
         {"last_health_check_at_utc", last_health_check_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_health_check_at_utc)},
         {"lifecycle_error_message", lifecycle_error_message.empty() ? nlohmann::json(nullptr) : nlohmann::json(lifecycle_error_message)},
+        {"fallback_count", fallback_count},
+        {"last_fallback_at_utc", last_fallback_at_utc.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_fallback_at_utc)},
+        {"last_fallback_reason", last_fallback_reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(last_fallback_reason)},
         {"bindings", bindings_payload},
     };
+}
+
+void PluginExecutor::RecordFallback(const std::string& capability_name, const std::string& device, const std::string& reason) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* target_binding = nullptr;
+    const auto cache_it = bindings.find(BuildCacheKey(capability_name, device));
+    if (cache_it != bindings.end()) {
+        target_binding = &cache_it->second;
+    } else {
+        for (auto& item : bindings) {
+            if (item.second.capability_name == capability_name) {
+                target_binding = &item.second;
+                break;
+            }
+        }
+    }
+    if (target_binding == nullptr) {
+        return;
+    }
+    target_binding->fallback_count += 1;
+    target_binding->last_fallback_at_utc = CurrentUtcIsoString();
+    target_binding->last_fallback_reason = reason;
+}
+
+void PluginExecutor::RecordLifecycleSample(
+    const std::string& capability_name,
+    const std::string& device,
+    double lifecycle_elapsed_ms) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* target_binding = nullptr;
+    const auto cache_it = bindings.find(BuildCacheKey(capability_name, device));
+    if (cache_it != bindings.end()) {
+        target_binding = &cache_it->second;
+    } else {
+        for (auto& item : bindings) {
+            if (item.second.capability_name == capability_name) {
+                target_binding = &item.second;
+                break;
+            }
+        }
+    }
+    if (target_binding == nullptr || lifecycle_elapsed_ms < 0.0) {
+        return;
+    }
+    target_binding->total_lifecycle_time_ms += lifecycle_elapsed_ms;
+    if (target_binding->successful_execute_count <= 1) {
+        target_binding->min_lifecycle_time_ms = lifecycle_elapsed_ms;
+        target_binding->max_lifecycle_time_ms = lifecycle_elapsed_ms;
+        return;
+    }
+    target_binding->min_lifecycle_time_ms = std::min(target_binding->min_lifecycle_time_ms, lifecycle_elapsed_ms);
+    target_binding->max_lifecycle_time_ms = std::max(target_binding->max_lifecycle_time_ms, lifecycle_elapsed_ms);
+}
+
+bool PluginExecutor::Preflight(
+    const CapabilityCatalogEntry& entry,
+    const std::string& device,
+    nlohmann::json* plugin_info,
+    std::string* error_message,
+    PluginFailureKind* failure_kind) {
+    std::lock_guard<std::mutex> guard(mutex);
+    PluginBinding* binding = nullptr;
+    if (!EnsureBindingLoaded(entry, device, &binding, error_message)) {
+        if (failure_kind != nullptr) {
+            *failure_kind = error_message != nullptr && error_message->find("缺少必要导出符号") != std::string::npos
+                                ? PluginFailureKind::kBindingLoadFailure
+                                : (error_message != nullptr &&
+                                           (error_message->find("预热失败") != std::string::npos ||
+                                            error_message->find("健康检查失败") != std::string::npos)
+                                       ? PluginFailureKind::kLifecycleFailure
+                                       : PluginFailureKind::kBindingLoadFailure);
+        }
+        return false;
+    }
+    if (plugin_info != nullptr) {
+        *plugin_info = binding->plugin_info_loaded ? SerializePluginInfo(binding->plugin_info) : nlohmann::json(nullptr);
+    }
+    if (failure_kind != nullptr) {
+        *failure_kind = PluginFailureKind::kNone;
+    }
+    return true;
 }
 
 bool PluginExecutor::Execute(
@@ -255,15 +372,29 @@ bool PluginExecutor::Execute(
     const std::string& device,
     const std::string& request_id,
     PluginExecutionResult* result,
-    std::string* error_message) {
+    std::string* error_message,
+    PluginFailureKind* failure_kind) {
+    if (failure_kind != nullptr) {
+        *failure_kind = PluginFailureKind::kNone;
+    }
     std::lock_guard<std::mutex> guard(mutex);
     PluginBinding* binding = nullptr;
     if (!EnsureBindingLoaded(entry, device, &binding, error_message)) {
+        if (failure_kind != nullptr) {
+            const std::string error = error_message != nullptr ? *error_message : std::string();
+            *failure_kind =
+                error == "能力插件预热失败。" || error == "能力插件健康检查失败。"
+                    ? PluginFailureKind::kLifecycleFailure
+                    : PluginFailureKind::kBindingLoadFailure;
+        }
         return false;
     }
     if (binding == nullptr || slot_index >= binding->plugin_handles.size()) {
         if (error_message != nullptr) {
             *error_message = "插件实例槽位不可用。";
+        }
+        if (failure_kind != nullptr) {
+            *failure_kind = PluginFailureKind::kSlotUnavailable;
         }
         return false;
     }
@@ -293,6 +424,9 @@ bool PluginExecutor::Execute(
                 : "插件推理执行失败。";
         if (error_message != nullptr) {
             *error_message = binding->last_error_message;
+        }
+        if (failure_kind != nullptr) {
+            *failure_kind = PluginFailureKind::kInferFailure;
         }
         if (binding->free_result != nullptr) {
             binding->free_result(&output);
@@ -349,6 +483,7 @@ bool PluginExecutor::EnsureBindingLoaded(
     next_binding.model_root = entry.model_root;
     next_binding.device = device;
     next_binding.pool_size = std::max(1, entry.pool_size);
+    next_binding.max_batch_size = std::max(1, entry.max_batch_size);
     next_binding.library_handle = OpenLibrary(entry.binary_path);
     if (next_binding.library_handle == nullptr) {
         if (error_message != nullptr) {
@@ -378,7 +513,7 @@ bool PluginExecutor::EnsureBindingLoaded(
         init_params.model_dir = next_binding.model_root.c_str();
         init_params.device = ToAiDeviceType(device);
         init_params.device_id = 0;
-        init_params.max_batch_size = 1;
+        init_params.max_batch_size = next_binding.max_batch_size;
         init_params.extra_config = "{}";
         init_params.log_level = 3;
         AiPluginHandle plugin_handle = nullptr;

@@ -41,7 +41,12 @@ class RegistryServiceTestCase(unittest.TestCase):
         (datasets_root / "face_detect").mkdir()
 
         with get_session_factory()() as session:
-            register_capability(session, capability_name="face_detect", display_name="Face Detect")
+            register_capability(
+                session,
+                capability_name="face_detect",
+                display_name="Face Detect",
+                task_type="detection",
+            )
             bind_dataset_to_capability(
                 session,
                 datasets_root=datasets_root,
@@ -54,6 +59,9 @@ class RegistryServiceTestCase(unittest.TestCase):
 
         self.assertEqual(len(capabilities), 1)
         self.assertEqual(capabilities[0].capability_name, "face_detect")
+        self.assertEqual(capabilities[0].task_type, "detection")
+        self.assertEqual(capabilities[0].annotation_schema["task_type"], "detection")
+        self.assertIn("training_template", capabilities[0].template_bundle)
         self.assertEqual(capabilities[0].dataset_status, "ready")
         self.assertEqual(len(datasets), 1)
         self.assertEqual(datasets[0].dataset_path, str((datasets_root / "face_detect").resolve()))
@@ -71,6 +79,7 @@ class RegistryServiceTestCase(unittest.TestCase):
         self.assertEqual([item.capability_name for item in capabilities], ["doc_audit", "ocr_review"])
         self.assertEqual([item.capability_name for item in datasets], ["doc_audit", "ocr_review"])
         self.assertTrue(all(item.source == "datasets_root" for item in datasets))
+        self.assertTrue(all(item.task_type == "classification" for item in capabilities))
 
     def test_sync_dataset_bindings_marks_missing_directory(self) -> None:
         datasets_root = get_settings().datasets_root

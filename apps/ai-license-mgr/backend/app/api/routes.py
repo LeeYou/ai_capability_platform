@@ -18,6 +18,7 @@ from app.models import (
     GenerateFingerprintRequest,
     GenerateFingerprintResponse,
     HealthResponse,
+    IsolateKeyPairRequest,
     IssueLicenseRequest,
     KeyPairItem,
     KeyPairListResponse,
@@ -26,6 +27,12 @@ from app.models import (
     LicenseIssueListResponse,
     LicensePolicyItem,
     LicensePolicyListResponse,
+    LicenseValidationContractResponse,
+    LicenseValidationVectorsResponse,
+    LicenseToolReleaseItem,
+    LicenseToolReleaseListResponse,
+    RotateKeyPairRequest,
+    RotateKeyPairResponse,
     ValidateLicenseRequest,
     ValidateLicenseResponse,
 )
@@ -35,20 +42,29 @@ from app.services.license_service import (
     KeyPairNotFoundError,
     LicenseIssueNotFoundError,
     LicensePolicyNotFoundError,
+    LicenseToolReleaseNotFoundError,
     build_hardware_fingerprint,
     create_customer,
     create_key_pair,
     create_license_policy,
     export_license_issue,
+    export_license_tool_release,
     get_customer,
+    get_license_validation_contract,
+    get_license_validation_vectors,
     get_key_pair,
     get_license_issue,
     get_license_policy,
+    get_license_tool_release,
     issue_license,
     list_customers,
     list_key_pairs,
     list_license_issues,
     list_license_policies,
+    list_license_tool_releases,
+    isolate_key_pair,
+    rotate_key_pair,
+    sync_default_license_tool_release,
     validate_license_issue,
 )
 
@@ -132,6 +148,52 @@ def create_key_pair_route(
     return KeyPairItem(**payload)
 
 
+@router.post("/key-pairs/{key_pair_id}/rotate", response_model=RotateKeyPairResponse, tags=["key"])
+def rotate_key_pair_route(
+    key_pair_id: int,
+    request: RotateKeyPairRequest,
+    session: Session = Depends(get_db_session),
+) -> RotateKeyPairResponse:
+    settings = get_settings()
+    try:
+        payload = rotate_key_pair(
+            session,
+            settings.key_pairs_root,
+            settings.audit_log_path,
+            key_pair_id=key_pair_id,
+            new_key_name=request.new_key_name,
+            reason=request.reason,
+        )
+    except (ValueError, KeyPairNotFoundError) as exc:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, KeyPairNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return RotateKeyPairResponse(
+        source_key_pair=KeyPairItem(**payload["source_key_pair"]),
+        new_key_pair=KeyPairItem(**payload["new_key_pair"]),
+        migrated_policy_ids=list(payload["migrated_policy_ids"]),
+    )
+
+
+@router.post("/key-pairs/{key_pair_id}/isolate", response_model=KeyPairItem, tags=["key"])
+def isolate_key_pair_route(
+    key_pair_id: int,
+    request: IsolateKeyPairRequest,
+    session: Session = Depends(get_db_session),
+) -> KeyPairItem:
+    settings = get_settings()
+    try:
+        payload = isolate_key_pair(
+            session,
+            settings.audit_log_path,
+            key_pair_id=key_pair_id,
+            reason=request.reason,
+        )
+    except (ValueError, KeyPairNotFoundError) as exc:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, KeyPairNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return KeyPairItem(**payload)
+
+
 @router.get("/license-policies", response_model=LicensePolicyListResponse, tags=["license"])
 def get_license_policies(session: Session = Depends(get_db_session)) -> LicensePolicyListResponse:
     return LicensePolicyListResponse(items=[LicensePolicyItem(**item) for item in list_license_policies(session)])
@@ -161,6 +223,10 @@ def create_license_policy_route(
             capability_scope=request.capability_scope,
             version_constraints=request.version_constraints,
             hardware_fingerprint=request.hardware_fingerprint,
+            operating_system=request.operating_system,
+            min_operating_system_version=request.min_operating_system_version,
+            system_architecture=request.system_architecture,
+            application_name=request.application_name,
             start_at_cst=request.start_at_cst,
             expire_at_cst=request.expire_at_cst,
             notes=request.notes,
@@ -177,6 +243,16 @@ def generate_hardware_fingerprint_route(request: GenerateFingerprintRequest) -> 
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return GenerateFingerprintResponse(hardware_fingerprint=fingerprint)
+
+
+@router.get("/license-validation/contract", response_model=LicenseValidationContractResponse, tags=["license"])
+def get_license_validation_contract_route() -> LicenseValidationContractResponse:
+    return LicenseValidationContractResponse(**get_license_validation_contract())
+
+
+@router.get("/license-validation/vectors", response_model=LicenseValidationVectorsResponse, tags=["license"])
+def get_license_validation_vectors_route() -> LicenseValidationVectorsResponse:
+    return LicenseValidationVectorsResponse(**get_license_validation_vectors())
 
 
 @router.get("/license-issues", response_model=LicenseIssueListResponse, tags=["license"])
@@ -226,6 +302,9 @@ def validate_license_route(
             hardware_fingerprint=request.hardware_fingerprint,
             capability_name=request.capability_name,
             product_version=request.product_version,
+            operating_system=request.operating_system,
+            operating_system_version=request.operating_system_version,
+            system_architecture=request.system_architecture,
         )
     except LicenseIssueNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -251,6 +330,53 @@ def export_license_route(
         status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, LicenseIssueNotFoundError) else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     media_type = "application/octet-stream" if export_format == "bin" else "application/x-pem-file"
+    return FileResponse(path=exported_path, filename=exported_path.name, media_type=media_type)
+
+
+@router.get("/tool-releases", response_model=LicenseToolReleaseListResponse, tags=["tools"])
+def get_license_tool_releases(session: Session = Depends(get_db_session)) -> LicenseToolReleaseListResponse:
+    return LicenseToolReleaseListResponse(items=[LicenseToolReleaseItem(**item) for item in list_license_tool_releases(session)])
+
+
+@router.get("/tool-releases/{release_id}", response_model=LicenseToolReleaseItem, tags=["tools"])
+def get_license_tool_release_detail(release_id: int, session: Session = Depends(get_db_session)) -> LicenseToolReleaseItem:
+    try:
+        return LicenseToolReleaseItem(**get_license_tool_release(session, release_id))
+    except LicenseToolReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/tool-releases/sync-default", response_model=LicenseToolReleaseItem, tags=["tools"])
+def sync_default_license_tool_release_route(
+    session: Session = Depends(get_db_session),
+) -> LicenseToolReleaseItem:
+    settings = get_settings()
+    try:
+        payload = sync_default_license_tool_release(session, settings.license_tools_root, settings.audit_log_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return LicenseToolReleaseItem(**payload)
+
+
+@router.get("/tool-releases/{release_id}/export", tags=["tools"])
+def export_license_tool_release_route(
+    release_id: int,
+    export_format: str = Query(default="archive", pattern="^(archive|manifest|readme|diagnostics|vectors)$"),
+    session: Session = Depends(get_db_session),
+) -> FileResponse:
+    settings = get_settings()
+    try:
+        exported_path = export_license_tool_release(
+            session,
+            settings.exports_root,
+            settings.audit_log_path,
+            release_id=release_id,
+            export_format=export_format,
+        )
+    except (LicenseToolReleaseNotFoundError, ValueError) as exc:
+        status_code = status.HTTP_404_NOT_FOUND if isinstance(exc, LicenseToolReleaseNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    media_type = "application/gzip" if export_format == "archive" else "text/markdown" if export_format == "readme" else "application/json"
     return FileResponse(path=exported_path, filename=exported_path.name, media_type=media_type)
 
 

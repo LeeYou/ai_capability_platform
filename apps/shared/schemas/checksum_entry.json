@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "交付文件 checksum 条目",
+  "type": "object",
+  "required": [
+    "path",
+    "checksum",
+    "size_bytes"
+  ],
+  "properties": {
+    "path": {
+      "type": "string"
+    },
+    "checksum": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "type": "integer"
+    }
+  }
+}

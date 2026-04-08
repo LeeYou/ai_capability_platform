@@ -78,3 +78,23 @@ delivery_package/
 3. 一能力一插件，公共 runtime 作为共享层。
 4. 统一标准 C ABI 与头文件模板。
 5. ai-builder 既负责构建插件，也负责输出客户最终可交付包。
+
+## 10. 整改设计与跟踪
+
+### 10.1 当前整改重点
+
+1. 将构建主链路从模板化 / 占位产物切换为真实插件源码、真实模型包、真实授权记录驱动。
+2. 建立模型包、插件、授权、delivery_package 之间的来源追溯关系与校验链路。
+3. 在交付前增加可装载性校验，确保输出产物可被 ai-prod 真正装载执行。
+
+### 10.2 与其他模块的关键契约
+
+1. 从 ai-train 获取真实模型包、manifest、labels、preprocess、validation 产物。
+2. 从 ai-license-mgr 获取真实授权记录、稳定校验工具与诊断语义。
+3. 输出给 ai-prod / ai-sdk 的动态库、manifest、license、docs 必须来自同一真实交付链。
+
+### 10.3 对应整改编号
+
+1. RB-01
+2. RB-02
+3. RB-03

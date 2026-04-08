@@ -12,6 +12,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from app.services.audit_service import now_cst_iso
+from app.services.validation_contracts import (
+    DIAGNOSTICS_VERSION,
+    canonical_json_bytes,
+    evaluate_license_payload,
+    parse_cst_datetime,
+)
 
 
 CST = timezone(timedelta(hours=8))
@@ -21,28 +27,35 @@ class LicenseValidationError(ValueError):
     """license 校验失败。"""
 
 
-def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
-def _parse_cst_datetime(raw_value: str) -> datetime:
-    parsed = datetime.fromisoformat(raw_value)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=CST)
-    return parsed.astimezone(CST)
+def _version_tuple(raw_value: str) -> tuple[int, ...]:
+    normalized = raw_value.strip()
+    if not normalized:
+        return tuple()
+    parts: list[int] = []
+    for segment in normalized.split("."):
+        digits = "".join(ch for ch in segment if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
 
 
 def _is_version_allowed(product_version: str | None, version_constraints: dict[str, Any]) -> bool:
-    if product_version is None:
+    if not version_constraints:
         return True
-    allowed_versions = version_constraints.get("allowed_versions")
-    if isinstance(allowed_versions, list) and allowed_versions:
-        return product_version in {str(item) for item in allowed_versions}
-    min_version = version_constraints.get("min_version")
-    max_version = version_constraints.get("max_version")
-    if min_version is not None and product_version < str(min_version):
+    if not product_version:
         return False
-    if max_version is not None and product_version > str(max_version):
+    normalized_version = product_version.strip()
+    allowed_versions = version_constraints.get("allowed_versions")
+    if isinstance(allowed_versions, list) and allowed_versions and normalized_version not in {str(item) for item in allowed_versions}:
+        return False
+    prefix = version_constraints.get("prefix")
+    if isinstance(prefix, str) and prefix.strip() and not normalized_version.startswith(prefix.strip()):
+        return False
+    current = _version_tuple(normalized_version)
+    min_version = version_constraints.get("min_version")
+    if isinstance(min_version, str) and min_version.strip() and current < _version_tuple(min_version):
+        return False
+    max_version = version_constraints.get("max_version")
+    if isinstance(max_version, str) and max_version.strip() and current > _version_tuple(max_version):
         return False
     return True
 
@@ -52,7 +65,7 @@ def verify_signature(public_key_path: Path, payload: dict[str, object], signatur
     if not isinstance(public_key, ed25519.Ed25519PublicKey):
         raise ValueError("仅支持 ed25519 公钥。")
     try:
-        public_key.verify(b64decode(signature_base64), _canonical_json_bytes(payload))
+        public_key.verify(b64decode(signature_base64), canonical_json_bytes(payload))
         return True
     except InvalidSignature:
         return False
@@ -88,6 +101,9 @@ def validate_license_bundle(
     hardware_features: dict[str, str],
     capability_name: str | None = None,
     product_version: str | None = None,
+    operating_system: str | None = None,
+    operating_system_version: str | None = None,
+    system_architecture: str | None = None,
 ) -> dict[str, Any]:
     bundle = read_license_bundle(license_root)
     payload = bundle["payload"]
@@ -96,42 +112,34 @@ def validate_license_bundle(
         raise LicenseValidationError("license 文件内容非法。")
 
     checked_at_cst = now_cst_iso()
-    if not verify_signature(bundle["pubkey_path"], payload, signature):
-        valid = False
-        reason = "签名校验失败。"
-    else:
-        now_cst = _parse_cst_datetime(checked_at_cst)
-        start_at = _parse_cst_datetime(str(payload["start_at_cst"]))
-        expire_at = _parse_cst_datetime(str(payload["expire_at_cst"]))
-        capability_scope = payload.get("capability_scope", [])
-        version_constraints = payload.get("version_constraints", {})
-        expected_fingerprint = payload.get("hardware_fingerprint")
-        hardware_fingerprint = generate_hardware_fingerprint(hardware_features) if hardware_features else None
-
-        if now_cst < start_at:
-            valid = False
-            reason = "license 尚未生效。"
-        elif now_cst > expire_at:
-            valid = False
-            reason = "license 已过期。"
-        elif expected_fingerprint and hardware_fingerprint != expected_fingerprint:
-            valid = False
-            reason = "硬件指纹不匹配。"
-        elif capability_name and capability_scope and capability_name not in capability_scope:
-            valid = False
-            reason = "能力范围不匹配。"
-        elif not _is_version_allowed(product_version, version_constraints):
-            valid = False
-            reason = "版本约束不匹配。"
-        else:
-            valid = True
-            reason = "license 校验通过。"
+    hardware_fingerprint = generate_hardware_fingerprint(hardware_features) if hardware_features else None
+    evaluation = evaluate_license_payload(
+        payload=payload,
+        signature_valid=verify_signature(bundle["pubkey_path"], payload, signature),
+        checked_at_cst=checked_at_cst,
+        hardware_fingerprint=hardware_fingerprint,
+        capability_name=capability_name,
+        product_version=product_version,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
+        version_checker=_is_version_allowed,
+    )
     return {
-        "valid": valid,
-        "reason": reason,
+        "valid": evaluation.valid,
+        "reason": evaluation.reason,
+        "result": evaluation.result,
+        "code": evaluation.code,
+        "stage": evaluation.stage,
+        "details": evaluation.details,
+        "diagnostics_version": DIAGNOSTICS_VERSION,
         "checked_at_cst": checked_at_cst,
         "customer_code": payload.get("customer_code"),
         "capability_scope": payload.get("capability_scope", []),
         "version_constraints": payload.get("version_constraints", {}),
         "hardware_fingerprint": payload.get("hardware_fingerprint"),
+        "operating_system": payload.get("operating_system"),
+        "min_operating_system_version": payload.get("min_operating_system_version"),
+        "system_architecture": payload.get("system_architecture"),
+        "application_name": payload.get("application_name"),
     }

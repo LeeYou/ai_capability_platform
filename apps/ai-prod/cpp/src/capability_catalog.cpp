@@ -105,8 +105,37 @@ bool CapabilityCatalog::ParseSnapshotUnlocked(const nlohmann::json& snapshot_jso
                 item.value("device_mode", "cpu"),
                 item.value("model_root", ""),
                 item.value("binary_path", ""),
+                item.value("capability_priority", 100),
                 item.value("pool_size", 0),
+                item.value("max_batch_size", 1),
+                item.value("min_batch_size", 1),
+                item.contains("batch_wait_timeout_ms") && item["batch_wait_timeout_ms"].is_number_integer()
+                    ? std::max(0, item["batch_wait_timeout_ms"].get<int>())
+                    : -1,
+                item.contains("queue_wait_timeout_ms") && item["queue_wait_timeout_ms"].is_number_integer()
+                    ? std::max(0, item["queue_wait_timeout_ms"].get<int>())
+                    : -1,
+                item.contains("max_pending_request_count") && item["max_pending_request_count"].is_number_integer()
+                    ? std::max(0, item["max_pending_request_count"].get<int>())
+                    : -1,
+                item.contains("infer_timeout_ms") && item["infer_timeout_ms"].is_number_integer()
+                    ? std::max(0, item["infer_timeout_ms"].get<int>())
+                    : -1,
+                item.contains("estimated_avg_infer_time_ms") && item["estimated_avg_infer_time_ms"].is_number_integer()
+                    ? std::max(0, item["estimated_avg_infer_time_ms"].get<int>())
+                    : -1,
+                item.contains("p95_infer_time_ms") && item["p95_infer_time_ms"].is_number_integer()
+                    ? std::max(0, item["p95_infer_time_ms"].get<int>())
+                    : -1,
+                item.contains("max_concurrent_requests") && item["max_concurrent_requests"].is_number_integer()
+                    ? std::max(0, item["max_concurrent_requests"].get<int>())
+                    : -1,
+                item.value("supports_concurrent_infer", true),
+                item.value("allow_resource_sharing", false),
                 item.value("revision_id", snapshot_json.value("revision_id", 0)),
+                item.contains("admission_checklist") && item["admission_checklist"].is_object()
+                    ? item["admission_checklist"]
+                    : nlohmann::json::object(),
             });
     }
 

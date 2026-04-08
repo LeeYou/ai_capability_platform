@@ -222,6 +222,14 @@ bool parse_payload(const std::string& payload, LicenseFileData* out_data) {
             parse_int(value, &data.grace_period_hours);
         } else if (key == "machine_fingerprint") {
             data.machine_fingerprint = value;
+        } else if (key == "operating_system") {
+            data.operating_system = value;
+        } else if (key == "min_operating_system_version") {
+            data.min_operating_system_version = value;
+        } else if (key == "system_architecture") {
+            data.system_architecture = value;
+        } else if (key == "application_name") {
+            data.application_name = value;
         } else if (key == "licensed_capabilities") {
             data.licensed_capabilities = split(value, ',');
         } else if (key == "denied_capabilities") {
@@ -266,6 +274,10 @@ std::string build_license_payload(const LicenseFileData& data) {
     output << "expires_at=" << data.expires_at << '\n';
     output << "grace_period_hours=" << data.grace_period_hours << '\n';
     output << "machine_fingerprint=" << data.machine_fingerprint << '\n';
+    output << "operating_system=" << data.operating_system << '\n';
+    output << "min_operating_system_version=" << data.min_operating_system_version << '\n';
+    output << "system_architecture=" << data.system_architecture << '\n';
+    output << "application_name=" << data.application_name << '\n';
     output << "licensed_capabilities=" << join(data.licensed_capabilities, ',') << '\n';
     output << "denied_capabilities=" << join(data.denied_capabilities, ',') << '\n';
     output << "allow_reload=" << (data.allow_reload ? "true" : "false") << '\n';

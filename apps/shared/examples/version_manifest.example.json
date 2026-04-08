@@ -1,0 +1,48 @@
+{
+  "package_id": 301,
+  "package_name": "face_detect_sdk_release",
+  "capability_name": "face_detect",
+  "model_version": "v1_0_0",
+  "requested_targets": [
+    "linux_x86_64",
+    "windows_x86_64"
+  ],
+  "delivery_targets": [
+    "linux_x86_64",
+    "windows_x86_64"
+  ],
+  "jni_enabled": true,
+  "sdk_items": [
+    {
+      "target_name": "linux_x86_64",
+      "sdk_dir_name": "sdk_linux_x86_64",
+      "binary_path": "/exports/ai-sdk/package_301_linux_x86_64.zip",
+      "manifest_path": "/packages/package_301/sdk_linux_x86_64/manifest/manifest.json",
+      "download_archive_path": "/exports/ai-sdk/package_301_linux_x86_64.zip",
+      "checksum": "checksum-linux"
+    }
+  ],
+  "delivery_checksums": [
+    {
+      "path": "sdk_linux_x86_64/docs/README_集成说明.md",
+      "checksum": "checksum-doc",
+      "size_bytes": 2048
+    }
+  ],
+  "docs_bundle": {
+    "documents": [
+      "sdk_linux_x86_64/docs/README_集成说明.md",
+      "sdk_windows_x86_64/docs/README_集成说明.md"
+    ]
+  },
+  "tools_bundle": {
+    "validation_scripts": [
+      "sdk_linux_x86_64/validation/verify_sdk_package.py",
+      "sdk_windows_x86_64/validation/verify_sdk_package.py"
+    ],
+    "license_tool_manifests": [
+      "sdk_linux_x86_64/tools/license_tool/manifest.json",
+      "sdk_windows_x86_64/tools/license_tool/manifest.json"
+    ]
+  }
+}

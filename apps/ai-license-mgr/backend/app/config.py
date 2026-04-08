@@ -36,6 +36,7 @@ class Settings:
     database_path: Path
     key_pairs_root: Path
     issue_records_root: Path
+    license_tools_root: Path
     audit_log_path: Path
     company_name: str
     company_domain: str
@@ -73,6 +74,7 @@ def get_settings() -> Settings:
         database_path=database_path,
         key_pairs_root=_resolve_child_path(license_root, "keys"),
         issue_records_root=_resolve_child_path(license_root, "issues"),
+        license_tools_root=_resolve_child_path(license_root, "tools"),
         audit_log_path=_resolve_child_path(logs_root, "ai_license_mgr_audit.log"),
         company_name="北京爱知之星科技股份有限公司（Agile Star）",
         company_domain="agilestar.cn",

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import '../../../frontend-common/src/r7Workspace.css'
+import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
 
 type RemoteModelItem = {
   capability_name: string
@@ -28,6 +30,26 @@ type TestReportItem = {
   status: string
   passed_cases: number
   failed_cases: number
+  available_template_types: string[]
+}
+
+type AcceptanceTaskItem = {
+  acceptance_task_id: number
+  task_id: number
+  image_uri: string
+  target_base_url: string
+  capability_name: string | null
+  status: string
+  passed_cases: number
+  failed_cases: number
+}
+
+type PerformanceBaselineItem = {
+  baseline_id: number
+  capability_name: string
+  scenario_name: string
+  p95_max_ms: number | null
+  success_rate_min: number
 }
 
 type ApiListResponse<T> = {
@@ -38,6 +60,8 @@ type ApiListResponse<T> = {
 type DashboardState = {
   models: RemoteModelItem[]
   tasks: TestTaskItem[]
+  acceptanceTasks: AcceptanceTaskItem[]
+  baselines: PerformanceBaselineItem[]
   reports: TestReportItem[]
   syncedAt: string | null
 }
@@ -45,6 +69,8 @@ type DashboardState = {
 const initialState: DashboardState = {
   models: [],
   tasks: [],
+  acceptanceTasks: [],
+  baselines: [],
   reports: [],
   syncedAt: null,
 }
@@ -52,9 +78,13 @@ const initialState: DashboardState = {
 const roadmapItems = [
   '单接口测试表单与测试样本上传能力',
   '批量测试编排、超时反馈与任务重试入口',
+  '生产镜像验收任务与回归脚本编排',
+  'C++ HTTP 主服务性能/稳定性验收阈值模板',
   '报告导出中心与交付验收视图',
   '与 ai-train、ai-prod 的跨模块联调验证',
 ]
+
+const workspace = buildR7Workspace(import.meta.env, 'ai-test')
 
 async function fetchList<T>(path: string): Promise<ApiListResponse<T>> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -77,15 +107,19 @@ function App() {
       try {
         setLoading(true)
         setError(null)
-        const [models, tasks, reports] = await Promise.all([
+        const [models, tasks, acceptanceTasks, baselines, reports] = await Promise.all([
           fetchList<RemoteModelItem>('/api/v1/remote-models'),
           fetchList<TestTaskItem>('/api/v1/test-tasks'),
+          fetchList<AcceptanceTaskItem>('/api/v1/acceptance-tasks'),
+          fetchList<PerformanceBaselineItem>('/api/v1/performance-baselines'),
           fetchList<TestReportItem>('/api/v1/test-reports'),
         ])
         if (!cancelled) {
           setDashboard({
             models: models.items,
             tasks: tasks.items,
+            acceptanceTasks: acceptanceTasks.items,
+            baselines: baselines.items,
             reports: reports.items,
             syncedAt: models.synced_at ?? null,
           })
@@ -123,7 +157,17 @@ function App() {
       {
         title: '测试报告',
         count: dashboard.reports.length,
-        description: '支持 HTML / JSON / PDF 报告生成与导出。',
+        description: '支持研发验收 / 交付验收双视角的 HTML / JSON / PDF 报告生成与导出。',
+      },
+      {
+        title: '验收任务',
+        count: dashboard.acceptanceTasks.length,
+        description: '面向 ai-prod 生产镜像的验收脚本编排与结果留痕。',
+      },
+      {
+        title: '性能基线',
+        count: dashboard.baselines.length,
+        description: '面向 C++ HTTP 主服务的性能/稳定性验收阈值模板。',
       },
     ],
     [dashboard],
@@ -137,7 +181,7 @@ function App() {
           <h1>ai-test 管理台</h1>
           <p>
             面向模型验收与批量测试场景的统一测试子系统，当前已具备模型目录同步、测试执行、
-            结果持久化与测试报告导出基础能力。
+            生产镜像验收、性能基线比对与测试报告导出基础能力。
           </p>
         </div>
         <div className="hero-panel">
@@ -157,6 +201,52 @@ function App() {
       </header>
 
       <main className="content">
+        <section className="panel">
+          <div className="section-header">
+            <h2>跨模块联调导航</h2>
+            <span className="badge badge-muted">R7 第二轮</span>
+          </div>
+          <div className="module-grid">
+            {workspace.moduleLinks.map((item) => (
+              <a
+                key={item.id}
+                className={`module-link-card${item.isCurrent ? ' active' : ''}`}
+                href={item.url}
+              >
+                <div className="module-link-header">
+                  <strong>{item.title}</strong>
+                  <span className="module-tag">{item.isCurrent ? '当前模块' : '联调入口'}</span>
+                </div>
+                <p>{item.summary}</p>
+              </a>
+            ))}
+          </div>
+          <ul className="module-checklist">
+            {workspace.reviewItems.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </section>
+        <section className="panel">
+          <div className="section-header">
+            <h2>总体联调复审</h2>
+            <span className="badge">R7 已完成</span>
+          </div>
+          <div className="review-grid">
+            {workspace.reviewSummary.map((item) => (
+              <article key={item.title} className="review-card">
+                <div className="module-link-header">
+                  <h3>{item.title}</h3>
+                  <span className="review-status">{item.status}</span>
+                </div>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+          <p className="module-note">
+            当前模块定位：{workspace.currentModule.title} / {workspace.currentModule.summary}
+          </p>
+        </section>
         <section className="panel">
           <div className="section-header">
             <h2>当前概览</h2>
@@ -238,12 +328,69 @@ function App() {
             </article>
 
             <article className="sub-panel">
+              <h3>验收任务</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>镜像</th>
+                    <th>状态</th>
+                    <th>通过/失败</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard.acceptanceTasks.map((item) => (
+                    <tr key={item.acceptance_task_id}>
+                      <td>{item.image_uri}</td>
+                      <td>{item.status}</td>
+                      <td>
+                        {item.passed_cases}/{item.failed_cases}
+                      </td>
+                    </tr>
+                  ))}
+                  {dashboard.acceptanceTasks.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>暂无验收任务</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </article>
+
+            <article className="sub-panel">
+              <h3>性能基线</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>能力</th>
+                    <th>场景</th>
+                    <th>P95 阈值</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard.baselines.map((item) => (
+                    <tr key={item.baseline_id}>
+                      <td>{item.capability_name}</td>
+                      <td>{item.scenario_name}</td>
+                      <td>{item.p95_max_ms ?? '-'}</td>
+                    </tr>
+                  ))}
+                  {dashboard.baselines.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>暂无性能基线</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </article>
+
+            <article className="sub-panel">
               <h3>测试报告</h3>
               <table>
                 <thead>
                   <tr>
                     <th>报告</th>
                     <th>能力</th>
+                    <th>模板</th>
                     <th>通过/失败</th>
                   </tr>
                 </thead>
@@ -252,6 +399,7 @@ function App() {
                     <tr key={item.report_id}>
                       <td>#{item.report_id}</td>
                       <td>{item.capability_name}</td>
+                      <td>{item.available_template_types.join(' / ')}</td>
                       <td>
                         {item.passed_cases}/{item.failed_cases}
                       </td>
@@ -259,7 +407,7 @@ function App() {
                   ))}
                   {dashboard.reports.length === 0 && (
                     <tr>
-                      <td colSpan={3}>暂无测试报告</td>
+                      <td colSpan={4}>暂无测试报告</td>
                     </tr>
                   )}
                 </tbody>
@@ -275,6 +423,8 @@ function App() {
               <li>ai-train 模型目录同步与本地快照回退</li>
               <li>单接口测试与批量测试</li>
               <li>GPU 优先 / CPU 回退执行策略</li>
+              <li>C++ HTTP 主服务性能/稳定性验收基线</li>
+              <li>研发验收 / 交付验收双视角报告模板</li>
               <li>HTML / JSON / PDF 报告生成与导出</li>
             </ul>
           </article>

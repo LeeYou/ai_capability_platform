@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 import json
 import os
+import platform
 
 
 DEFAULT_HOST_ROOT = Path("/data/ai_capability_platform")
@@ -64,6 +65,10 @@ class Settings:
     pool_size: int
     gpu_available: bool
     hardware_features: dict[str, str]
+    operating_system: str
+    operating_system_version: str
+    system_architecture: str
+    application_name: str
 
 
 def reset_settings_cache() -> None:
@@ -87,6 +92,12 @@ def get_settings() -> Settings:
 
     logs_root = _resolve_child_path(host_root, "logs")
     image_resource_root = (Path(__file__).resolve().parent / "resources").resolve()
+    detected_operating_system = platform.system().strip().lower()
+    if detected_operating_system == "darwin":
+        detected_operating_system = "ios"
+    detected_operating_system = os.getenv("AI_CAP_OPERATING_SYSTEM", detected_operating_system or "linux").strip().lower()
+    detected_operating_system_version = os.getenv("AI_CAP_OPERATING_SYSTEM_VERSION", platform.release().strip()).strip()
+    detected_system_architecture = os.getenv("AI_CAP_SYSTEM_ARCHITECTURE", platform.machine().strip()).strip().lower()
     return Settings(
         host_root=host_root,
         data_root=data_root,
@@ -108,4 +119,8 @@ def get_settings() -> Settings:
         pool_size=max(1, int(os.getenv("AI_PROD_POOL_SIZE", "2"))),
         gpu_available=os.getenv("AI_CAP_GPU_AVAILABLE", "1") != "0",
         hardware_features=_resolve_json_map(os.getenv("AI_CAP_HARDWARE_FEATURES")),
+        operating_system=detected_operating_system or "linux",
+        operating_system_version=detected_operating_system_version,
+        system_architecture=detected_system_architecture,
+        application_name=os.getenv("AI_CAP_APPLICATION_NAME", "ai-prod").strip() or "ai-prod",
     )

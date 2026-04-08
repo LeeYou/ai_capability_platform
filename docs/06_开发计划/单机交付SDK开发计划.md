@@ -14,13 +14,16 @@
 | S4 | 生成 JNI 交付包 | 已完成 |
 | S5 | 编写接入文档与验收说明 | 已完成 |
 | S6 | 首期联调与验收 | 已完成 |
-| S7 | 收敛 Linux/JNI/Windows SDK 标准目录 | 未开始 |
-| S8 | 收敛 `license_tool`、示例工程与错误码文档 | 未开始 |
-| S9 | 纳入统一 `delivery_package/` 与验收体系 | 未开始 |
+| S7 | 收敛 Linux/JNI/Windows SDK 标准目录 | 已完成 |
+| S8 | 收敛 `license_tool`、示例工程与错误码文档 | 已完成 |
+| S9 | 纳入统一 `delivery_package/` 与验收体系 | 已完成 |
+| S10 | 与 ai-prod runtime / license / 诊断语义收敛 | 已完成 |
+| S11 | 与 ai-builder / ai-prod 真实交付链产物一致性收敛 | 未开始 |
+| S12 | SDK 装载校验、示例工程与验收回归增强 | 未开始 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RS-01 ~ RS-02。
 
 ## 4. 当前进度更新
 
@@ -31,14 +34,18 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已明确单机交付 SDK 后续重点是标准化交付目录、工具、文档与验收一致性。
+1. 当前阶段已完成单机交付 SDK 标准化交付目录、工具、文档与验收一致性收口。
+2. 当前已完成与 ai-builder `delivery_package/` 的目录命名与验收物料对齐：SDK 包已按 `sdk_*` 标准目录输出，并附带 `tools/license_tool`、验收清单、部署说明与快速校验脚本。
+3. 当前已继续补齐 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，进一步对齐 ai-builder 摘要 schema 与交付复审入口。
+4. 当前已完成 package 级 `acceptance_checklist.json`、`version_manifest.json`、`delivery_summary.json` 与 shared schema 对齐，checksum 字段命名已与 ai-builder 收敛。
+5. 当前已完成 S10：SDK 内 `tools/license_tool` 已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json`，manifest/README/验收清单/校验脚本已同步对齐 ai-prod / ai-license-mgr 的稳定授权诊断语义。
+6. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 S10-S12 作为下一轮模块整改工作项。
 
 ### 4.3 未完成
 
-1. Linux、JNI、Windows SDK 目录规则仍需进一步统一。
-2. `license_tool`、错误码文档、示例工程与验收说明仍需一体化输出。
-3. SDK 交付尚未完全纳入最终 `delivery_package/` 规范。
+1. S11：与 ai-builder / ai-prod 真实交付链产物一致性收敛。
+2. S12：SDK 装载校验、示例工程与验收回归增强。
 
 ### 4.4 阶段小结
 
-单机交付 SDK 已具备基础打包能力，下一阶段要把它从“能打包”提升为“可直接商业交付、可标准验收、可稳定集成”。
+单机交付 SDK 当前已完成 S10：`tools/license_tool` source bundle 已补齐稳定诊断契约、金标准测试向量、manifest 版本标识与验收脚本校验入口，确保 SDK 交付物与 ai-prod / ai-license-mgr 在授权诊断语义上保持一致。后续仍需继续完成与 ai-builder / ai-prod 真实交付链产物一致性收敛，以及 SDK 装载校验和示例回归增强。

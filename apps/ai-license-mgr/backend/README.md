@@ -1,6 +1,6 @@
 # ai-license-mgr backend
 
-ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、license 签发、校验、导出与审计日志能力。
+ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、license 签发、校验、导出、`license_tool` 发布归档、私钥轮转/隔离与审计日志能力，并与 ai-prod 运行态保持一致的版本约束判定语义。
 
 ## 当前能力
 
@@ -10,6 +10,12 @@ ai-license-mgr 后端首期工程，提供客户、密钥对、授权策略、li
 4. license 签发、查询、校验接口
 5. `license.bin` / `pubkey.pem` 导出接口
 6. 审计日志查询接口
+7. 与 ai-prod 对齐的 `allowed_versions` / `prefix` / `min_version` / `max_version` 版本约束语义
+8. `license_tool` 默认发布归档、清单查询与导出接口
+9. 密钥轮转、隔离、策略迁移与非激活密钥阻断
+10. 稳定授权诊断字段：`result` / `code` / `stage` / `details`
+11. 授权金标准测试向量与诊断契约查询接口
+12. 与 ai-prod Python 校验语义的跨模块回归测试基线
 
 ## 本地运行
 
@@ -28,3 +34,16 @@ SQLite 数据库默认位于 `${AI_CAP_HOST_ROOT}/data/ai_license_mgr.db`。
 cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-license-mgr/backend
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
+
+## 诊断与测试向量接口
+
+1. `GET /api/v1/license-validation/contract`
+2. `GET /api/v1/license-validation/vectors`
+
+`POST /api/v1/license-issues/{issue_record_id}/validate` 现已返回稳定字段：
+
+- `result`
+- `code`
+- `stage`
+- `details`
+- `diagnostics_version`

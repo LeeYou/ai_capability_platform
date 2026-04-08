@@ -5,18 +5,21 @@ RequestLease::RequestLease(
     InstancePoolItem item_value,
     std::shared_ptr<InFlightRequestTracker> request_tracker,
     const std::string& capability_name,
-    const std::string& request_id)
+    const std::string& request_id,
+    int requested_deadline_ms,
+    bool release_pool_slot)
     : pool(std::move(pool_value)),
       item(std::move(item_value)),
       requestTracker(std::move(request_tracker)),
-      requestId(request_id) {
+      requestId(request_id),
+      releasePoolSlot(release_pool_slot) {
     if (requestTracker) {
-        requestTracker->Register(requestId, capability_name, item.instance_id, item.slot_index);
+        requestTracker->Register(requestId, capability_name, item.instance_id, item.slot_index, requested_deadline_ms);
     }
 }
 
 RequestLease::~RequestLease() {
-    if (pool) {
+    if (pool && releasePoolSlot) {
         pool->Release(item.slot_index);
     }
     if (!requestTracker || requestId.empty()) {
@@ -40,6 +43,12 @@ const std::string& RequestLease::RequestId() const {
 void RequestLease::MarkExecuting(const std::string& device) {
     if (requestTracker) {
         requestTracker->MarkExecuting(requestId, device);
+    }
+}
+
+void RequestLease::MarkSlaStatus(const std::string& sla_status) {
+    if (requestTracker) {
+        requestTracker->MarkSlaStatus(requestId, sla_status);
     }
 }
 

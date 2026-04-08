@@ -34,11 +34,20 @@ def _validate_runtime_capabilities_license(
     capabilities: dict[str, dict[str, Any]],
     license_root: Path,
     hardware_features: dict[str, str],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
     audit_log_path: Path,
     action: str,
     entity_id: str,
 ) -> dict[str, Any]:
-    license_status = validate_license_bundle(license_root, hardware_features=hardware_features)
+    license_status = validate_license_bundle(
+        license_root,
+        hardware_features=hardware_features,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
+    )
     capability_statuses: dict[str, dict[str, Any]] = {}
     for capability_name, capability in sorted(capabilities.items()):
         capability_license_status = validate_license_bundle(
@@ -46,6 +55,9 @@ def _validate_runtime_capabilities_license(
             hardware_features=hardware_features,
             capability_name=capability_name,
             product_version=str(capability["model_version"]),
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
         )
         capability_statuses[capability_name] = capability_license_status
         if not capability_license_status["valid"]:
@@ -56,6 +68,9 @@ def _validate_runtime_capabilities_license(
                 entity_id=capability_name,
                 detail={
                     "reason": capability_license_status["reason"],
+                    "code": capability_license_status["code"],
+                    "stage": capability_license_status["stage"],
+                    "details": capability_license_status["details"],
                     "model_version": capability["model_version"],
                 },
             )
@@ -110,68 +125,195 @@ def _sorted_dirs(path: Path) -> list[Path]:
     return sorted([item for item in path.iterdir() if item.is_dir()], key=lambda item: item.name)
 
 
-def _scan_models(root: Path) -> dict[str, dict[str, Any]]:
+def _failure_item(capability_name: str, manifest_type: str, manifest_path: Path, reason: str) -> dict[str, str]:
+    return {
+        "capability_name": capability_name,
+        "manifest_type": manifest_type,
+        "manifest_path": str(manifest_path.resolve()),
+        "reason": reason,
+    }
+
+
+def _resolve_manifest_path(base_path: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path)
+    resolved = candidate if candidate.is_absolute() else (base_path / candidate)
+    resolved = resolved.resolve()
+    if not resolved.exists():
+        raise ValueError(f"manifest 依赖文件不存在：{resolved}")
+    if resolved != base_path.resolve() and base_path.resolve() not in resolved.parents:
+        raise ValueError("manifest 依赖文件必须位于模型目录内。")
+    return resolved
+
+
+def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, manifest: Any) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest 顶层必须是对象。")
+    required_keys = (
+        "capability_name",
+        "task_type",
+        "model_version",
+        "source_train_task_id",
+        "task_name",
+        "backend_type",
+        "artifact_path",
+        "status",
+        "checksum",
+        "preprocessing",
+        "thresholds",
+        "labels",
+        "validation",
+        "runtime_contract",
+        "delivery_metadata",
+    )
+    for key in required_keys:
+        if key not in manifest:
+            raise ValueError(f"模型包 manifest 缺失字段：{key}")
+    if manifest["capability_name"] != capability_dir.name:
+        raise ValueError("模型包 manifest capability_name 与目录名不一致。")
+    if manifest["model_version"] != selected_version_dir.name:
+        raise ValueError("模型包 manifest model_version 与目录版本不一致。")
+    if manifest["status"] != "ready":
+        raise ValueError("模型包 manifest status 必须为 ready。")
+    if not isinstance(manifest["labels"], list) or not manifest["labels"] or any(not isinstance(item, str) or not item.strip() for item in manifest["labels"]):
+        raise ValueError("模型包 manifest labels 必须为非空字符串数组。")
+    preprocessing = manifest["preprocessing"]
+    thresholds = manifest["thresholds"]
+    validation = manifest["validation"]
+    runtime_contract = manifest["runtime_contract"]
+    if not isinstance(preprocessing, dict) or not isinstance(thresholds, dict) or not isinstance(validation, dict) or not isinstance(runtime_contract, dict):
+        raise ValueError("模型包 manifest 复合字段类型非法。")
+    if "input_type" not in preprocessing or "resize" not in preprocessing or "normalize" not in preprocessing:
+        raise ValueError("模型包 manifest preprocessing 缺失必需字段。")
+    if "score_threshold" not in thresholds or "nms_threshold" not in thresholds:
+        raise ValueError("模型包 manifest thresholds 缺失必需字段。")
+    if runtime_contract.get("task_type") != manifest["task_type"]:
+        raise ValueError("模型包 manifest runtime_contract.task_type 与 task_type 不一致。")
+    runtime_inputs = runtime_contract.get("runtime_inputs")
+    if not isinstance(runtime_inputs, dict):
+        raise ValueError("模型包 manifest runtime_contract.runtime_inputs 缺失。")
+    _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"]))
+    if _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"])) != selected_version_dir.resolve():
+        raise ValueError("模型包 manifest artifact_path 与实际模型目录不一致。")
+    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("preprocess_path", "")))
+    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("labels_path", "")))
+    artifacts = validation.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError("模型包 manifest validation.artifacts 缺失。")
+    for item in artifacts:
+        if not isinstance(item, str):
+            raise ValueError("模型包 manifest validation.artifacts 必须全部为字符串。")
+        _resolve_manifest_path(selected_version_dir, item)
+    return {
+        "model_root": str(selected_version_dir.resolve()),
+        "model_version": str(manifest["model_version"]),
+        "backend_type": str(manifest["backend_type"]),
+        "max_batch_size": max(1, int(manifest.get("max_batch_size", manifest.get("batch_size", 1)))),
+        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "manifest": manifest,
+    }
+
+
+def _validate_plugin_manifest(capability_dir: Path, target_name: str, manifest: Any, binary_path: Path | None) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest 顶层必须是对象。")
+    required_keys = (
+        "capability_name",
+        "model_version",
+        "target_name",
+        "artifact_format",
+        "build_mode",
+        "toolchain_name",
+        "jni_enabled",
+        "customer_code",
+        "issue_record_id",
+        "dependency_summary",
+    )
+    for key in required_keys:
+        if key not in manifest:
+            raise ValueError(f"插件 manifest 缺失字段：{key}")
+    if manifest["capability_name"] != capability_dir.name:
+        raise ValueError("插件 manifest capability_name 与目录名不一致。")
+    if manifest["target_name"] != target_name:
+        raise ValueError("插件 manifest target_name 与当前目标平台不一致。")
+    dependency_summary = manifest["dependency_summary"]
+    if not isinstance(dependency_summary, dict):
+        raise ValueError("插件 manifest dependency_summary 必须是对象。")
+    for key in ("runtime", "abi", "license_required", "build_params_controlled"):
+        if key not in dependency_summary:
+            raise ValueError(f"插件 manifest dependency_summary 缺失字段：{key}")
+    if binary_path is None or not binary_path.exists():
+        raise ValueError("插件二进制不存在。")
+    if manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
+        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
+    if manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
+        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
+    return {
+        "plugin_root": str(capability_dir.resolve()),
+        "plugin_target": target_name,
+        "build_mode": str(manifest["build_mode"]),
+        "binary_path": str(binary_path.resolve()),
+        "max_batch_size": max(1, int(manifest.get("max_batch_size", 1))),
+        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "manifest": manifest,
+    }
+
+
+def _scan_models(root: Path) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
     capability_map: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, str]] = []
     for capability_dir in _sorted_dirs(root):
         versions = _sorted_dirs(capability_dir)
         if not versions:
             continue
         selected_version_dir = versions[-1]
         manifest_path = selected_version_dir / "manifest.json"
-        if manifest_path.exists():
+        try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "capability_name": capability_dir.name,
-                "model_version": selected_version_dir.name,
-                "backend_type": "onnxruntime",
-            }
-        capability_map[capability_dir.name] = {
-            "model_root": str(selected_version_dir.resolve()),
-            "model_version": str(manifest.get("model_version", selected_version_dir.name)),
-            "backend_type": str(manifest.get("backend_type", "onnxruntime")),
-            "manifest": manifest,
-        }
-    return capability_map
+            capability_map[capability_dir.name] = _validate_model_manifest(capability_dir, selected_version_dir, manifest)
+        except Exception as exc:
+            failures.append(_failure_item(capability_dir.name, "model_manifest", manifest_path, str(exc)))
+    return capability_map, failures
 
 
-def _scan_plugins(root: Path, target_name: str) -> dict[str, dict[str, Any]]:
+def _scan_plugins(root: Path, target_name: str) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
     capability_map: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, str]] = []
     target_root = root / target_name
     for capability_dir in _sorted_dirs(target_root):
         manifest_path = capability_dir / "manifest" / "manifest.json"
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {
-                "capability_name": capability_dir.name,
-                "target_name": target_name,
-                "build_mode": "template",
-                "dependency_summary": {},
-            }
         lib_dir = capability_dir / "lib"
         binary_candidates = sorted([item for item in lib_dir.iterdir() if item.is_file()], key=lambda item: item.name) if lib_dir.exists() else []
-        capability_map[capability_dir.name] = {
-            "plugin_root": str(capability_dir.resolve()),
-            "plugin_target": target_name,
-            "build_mode": str(manifest.get("build_mode", "template")),
-            "binary_path": str(binary_candidates[0].resolve()) if binary_candidates else "",
-            "manifest": manifest,
-        }
-    return capability_map
+        binary_path = binary_candidates[0] if binary_candidates else None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            capability_map[capability_dir.name] = _validate_plugin_manifest(capability_dir, target_name, manifest, binary_path)
+        except Exception as exc:
+            failures.append(_failure_item(capability_dir.name, "plugin_manifest", manifest_path, str(exc)))
+    return capability_map, failures
 
 
 def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    host_models = _scan_models(host_root / "models")
-    image_models = _scan_models(image_root / "models")
-    host_plugins = _scan_plugins(host_root / "libs", target_name)
-    image_plugins = _scan_plugins(image_root / "libs", target_name)
+    host_models, host_model_failures = _scan_models(host_root / "models")
+    image_models, image_model_failures = _scan_models(image_root / "models")
+    host_plugins, host_plugin_failures = _scan_plugins(host_root / "libs", target_name)
+    image_plugins, image_plugin_failures = _scan_plugins(image_root / "libs", target_name)
 
     merged: dict[str, dict[str, Any]] = {}
+    invalid_capability_failures: list[dict[str, str]] = []
     for capability_name in sorted(set(host_models) | set(image_models) | set(host_plugins) | set(image_plugins)):
         model_entry = host_models.get(capability_name) or image_models.get(capability_name)
         plugin_entry = host_plugins.get(capability_name) or image_plugins.get(capability_name)
         if model_entry is None or plugin_entry is None:
+            continue
+        if plugin_entry["manifest"].get("model_version") != model_entry["model_version"]:
+            invalid_capability_failures.append(
+                _failure_item(
+                    capability_name,
+                    "capability_contract",
+                    Path(plugin_entry["plugin_root"]) / "manifest" / "manifest.json",
+                    "插件 manifest model_version 与模型包 manifest 不一致。",
+                )
+            )
             continue
         merged[capability_name] = {
             "capability_name": capability_name,
@@ -182,8 +324,11 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
             "plugin_target": plugin_entry["plugin_target"],
             "build_mode": plugin_entry["build_mode"],
             "binary_path": plugin_entry["binary_path"],
+            "max_batch_size": int(plugin_entry.get("max_batch_size") or model_entry.get("max_batch_size") or 1),
+            "instance_count": int(plugin_entry.get("instance_count") or model_entry.get("instance_count") or 0),
             "model_manifest": model_entry["manifest"],
             "plugin_manifest": plugin_entry["manifest"],
+            "admission_checklist": {},
             "active_source": "host"
             if capability_name in host_models and capability_name in host_plugins
             else "image",
@@ -194,14 +339,143 @@ def _resolve_sources(host_root: Path, image_root: Path, target_name: str) -> tup
         "host_plugins": sorted(host_plugins),
         "image_models": sorted(image_models),
         "image_plugins": sorted(image_plugins),
+        "host_model_failures": host_model_failures,
+        "host_plugin_failures": host_plugin_failures,
+        "image_model_failures": image_model_failures,
+        "image_plugin_failures": image_plugin_failures,
+        "invalid_capability_failures": invalid_capability_failures,
     }
+
+
+def _set_checklist_item(
+    checklist: dict[str, Any],
+    *,
+    code: str,
+    label: str,
+    required: bool,
+    status: str,
+    detail: str,
+) -> None:
+    items = checklist.setdefault("items", [])
+    for item in items:
+        if item.get("code") == code:
+            item.update(
+                {
+                    "label": label,
+                    "required": required,
+                    "status": status,
+                    "detail": detail,
+                }
+            )
+            return
+    items.append(
+        {
+            "code": code,
+            "label": label,
+            "required": required,
+            "status": status,
+            "detail": detail,
+        }
+    )
+
+
+def _finalize_checklist(checklist: dict[str, Any]) -> dict[str, Any]:
+    failed_codes = [
+        item["code"]
+        for item in checklist.get("items", [])
+        if item.get("required") and item.get("status") != "passed"
+    ]
+    checklist["failed_codes"] = failed_codes
+    checklist["ready"] = not failed_codes
+    return checklist
+
+
+def _build_admission_checklist(payload: dict[str, Any], *, license_valid: bool) -> dict[str, Any]:
+    checklist: dict[str, Any] = {
+        "capability_name": payload["capability_name"],
+        "items": [],
+        "failed_codes": [],
+        "ready": False,
+    }
+    model_manifest = payload.get("model_manifest", {})
+    plugin_manifest = payload.get("plugin_manifest", {})
+    runtime_contract = model_manifest.get("runtime_contract", {})
+    runtime_inputs = runtime_contract.get("runtime_inputs", {})
+    dependency_summary = plugin_manifest.get("dependency_summary", {})
+    _set_checklist_item(
+        checklist,
+        code="manifest_contract",
+        label="manifest 契约",
+        required=True,
+        status="passed",
+        detail="模型包 manifest 与插件 manifest 已通过强校验。",
+    )
+    sample_input_passed = bool(
+        model_manifest.get("preprocessing", {}).get("input_type")
+        and runtime_inputs.get("preprocess_path")
+        and runtime_inputs.get("labels_path")
+    )
+    _set_checklist_item(
+        checklist,
+        code="sample_input_contract",
+        label="样本输入契约",
+        required=True,
+        status="passed" if sample_input_passed else "failed",
+        detail="输入类型、预处理配置与标签路径齐全。"
+        if sample_input_passed
+        else "缺少 preprocessing.input_type 或 runtime_inputs 关键路径。",
+    )
+    abi_passed = bool(dependency_summary.get("abi"))
+    _set_checklist_item(
+        checklist,
+        code="abi_contract",
+        label="插件 ABI 契约",
+        required=True,
+        status="passed" if abi_passed else "failed",
+        detail="插件 manifest 已声明 ABI 与运行时依赖。"
+        if abi_passed
+        else "插件 manifest 缺少 ABI 声明。",
+    )
+    model_root = str(payload.get("model_root", "")).strip()
+    binary_path = str(payload.get("binary_path", "")).strip()
+    artifact_passed = bool(model_root) and bool(binary_path) and Path(model_root).exists() and Path(binary_path).exists()
+    _set_checklist_item(
+        checklist,
+        code="artifact_presence",
+        label="运行时产物存在性",
+        required=True,
+        status="passed" if artifact_passed else "failed",
+        detail="模型目录与插件二进制均存在。"
+        if artifact_passed
+        else "模型目录或插件二进制缺失。",
+    )
+    _set_checklist_item(
+        checklist,
+        code="license_gate",
+        label="License 门禁",
+        required=True,
+        status="passed" if license_valid else "failed",
+        detail="当前 capability 已通过 license 范围与版本约束校验。"
+        if license_valid
+        else "当前 capability 未通过 license 范围或版本约束校验。",
+    )
+    _set_checklist_item(
+        checklist,
+        code="runtime_probe",
+        label="运行时装载门禁",
+        required=False,
+        status="not_applicable",
+        detail="Python 内部验收外壳不执行 C++ 插件预装载探测，实际门禁由 C++ runtime 承担。",
+    )
+    return _finalize_checklist(checklist)
 
 
 def _ensure_instance_pool(capabilities: dict[str, dict[str, Any]], *, pool_size: int, gpu_available: bool) -> None:
     _INSTANCE_POOLS.clear()
-    for capability_name in capabilities:
+    for capability_name, payload in capabilities.items():
         pool = deque()
-        for index in range(pool_size):
+        configured_pool_size = max(1, int(payload.get("instance_count") or pool_size))
+        for index in range(configured_pool_size):
             pool.append(
                 {
                     "instance_id": f"{capability_name}-{index + 1}",
@@ -222,8 +496,79 @@ def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict
         "binary_path": payload.get("binary_path", ""),
         "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
         "pool_size": len(_INSTANCE_POOLS.get(capability_name, [])),
+        "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
+        "admission_checklist": payload.get("admission_checklist", {}),
         "revision_id": _ACTIVE_REVISION_ID,
     }
+
+
+def _serialize_runtime_capability_record(capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "capability_name": capability_name,
+        "model_root": payload["model_root"],
+        "model_version": payload["model_version"],
+        "backend_type": payload["backend_type"],
+        "plugin_root": payload["plugin_root"],
+        "plugin_target": payload["plugin_target"],
+        "build_mode": payload["build_mode"],
+        "binary_path": payload["binary_path"],
+        "active_source": payload["active_source"],
+        "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
+        "instance_count": max(1, int(payload["instance_count"])) if payload.get("instance_count") else 0,
+        "model_manifest": payload.get("model_manifest", {}),
+        "plugin_manifest": payload.get("plugin_manifest", {}),
+        "admission_checklist": payload.get("admission_checklist", {}),
+    }
+
+
+def _serialize_runtime_capability_records(capabilities: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_serialize_runtime_capability_record(name, payload) for name, payload in sorted(capabilities.items())]
+
+
+def _restore_runtime_capability_records(detail: dict[str, Any]) -> dict[str, dict[str, Any]] | None:
+    capability_records = detail.get("capability_records")
+    if not isinstance(capability_records, list):
+        return None
+    restored: dict[str, dict[str, Any]] = {}
+    for item in capability_records:
+        if not isinstance(item, dict):
+            raise ValueError("revision capability_records 每一项都必须是对象。")
+        capability_name = str(item.get("capability_name", "")).strip()
+        if not capability_name:
+            raise ValueError("revision capability_records 缺少必需字段 capability_name。")
+        restored[capability_name] = {
+            "capability_name": capability_name,
+            "model_root": str(item.get("model_root", "")),
+            "model_version": str(item.get("model_version", "")),
+            "backend_type": str(item.get("backend_type", "")),
+            "plugin_root": str(item.get("plugin_root", "")),
+            "plugin_target": str(item.get("plugin_target", "")),
+            "build_mode": str(item.get("build_mode", "")),
+            "binary_path": str(item.get("binary_path", "")),
+            "active_source": str(item.get("active_source", "")),
+            "max_batch_size": max(1, int(item.get("max_batch_size", 1))),
+            "instance_count": max(1, int(item["instance_count"])) if item.get("instance_count") else 0,
+            "model_manifest": item.get("model_manifest", {}),
+            "plugin_manifest": item.get("plugin_manifest", {}),
+            "admission_checklist": item.get("admission_checklist", {}),
+        }
+    return restored
+
+
+def _validate_runtime_capability_artifacts(capabilities: dict[str, dict[str, Any]]) -> None:
+    for capability_name, payload in capabilities.items():
+        model_root_value = str(payload.get("model_root", ""))
+        plugin_root_value = str(payload.get("plugin_root", ""))
+        binary_path_value = str(payload.get("binary_path", ""))
+        model_root = Path(model_root_value)
+        plugin_root = Path(plugin_root_value)
+        binary_path = Path(binary_path_value)
+        if not model_root_value or not model_root.exists():
+            raise ValueError(f"回滚目标模型目录不存在：{model_root}")
+        if not plugin_root_value or not plugin_root.exists():
+            raise ValueError(f"回滚目标插件目录不存在：{plugin_root}")
+        if not binary_path_value or not binary_path.exists():
+            raise ValueError(f"回滚目标插件文件不存在：{binary_path}")
 
 
 def _revision_item(revision: RuntimeRevisionModel) -> dict[str, Any]:
@@ -291,6 +636,9 @@ def bootstrap_runtime(
     service_name: str,
     company_name: str,
     company_domain: str,
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         target_name = _platform_target_name()
@@ -299,10 +647,18 @@ def bootstrap_runtime(
             capabilities=capabilities,
             license_root=license_root,
             hardware_features=hardware_features,
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
             audit_log_path=audit_log_path,
             action="bootstrap",
             entity_id="bootstrap",
         )
+        for capability_name, capability in capabilities.items():
+            capability["admission_checklist"] = _build_admission_checklist(
+                capability,
+                license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+            )
         revision = RuntimeRevisionModel(
             revision_token=str(uuid4()),
             action="bootstrap",
@@ -310,7 +666,14 @@ def bootstrap_runtime(
             source_summary_json=json.dumps(source_summary, ensure_ascii=False, sort_keys=True),
             capabilities_json=json.dumps(sorted(capabilities), ensure_ascii=False, sort_keys=True),
             license_valid=bool(license_status["valid"]),
-            detail_json=json.dumps({"license_status": license_status}, ensure_ascii=False, sort_keys=True),
+            detail_json=json.dumps(
+                {
+                    "license_status": license_status,
+                    "capability_records": _serialize_runtime_capability_records(capabilities),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             rollback_of_revision_id=None,
         )
         session.add(revision)
@@ -370,9 +733,18 @@ def get_license_status(
     *,
     license_root: Path,
     hardware_features: dict[str, str],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
     audit_log_path: Path | None = None,
 ) -> dict[str, Any]:
-    status = validate_license_bundle(license_root, hardware_features=hardware_features)
+    status = validate_license_bundle(
+        license_root,
+        hardware_features=hardware_features,
+        operating_system=operating_system,
+        operating_system_version=operating_system_version,
+        system_architecture=system_architecture,
+    )
     status["runtime_revision_id"] = _ACTIVE_REVISION_ID
     if audit_log_path is not None:
         append_audit_log(
@@ -383,6 +755,8 @@ def get_license_status(
             detail={
                 "valid": bool(status["valid"]),
                 "reason": status["reason"],
+                "code": status["code"],
+                "stage": status["stage"],
                 "runtime_revision_id": _ACTIVE_REVISION_ID,
             },
         )
@@ -400,6 +774,9 @@ def infer(
     payload: str,
     prefer_device: str,
     options: dict[str, Any],
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         if capability_name not in _ACTIVE_CAPABILITIES:
@@ -410,6 +787,9 @@ def infer(
             hardware_features=hardware_features,
             capability_name=capability_name,
             product_version=str(capability["model_version"]),
+            operating_system=operating_system,
+            operating_system_version=operating_system_version,
+            system_architecture=system_architecture,
         )
         if not license_status["valid"]:
             append_audit_log(
@@ -419,6 +799,9 @@ def infer(
                 entity_id=capability_name,
                 detail={
                     "reason": license_status["reason"],
+                    "code": license_status["code"],
+                    "stage": license_status["stage"],
+                    "details": license_status["details"],
                     "model_version": capability["model_version"],
                 },
             )
@@ -497,6 +880,9 @@ def reload_runtime(
     service_name: str,
     company_name: str,
     company_domain: str,
+    operating_system: str,
+    operating_system_version: str,
+    system_architecture: str,
 ) -> dict[str, Any]:
     with _RUNTIME_LOCK:
         if action == "reload":
@@ -504,12 +890,20 @@ def reload_runtime(
             capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
             license_status = _validate_runtime_capabilities_license(
                 capabilities=capabilities,
-                license_root=license_root,
-                hardware_features=hardware_features,
-                audit_log_path=audit_log_path,
-                action="reload",
+                    license_root=license_root,
+                    hardware_features=hardware_features,
+                    operating_system=operating_system,
+                    operating_system_version=operating_system_version,
+                    system_architecture=system_architecture,
+                    audit_log_path=audit_log_path,
+                    action="reload",
                 entity_id="reload",
             )
+            for capability_name, capability in capabilities.items():
+                capability["admission_checklist"] = _build_admission_checklist(
+                    capability,
+                    license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+                )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="reload",
@@ -517,7 +911,14 @@ def reload_runtime(
                 source_summary_json=json.dumps(source_summary, ensure_ascii=False, sort_keys=True),
                 capabilities_json=json.dumps(sorted(capabilities), ensure_ascii=False, sort_keys=True),
                 license_valid=bool(license_status["valid"]),
-                detail_json=json.dumps({"license_status": license_status}, ensure_ascii=False, sort_keys=True),
+                detail_json=json.dumps(
+                    {
+                        "license_status": license_status,
+                        "capability_records": _serialize_runtime_capability_records(capabilities),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 rollback_of_revision_id=None,
             )
             session.add(revision)
@@ -531,17 +932,32 @@ def reload_runtime(
             if source_revision is None:
                 raise ValueError("目标 revision 不存在。")
             capability_names = json.loads(source_revision.capabilities_json)
-            target_name = _platform_target_name()
-            capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
-            selected = {name: capabilities[name] for name in capability_names if name in capabilities}
+            source_summary = json.loads(source_revision.source_summary_json)
+            source_detail = json.loads(source_revision.detail_json)
+            restored_capabilities = _restore_runtime_capability_records(source_detail)
+            if restored_capabilities is not None:
+                selected = restored_capabilities
+                _validate_runtime_capability_artifacts(selected)
+            else:
+                target_name = _platform_target_name()
+                capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
+                selected = {name: capabilities[name] for name in capability_names if name in capabilities}
             license_status = _validate_runtime_capabilities_license(
                 capabilities=selected,
                 license_root=license_root,
                 hardware_features=hardware_features,
+                operating_system=operating_system,
+                operating_system_version=operating_system_version,
+                system_architecture=system_architecture,
                 audit_log_path=audit_log_path,
                 action="rollback",
                 entity_id=str(target_revision_id),
             )
+            for capability_name, capability in selected.items():
+                capability["admission_checklist"] = _build_admission_checklist(
+                    capability,
+                    license_valid=bool(license_status["capability_statuses"][capability_name]["valid"]),
+                )
             revision = RuntimeRevisionModel(
                 revision_token=str(uuid4()),
                 action="rollback",
@@ -550,7 +966,11 @@ def reload_runtime(
                 capabilities_json=json.dumps(sorted(selected), ensure_ascii=False, sort_keys=True),
                 license_valid=bool(license_status["valid"]),
                 detail_json=json.dumps(
-                    {"license_status": license_status, "rollback_to": target_revision_id},
+                    {
+                        "license_status": license_status,
+                        "rollback_to": target_revision_id,
+                        "capability_records": _serialize_runtime_capability_records(selected),
+                    },
                     ensure_ascii=False,
                     sort_keys=True,
                 ),
