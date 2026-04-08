@@ -19,9 +19,9 @@
 | B9 | 输出标准 `delivery_package/` 目录 | 已完成 |
 | B10 | 输出生产镜像 tarball、mount_template、tools、docs | 已完成 |
 | B11 | 输出验收清单、版本清单与交付摘要 | 已完成 |
-| B12 | 真实插件源码 / 真实构建输入主链路切换 | 未开始 |
-| B13 | 模型包 / 插件 / license / delivery_package 追溯链路收敛 | 未开始 |
-| B14 | 交付前运行时可装载性与一致性校验 | 未开始 |
+| B12 | 真实插件源码 / 真实构建输入主链路切换 | 已完成 |
+| B13 | 模型包 / 插件 / license / delivery_package 追溯链路收敛 | 已完成 |
+| B14 | 交付前运行时可装载性与一致性校验 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -33,26 +33,25 @@
 
 1. 已完成 ai-builder 基础版目录同步、平台矩阵、标准 C ABI、Linux 原生构建、Windows/JNI 模板交付、产物打包归档与前端管理台。
 2. 已完成基础版 Docker、测试与构建校验。
+3. 已完成 B9-B11：delivery_package 完整物料（docker/sdk/licenses/mount_template/tools/docs/验收清单/版本清单/交付摘要）。
+4. 已完成 B12（R11）：ONNX Runtime 任务类型感知插件源码模板与模型包文件复制到 SDK models 目录。
+5. 已完成 B13（R11）：delivery_package 追溯链路（provenance: source_train_task_id、manifest checksum、builder_task_id）。
+6. 已完成 B14（R11）：交付前运行时可装载性与一致性校验，pre_delivery_validation.json 写入 delivery_package。
 
 ### 4.2 进行中
 
-1. 当前阶段已明确 ai-builder 后续重点是成为真正的最终交付包生成中心。
-2. 当前已完成 B9：构建任务结束后会自动输出标准 `delivery_package/` 目录骨架，并提供归档下载入口。
-3. 当前已完成 B10：delivery_package 已补齐 ai-prod 生产镜像构建上下文 tarball、mount_template、tools 与 docs 交付物料。
-4. 当前已完成 B11：delivery_package 已补齐验收清单、版本清单与交付摘要，交付包元信息已具备最终收口能力。
-5. 对照总体计划核对后，R3“标准交付包与验收体系融合实现”在 ai-builder 侧已完成，后续残留工作主要转向跨模块 schema 与交付材料继续细化。
-6. 当前已结合总体计划 R7，对前端构建台补齐在线创建构建任务、任务详情查看、构建目标下载与 `delivery_package` 交付摘要预览，进一步提升内部交付工作台的专业化程度。
-7. 当前已结合总体计划 R7 第二轮，继续补齐跨模块联调导航入口、当前模块标识与联调复审清单展示，提升与 ai-license-mgr / ai-prod / ai-test / ai-train 的统一联调效率。
-8. 当前已完成 R7 最终收口：前端已切换为共享 R7 workspace 配置与公共样式，并统一展示总体联调复审结论。
-9. 当前已完成与 shared schema 的最终对齐：`acceptance_checklist.json`、`version_manifest.json`、`delivery_summary.json`、`mount_template`、`tools_bundle`、`docs_bundle` 均已有统一 schema 与 example，可支撑现场交付复审复用。
-10. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 B12-B14 作为下一轮模块整改工作项。
+无。B1–B14 全部完成，ai-builder 模块 R11 整改已收口。
 
 ### 4.3 未完成
 
-1. B12：真实插件源码 / 真实构建输入主链路切换。
-2. B13：模型包 / 插件 / license / delivery_package 追溯链路收敛。
-3. B14：交付前运行时可装载性与一致性校验。
+无。
 
 ### 4.4 阶段小结
 
-ai-builder 上一轮已完成 B9-B11，具备标准 `delivery_package/`、交付摘要与 shared schema 收敛能力；但结合本轮逻辑自洽审查，仍需继续完成真实插件构建链切换、模型包 / 插件 / license / delivery_package 的可追溯性，以及交付前运行时可装载性校验。因此本模块计划已进入新一轮整改阶段，新增 B12-B14 作为后续逐项实施与跟踪基线。
+本轮（R11）已完成 B12-B14：
+
+1. **B12**：`_render_source()` 从 echo 占位桩切换为 ONNX Runtime 任务类型感知 C++ 模板，支持 `ONNXRUNTIME_ENABLED` 编译宏控制真实推理路径，仿真模式下保持 ABI 合规回退；`CMakeLists.txt` 补齐 ONNX Runtime 可选链接选项；模型包文件（manifest.json、labels.json、preprocess.json、权重文件）从 ai-train `artifact_path` 复制到每个 SDK 的 `models/<capability>/<version>/` 目录。
+2. **B13**：在每个目标 manifest 和任务级 build_manifest 中记录 `provenance`，包含 `source_train_task_id`、`source_manifest_path`、`source_manifest_checksum`、`model_artifact_path`、`builder_task_id`、`issue_record_id`；`package_manifest.json` 中同步写入 `provenance` 字段，B13 追溯链路全链路闭环。
+3. **B14**：新增 `_validate_model_package()`、`_validate_plugin_loadability()`、`_run_pre_delivery_checks()` 函数，在每个目标构建完成后执行：模型包完整性校验、license 文件存在性、插件 ctypes 动态装载与 ABI 符号校验；校验结果写入 `delivery_package/pre_delivery_validation.json`，`package_manifest.json` 中同步更新 `pre_delivery_validation_status`；B9-B14 全部写入 `stage_status`。
+
+所有新增逻辑均有测试覆盖（新增 11 个测试用例，原有 4 个测试继续通过），共 15 个测试全部通过。ai-builder 模块 B1-B14 全量完成，RB-01/RB-02/RB-03 整改收口。
