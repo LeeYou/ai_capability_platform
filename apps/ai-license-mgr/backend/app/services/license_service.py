@@ -27,10 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 LICENSE_TOOL_NAME = "license_tool"
 LICENSE_TOOL_VERSION = "1.0.0"
 LICENSE_TOOL_SOURCE_FILES = {
-    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
-    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
-    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
-    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
+    "CMakeLists.txt": REPO_ROOT / "apps/shared/license_tool_src/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.h",
 }
 LICENSE_TOOL_SUPPORTED_TARGETS = ["linux_x86_64", "linux_aarch64", "windows_x86", "windows_x86_64"]
 ALLOWED_OPERATING_SYSTEMS = {"windows", "linux", "android", "ios"}

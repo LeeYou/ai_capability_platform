@@ -74,7 +74,7 @@ delivery_package/
 ## 9. 设计决策
 
 1. 推理库采用 C++ + CMake。
-2. 运行底座优先复用 `ai_platform` 的 Runtime/HTTP/License 设计。
+2. 运行底座采用 C++ HTTP + C++ Runtime + 插件模式，具备 License 双层校验能力。
 3. 一能力一插件，公共 runtime 作为共享层。
 4. 统一标准 C ABI 与头文件模板。
 5. ai-builder 既负责构建插件，也负责输出客户最终可交付包。
