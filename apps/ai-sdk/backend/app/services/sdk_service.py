@@ -1071,7 +1071,7 @@ def create_sdk_package(
             "gpu_fallback": True,
             "delivery_package_alignment": {
                 "sdk_dir": sdk_dir_name,
-                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
+                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed", "S11": "completed", "S12": "completed"},
             },
         }
         sdk_manifest_path = manifest_dir / "manifest.json"
@@ -1172,7 +1172,7 @@ def create_sdk_package(
         "model_version": safe_model_version,
         "requested_targets": sorted(set(normalized_targets)),
         "jni_enabled": jni_enabled,
-        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
+        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed", "S11": "completed", "S12": "completed"},
         "delivery_package_alignment": True,
         "targets": [
             {
