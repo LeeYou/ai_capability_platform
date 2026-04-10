@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from html import escape
 import json
 from pathlib import Path
@@ -380,6 +380,6 @@ def export_test_report(
                 f"{summary['template_summary'].get('title', 'ai-test 报告')} #{report.id} {summary.get('capability_name')} {summary.get('model_version')}"
             )
         )
-    report.exported_at = datetime.now(UTC).replace(tzinfo=None)
+    report.exported_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     return destination.resolve()

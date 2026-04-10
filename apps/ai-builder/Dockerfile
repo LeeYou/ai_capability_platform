@@ -60,10 +60,14 @@ RUN python3 -m pip install \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
     sqlalchemy==2.0.41
-COPY apps/ai-builder/backend/ /workspace/backend/
+COPY apps/ai-builder/backend/ /workspace/apps/ai-builder/backend/
+COPY apps/ai-prod/ /workspace/apps/ai-prod/
+COPY apps/shared/license_tool_src/ /workspace/apps/shared/license_tool_src/
+COPY scripts/docker/ /workspace/scripts/docker/
+COPY docs/07_部署运维/ /workspace/docs/07_部署运维/
 
 COPY --from=frontend-builder /workspace/apps/ai-builder/frontend/dist /workspace/frontend-dist
 
 EXPOSE 26003
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--app-dir", "/workspace/backend", "--host", "0.0.0.0", "--port", "26003"]
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--app-dir", "/workspace/apps/ai-builder/backend", "--host", "0.0.0.0", "--port", "26003"]

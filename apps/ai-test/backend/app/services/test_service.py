@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
@@ -402,7 +402,7 @@ def create_test_task(
         total_cases=len(cases),
         passed_cases=0,
         failed_cases=0,
-        started_at=datetime.now(UTC).replace(tzinfo=None),
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     # TT13：将 evidence_chain 序列化写入任务记录（如模型支持该字段）
     if hasattr(task, "evidence_json"):
@@ -479,7 +479,7 @@ def create_test_task(
         session.commit()
 
     task.status = "completed"
-    task.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     generate_test_report(session, test_reports_root, task.id)
     session.refresh(task)

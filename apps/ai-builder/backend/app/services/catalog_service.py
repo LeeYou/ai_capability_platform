@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from urllib.error import URLError
@@ -41,7 +41,7 @@ def write_builder_catalog_snapshot(
         "models": models,
         "license_issues": license_issues,
         "license_policies": license_policies,
-        "synced_at": datetime.now(UTC).isoformat(),
+        "synced_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_snapshot(snapshot_path, payload)
     return payload

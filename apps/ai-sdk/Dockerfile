@@ -35,8 +35,9 @@ RUN python3 -m pip install \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
     sqlalchemy==2.0.41
-COPY apps/ai-sdk/backend/ /workspace/backend/
+COPY apps/ai-sdk/backend/ /workspace/apps/ai-sdk/backend/
+COPY apps/shared/license_tool_src/ /workspace/apps/shared/license_tool_src/
 
 EXPOSE 26005
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--app-dir", "/workspace/backend", "--host", "0.0.0.0", "--port", "26005"]
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--app-dir", "/workspace/apps/ai-sdk/backend", "--host", "0.0.0.0", "--port", "26005"]
