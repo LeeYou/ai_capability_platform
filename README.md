@@ -29,7 +29,7 @@ docker compose up --build
 export PIP_DEFAULT_TIMEOUT=300
 export PIP_RETRIES=10
 # 可按需切换为企业内网或就近镜像
-# export PIP_INDEX_URL=https://pypi.org/simple
+# export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 docker compose up --build
 ```
 
