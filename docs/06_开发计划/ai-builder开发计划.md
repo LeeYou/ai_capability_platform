@@ -22,6 +22,10 @@
 | B12 | 真实插件源码 / 真实构建输入主链路切换 | 已完成 |
 | B13 | 模型包 / 插件 / license / delivery_package 追溯链路收敛 | 已完成 |
 | B14 | 交付前运行时可装载性与一致性校验 | 已完成 |
+| B15 | 构建向导、平台选择与交付预览工作台重构 | 未开始 |
+| B16 | 实时日志、阶段状态与失败重试工作台重构 | 未开始 |
+| B17 | delivery_package / 产物目录树 / 校验结果视图重构 | 未开始 |
+| B18 | 构建完成后的生产验收联动与首页队列概览收口 | 未开始 |
 
 ## 3. 进度维护要求
 
@@ -40,18 +44,19 @@
 
 ### 4.2 进行中
 
-无。B1–B14 全部完成，ai-builder 模块 R11 整改已收口。
+1. B1-B14 已完成，当前真实构建链路已具备，但前端仍缺少专业工作台体验。
+2. B15 目标：重构构建向导，使模型、license、平台、产物类型选择过程清晰可控。
+3. B16 目标：重构任务日志与阶段状态视图，支持错误高亮、失败定位与重新构建。
+4. B17 目标：重构交付包页面，突出目录树、校验清单、追溯信息与下载动作。
+5. B18 目标：补齐首页队列概览与“去生产验收”下一步动作。
 
 ### 4.3 未完成
 
-无。
+1. B15：构建向导、平台选择与交付预览工作台重构。
+2. B16：实时日志、阶段状态与失败重试工作台重构。
+3. B17：delivery_package / 产物目录树 / 校验结果视图重构。
+4. B18：构建完成后的生产验收联动与首页队列概览收口。
 
 ### 4.4 阶段小结
 
-本轮（R11）已完成 B12-B14：
-
-1. **B12**：`_render_source()` 从 echo 占位桩切换为 ONNX Runtime 任务类型感知 C++ 模板，支持 `ONNXRUNTIME_ENABLED` 编译宏控制真实推理路径，仿真模式下保持 ABI 合规回退；`CMakeLists.txt` 补齐 ONNX Runtime 可选链接选项；模型包文件（manifest.json、labels.json、preprocess.json、权重文件）从 ai-train `artifact_path` 复制到每个 SDK 的 `models/<capability>/<version>/` 目录。
-2. **B13**：在每个目标 manifest 和任务级 build_manifest 中记录 `provenance`，包含 `source_train_task_id`、`source_manifest_path`、`source_manifest_checksum`、`model_artifact_path`、`builder_task_id`、`issue_record_id`；`package_manifest.json` 中同步写入 `provenance` 字段，B13 追溯链路全链路闭环。
-3. **B14**：新增 `_validate_model_package()`、`_validate_plugin_loadability()`、`_run_pre_delivery_checks()` 函数，在每个目标构建完成后执行：模型包完整性校验、license 文件存在性、插件 ctypes 动态装载与 ABI 符号校验；校验结果写入 `delivery_package/pre_delivery_validation.json`，`package_manifest.json` 中同步更新 `pre_delivery_validation_status`；B9-B14 全部写入 `stage_status`。
-
-所有新增逻辑均有测试覆盖（新增 11 个测试用例，原有 4 个测试继续通过），共 15 个测试全部通过。ai-builder 模块 B1-B14 全量完成，RB-01/RB-02/RB-03 整改收口。
+ai-builder 当前真正缺的不是构建能力，而是“构建过程的可理解性与可操作性”。下一轮 B15-B18 将把现有真实构建链路重新包装为构建向导、实时日志工作台、交付包目录树与验收联动入口，让交付工程师可以在 Web 端完成从选择输入到确认产物再到进入生产验收的完整闭环。

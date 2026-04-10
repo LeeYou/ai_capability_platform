@@ -24,6 +24,10 @@
 | T14 | 真实训练执行器与模型导出链路收敛 | 已完成 |
 | T15 | 模型包 manifest 与 runtime / builder 消费契约收敛 | 已完成 |
 | T16 | 新增能力训练模板 / 测试模板 / 推理模板统一脚手架 | 已完成 |
+| T17 | 标注工作台布局重构与统一画布交互收口 | 未开始 |
+| T18 | 训练工作台日志 / 指标 / 阶段状态专业化重构 | 未开始 |
+| T19 | 模型资产页与“送测”主流程收口 | 未开始 |
+| T20 | 跨模块对象跳转与首页待办视图收口 | 未开始 |
 
 ## 3. 进度维护要求
 
@@ -39,25 +43,20 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已明确 ai-train 后续重点转向“更专业的内部标注/训练 UI”和“更严格的交付模型包标准化”。
-2. 当前已完成 T9：后端已补齐标注任务样本级详情、批量保存/批量提交接口，前端管理台已升级为更专业的标注台，并支持样本级编辑与批量提交。
-3. 当前已完成 T9：训练台已补齐日志轮询、训练执行计划展示与训练结果摘要回显，前端可直接查看训练任务最近日志与执行元数据。
-4. 当前已完成 T10：模型产物登记已补齐 `preprocessing`、`thresholds`、`labels`、`validation` 等标准 manifest 字段，并自动生成 `preprocess.json`、`labels.json`、`validation/acceptance_checklist.json` 等模型包内容。
-5. 当前已完成 T11：模型 manifest 已补齐面向 ai-test / ai-builder 的 `delivery_metadata`，并同步更新 shared `manifest_model.json` schema，进一步收敛交付元数据接口。
-6. 当前已结合总体计划 R7 第二轮，对前端补齐跨模块联调导航入口、当前模块标识与联调复审清单展示，便于训练侧与测试/构建/交付链路统一联调。
-7. 当前已完成 R7 最终收口：前端已切换为共享 R7 workspace 配置与公共样式，并统一展示总体联调复审结论。
-8. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 T12-T16 作为下一轮模块整改工作项。
-9. 当前已正式完成 ai-train 模块整改实施：已完成模块设计文档、模块开发计划、工程规范与现状代码的回对，并完成 T12-T16 全量代码收敛。
-10. 当前已完成按任务类型分层的标注 schema、样本级校验与前端分层编辑能力，统一支持 classification、detection、OCR、structured_extraction 四类任务。
-11. 当前已完成标注结果到训练输入适配链路收敛：训练工作区已输出 `training_input.json`、`template_bundle.json`、`model_export_spec.json`、`train_runner.py` 与新的执行计划。
-12. 当前已完成训练执行与导出链路收敛：训练任务可通过执行接口产生日志、结果摘要与 `exported_model/` 导出目录。
-13. 当前已完成模型 manifest/runtime 契约收敛：模型产物已补齐 `task_type`、`runtime_contract`、模板 bundle 与导出文件信息，并同步更新 shared `manifest_model.json` schema/example。
-14. 当前已完成基线验证：ai-train 后端单元测试、前端 build/lint、shared schema 测试均已通过。
+1. T1-T16 已完成，当前模块能力已具备真实标注、训练执行、模型资产与模型包契约基础。
+2. 下一轮将转入 Web 产品化收口，重点不再是补 API，而是把现有能力重构为真正高效的研发工作台。
+3. T17 目标：重构标注工作台为“样本列表 + 主画布 + 属性/质检侧栏”三栏布局，统一 detection / OCR / classification / structured_extraction 的操作体验。
+4. T18 目标：重构训练工作台，补齐任务阶段状态条、日志检索、指标卡片、失败重试与结果摘要联动。
+5. T19 目标：重构模型资产页，突出模型卡片、manifest 摘要、版本对比与“送测”主操作。
+6. T20 目标：补齐首页待办、最近任务、异常提醒，以及面向 ai-test 的跨模块跳转入口。
 
 ### 4.3 未完成
 
-1. 暂无；ai-train 模块当前轮 T12-T16 已全部完成，后续若继续增强，将进入下一轮增量规划。
+1. T17：标注工作台布局重构与统一画布交互收口。
+2. T18：训练工作台日志 / 指标 / 阶段状态专业化重构。
+3. T19：模型资产页与“送测”主流程收口。
+4. T20：跨模块对象跳转与首页待办视图收口。
 
 ### 4.4 阶段小结
 
-ai-train 本轮已完成 T12-T16：在上一轮 T9/T10/T11 的基础上，进一步把标注能力按任务类型收敛为 classification、detection、OCR、structured_extraction 四类标准 schema，并同步落到后端校验、标注结果存储与前端分层编辑界面；同时建立了从标注结果到 `training_input.json` 的统一适配器链路，并在训练工作区中补齐 `template_bundle.json`、`model_export_spec.json`、`train_runner.py` 与新的执行计划；训练侧不再仅停留在脚手架提示，而是可通过执行接口产生日志、结果摘要与 `exported_model/` 导出目录；模型产物则进一步补齐 `task_type`、`runtime_contract`、模板 bundle、导出文件信息，并同步更新 shared `manifest_model.json` schema/example。经后端单元测试、前端 build/lint 与 shared schema 测试验证，当前 ai-train 模块整改已完成，本轮模块代码、设计文档与开发计划已对齐。
+ai-train 当前功能基础已较完整，下一轮重点是把“能做”收口为“好用”。T17-T20 将围绕标注台三栏布局、训练日志与阶段态工作台、模型资产卡片化与送测主流程、首页待办与跨模块跳转展开，目标是让 ai-train 成为整条产品链中最成熟的起点工作台，而不是功能集合页。

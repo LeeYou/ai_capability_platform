@@ -23,6 +23,10 @@
 | L13 | Python / C++ / SDK / license_tool 跨模块回归链路 | 已完成 |
 | L14 | 授权平台字段（操作系统/最低系统版本/架构/应用名）设计与签发工具收口 | 已完成 |
 | L15 | 平台准入诊断契约与 ai-prod / ai-sdk 同步 | 已完成 |
+| L16 | 客户 / 密钥 / 策略 / 签发连续工作台重构 | 未开始 |
+| L17 | 高风险操作（轮转/隔离/失效）影响面与确认体验重构 | 未开始 |
+| L18 | 校验结果、diagnostics / vectors / tool release 工作台重构 | 未开始 |
+| L19 | 授权完成后的构建联动与首页风险概览收口 | 未开始 |
 
 ## 3. 进度维护要求
 
@@ -37,19 +41,20 @@
 
 ### 4.2 进行中
 
-1. 当前已完成 ai-license-mgr 本轮整改实施：建立授权金标准测试向量源，覆盖硬件指纹、版本约束与 license 校验场景。
-2. 当前已完成稳定授权诊断字段收敛：校验接口与签发记录已统一输出 `result` / `code` / `stage` / `details` / `diagnostics_version`。
-3. 当前已完成 `license_tool` source bundle 发布材料增强：manifest/README/ERROR_CODES 中已补齐稳定诊断 code，并附带 `LICENSE_DIAGNOSTICS.json` 与 `VALIDATION_VECTORS.json`。
-4. 当前已完成 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归测试，形成跨模块基线。
-5. 当前已完成前端授权工作台增强：已展示稳定校验 code/细节，并补齐 diagnostics / vectors 导出入口。
-6. 当前已完成基线验证：ai-license-mgr backend unittest 与 frontend build/lint 均已通过。
-7. 当前已完成 L14：授权策略、签发载荷、签发记录、前端工作台与 `license_tool` source bundle 已统一新增 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 字段。
-8. 当前已完成 L15：稳定授权诊断契约已新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并已与 ai-prod / ai-sdk 交付物同步。
+1. L1-L15 已完成，当前授权规则、校验契约与工具链基础已经齐备。
+2. 下一轮将聚焦授权工作台产品化，而不是继续堆叠字段展示。
+3. L16 目标：将客户、密钥、策略、签发整合为连续工作台，减少跨页跳转与人工记忆。
+4. L17 目标：重构轮转、隔离、失效等高风险操作的影响面展示、风险确认与审计提示。
+5. L18 目标：重构校验结果与工具工作台，突出 diagnostics / vectors / tool release 的实际用途与下载路径。
+6. L19 目标：补齐首页风险概览、即将过期提醒，以及授权完成后去 ai-builder 的联动入口。
 
 ### 4.3 未完成
 
-1. 暂无；ai-license-mgr 模块当前轮 L11-L15 已全部完成，后续如继续推进将转入新的授权增量计划。
+1. L16：客户 / 密钥 / 策略 / 签发连续工作台重构。
+2. L17：高风险操作（轮转/隔离/失效）影响面与确认体验重构。
+3. L18：校验结果、diagnostics / vectors / tool release 工作台重构。
+4. L19：授权完成后的构建联动与首页风险概览收口。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 本轮已完成 L11-L15：不仅延续了授权金标准测试向量、稳定诊断契约与 ai-prod Python 校验一致性回归基线，还进一步将 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段纳入策略、签发、校验、前端工作台与 `license_tool` source bundle；同时新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied` 稳定诊断结果码，并同步到 ai-prod / ai-sdk 契约与交付物。经 ai-license-mgr backend unittest 与 frontend build/lint 验证，当前模块本轮增量已完成。
+ai-license-mgr 当前“能力够用但流程不顺”的问题最突出。L16-L19 将围绕连续签发工作台、风险操作体验、诊断与工具页面重构、以及去 ai-builder 的下游联动展开，目标是让授权模块真正承担交付链路中的专业工作台角色，而不是若干后台表单的集合。
