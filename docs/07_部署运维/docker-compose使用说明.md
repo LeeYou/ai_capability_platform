@@ -38,8 +38,18 @@ export PIP_DEFAULT_TIMEOUT=300
 export PIP_RETRIES=10
 # 如需使用内网/就近镜像，可额外设置
 # export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# 如需经代理访问外网资源（例如 PyPI / GitHub）
+# export HTTP_PROXY=http://127.0.0.1:7890
+# export HTTPS_PROXY=http://127.0.0.1:7890
+# export NO_PROXY=127.0.0.1,localhost
 docker compose up --build
 ```
+
+说明：
+
+1. 各后端镜像已优先缓存系统依赖和固定 Python 依赖，源码改动不会触发整层重装
+2. `ai-test` 中体积较大的 `onnxruntime` 已单独分层，便于重复构建复用缓存
+3. 若显式设置了 `PIP_INDEX_URL`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`，compose 构建阶段会自动传递给各镜像
 
 ## 4. 健康检查
 

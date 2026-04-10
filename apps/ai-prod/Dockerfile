@@ -2,6 +2,17 @@ ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 FROM node:22-bookworm-slim AS frontend-builder
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} \
+    http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY}
+
 WORKDIR /workspace/apps/ai-prod/frontend
 
 COPY apps/ai-prod/frontend/package.json apps/ai-prod/frontend/package-lock.json /workspace/apps/ai-prod/frontend/
@@ -15,7 +26,17 @@ RUN npm run build
 ARG AI_CAP_BASE_IMAGE
 FROM ${AI_CAP_BASE_IMAGE} AS cpp-builder
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} \
+    http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY}
 
 WORKDIR /workspace
 
@@ -41,10 +62,19 @@ FROM ${AI_CAP_BASE_IMAGE}
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG PIP_DEFAULT_TIMEOUT=300
 ARG PIP_RETRIES=10
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} \
+    http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_PREFER_BINARY=1 \
@@ -60,8 +90,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /workspace
 
-COPY apps/ai-prod/backend/ /workspace/backend/
-COPY apps/ai-prod/scripts/run_prod_stack.sh /workspace/run_prod_stack.sh
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -71,6 +99,8 @@ RUN python3 -m pip install \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
     sqlalchemy==2.0.41
+COPY apps/ai-prod/backend/ /workspace/backend/
+COPY apps/ai-prod/scripts/run_prod_stack.sh /workspace/run_prod_stack.sh
 
 COPY --from=frontend-builder /workspace/apps/ai-prod/frontend/dist /workspace/frontend-dist
 COPY --from=cpp-builder /workspace/apps/ai-prod/cpp/build/ai_prod_cpp_proxy /workspace/cpp/ai_prod_cpp_proxy

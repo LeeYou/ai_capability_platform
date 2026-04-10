@@ -30,8 +30,14 @@ export PIP_DEFAULT_TIMEOUT=300
 export PIP_RETRIES=10
 # 可按需切换为企业内网或就近镜像
 # export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# 如构建阶段需要经代理访问 PyPI / GitHub / 其他外网
+# export HTTP_PROXY=http://127.0.0.1:7890
+# export HTTPS_PROXY=http://127.0.0.1:7890
+# export NO_PROXY=127.0.0.1,localhost
 docker compose up --build
 ```
+
+当前后端镜像已将系统依赖与固定 Python 依赖前移到源码复制之前；其中 `ai-test` 的 `onnxruntime` 会单独缓存成层，后续仅业务代码变化时无需重复下载。
 
 共享 schema 位于 `apps/shared/`，平台级校验命令如下：
 
