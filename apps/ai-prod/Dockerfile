@@ -1,7 +1,4 @@
 ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
-ARG PIP_INDEX_URL=https://pypi.org/simple
-ARG PIP_DEFAULT_TIMEOUT=300
-ARG PIP_RETRIES=10
 
 FROM node:22-bookworm-slim AS frontend-builder
 
@@ -39,10 +36,11 @@ RUN cmake -S /workspace/apps/ai-prod/cpp -B /workspace/apps/ai-prod/cpp/build \
 
 
 ARG AI_CAP_BASE_IMAGE
-ARG PIP_INDEX_URL
-ARG PIP_DEFAULT_TIMEOUT
-ARG PIP_RETRIES
 FROM ${AI_CAP_BASE_IMAGE}
+
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_DEFAULT_TIMEOUT=300
+ARG PIP_RETRIES=10
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
