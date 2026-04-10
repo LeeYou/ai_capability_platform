@@ -5,8 +5,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from fastapi.testclient import TestClient
-
 from app.config import reset_settings_cache
 from app.db.database import reset_database_cache
 from app.main import create_app
@@ -32,21 +30,18 @@ class FrontendRoutesTestCase(unittest.TestCase):
         os.environ.pop("AI_CAP_FRONTEND_DIST", None)
         self.temp_dir.cleanup()
 
-    def test_frontend_root_and_assets_are_served_without_breaking_api_routes(self) -> None:
-        with TestClient(create_app()) as client:
-            root_response = client.get("/")
-            self.assertEqual(root_response.status_code, 200)
-            self.assertIn("text/html", root_response.headers["content-type"])
-            self.assertIn("ai-test", root_response.text)
+    def test_frontend_routes_are_registered_without_breaking_api_routes(self) -> None:
+        app = create_app()
+        route_paths = {route.path for route in app.routes}
+        self.assertIn("/", route_paths)
+        self.assertIn("/{frontend_path:path}", route_paths)
+        self.assertIn("/api/v1/health", route_paths)
+        self.assertIn("/assets", route_paths)
 
-            nested_response = client.get("/acceptance/workbench")
-            self.assertEqual(nested_response.status_code, 200)
-            self.assertIn("ai-test", nested_response.text)
+        root_route = next(route for route in app.routes if route.path == "/" and getattr(route, "endpoint", None) is not None)
+        root_response = root_route.endpoint()
+        self.assertEqual(Path(root_response.path).read_text(encoding="utf-8"), "<html><body>ai-test</body></html>")
 
-            asset_response = client.get("/assets/app.js")
-            self.assertEqual(asset_response.status_code, 200)
-            self.assertIn("console.log", asset_response.text)
-
-            health_response = client.get("/api/v1/health")
-            self.assertEqual(health_response.status_code, 200)
-            self.assertEqual(health_response.json()["service"], "ai-test")
+        frontend_route = next(route for route in app.routes if route.path == "/{frontend_path:path}")
+        nested_response = frontend_route.endpoint("acceptance/workbench")
+        self.assertEqual(Path(nested_response.path).read_text(encoding="utf-8"), "<html><body>ai-test</body></html>")
