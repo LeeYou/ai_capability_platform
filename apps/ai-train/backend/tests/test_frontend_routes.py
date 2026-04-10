@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import app.main as main_module
 from app.config import reset_settings_cache
 from app.db.database import reset_database_cache
 from app.main import create_app
@@ -19,7 +20,8 @@ class FrontendRoutesTestCase(unittest.TestCase):
         (self.frontend_dist / "index.html").write_text("<html><body>ai-train</body></html>", encoding="utf-8")
         (self.frontend_dist / "assets" / "app.js").write_text("console.log('ai-train')", encoding="utf-8")
         os.environ["AI_CAP_HOST_ROOT"] = str(self.host_root)
-        os.environ["AI_CAP_FRONTEND_DIST"] = str(self.frontend_dist)
+        self.original_get_frontend_dist = main_module._get_frontend_dist
+        main_module._get_frontend_dist = lambda: self.frontend_dist
         reset_settings_cache()
         reset_database_cache()
 
@@ -27,7 +29,7 @@ class FrontendRoutesTestCase(unittest.TestCase):
         reset_database_cache()
         reset_settings_cache()
         os.environ.pop("AI_CAP_HOST_ROOT", None)
-        os.environ.pop("AI_CAP_FRONTEND_DIST", None)
+        main_module._get_frontend_dist = self.original_get_frontend_dist
         self.temp_dir.cleanup()
 
     def test_frontend_routes_are_registered_without_breaking_api_routes(self) -> None:
