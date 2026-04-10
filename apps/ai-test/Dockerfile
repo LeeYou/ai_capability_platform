@@ -4,7 +4,7 @@ FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /workspace/apps/ai-test/frontend
 
-COPY apps/ai-test/frontend/package.json apps/ai-test/frontend/package-lock.json ./
+COPY apps/ai-test/frontend/package.json apps/ai-test/frontend/package-lock.json /workspace/apps/ai-test/frontend/
 RUN npm ci
 
 COPY apps/ai-test/frontend/ /workspace/apps/ai-test/frontend/

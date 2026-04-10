@@ -4,7 +4,7 @@ FROM node:22-bookworm-slim AS frontend-builder
 
 WORKDIR /workspace/apps/ai-license-mgr/frontend
 
-COPY apps/ai-license-mgr/frontend/package.json apps/ai-license-mgr/frontend/package-lock.json ./
+COPY apps/ai-license-mgr/frontend/package.json apps/ai-license-mgr/frontend/package-lock.json /workspace/apps/ai-license-mgr/frontend/
 RUN npm ci
 
 COPY apps/ai-license-mgr/frontend/ /workspace/apps/ai-license-mgr/frontend/
