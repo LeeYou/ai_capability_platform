@@ -25,8 +25,8 @@ COPY apps/ai-license-mgr/backend/ /workspace/backend/
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --no-cache-dir \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --no-cache-dir \
     cryptography==46.0.6 \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
