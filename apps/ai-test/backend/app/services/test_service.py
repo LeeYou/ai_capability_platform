@@ -18,6 +18,46 @@ from app.services.report_service import generate_test_report
 
 ALLOWED_BACKENDS = {"auto", "gpu", "cpu"}
 
+# TT12：各任务类型的期望输出 schema 模板（与 ai-train task_contracts 保持一致）
+TASK_TYPE_OUTPUT_SCHEMAS: dict[str, dict[str, object]] = {
+    "classification": {
+        "required_keys": ["label", "score"],
+        "sample_output": {"label": "positive", "score": 0.95},
+    },
+    "detection": {
+        "required_keys": ["objects"],
+        "sample_output": {"objects": [{"label": "face", "bbox": [0, 0, 100, 100], "score": 0.9}]},
+    },
+    "ocr": {
+        "required_keys": ["text"],
+        "sample_output": {"text": "sample text", "regions": [{"text": "sample", "bbox": [0, 0, 50, 20]}]},
+    },
+    "structured_extraction": {
+        "required_keys": ["fields"],
+        "sample_output": {"fields": {"key": "value"}, "confidence": {"key": 0.9}},
+    },
+}
+
+# TT14：各任务类型的模板化回归测试用例定义
+TASK_TYPE_REGRESSION_TEMPLATES: dict[str, list[dict[str, object]]] = {
+    "classification": [
+        {"case_name": "smoke_positive", "expected_output": "positive"},
+        {"case_name": "smoke_negative", "expected_output": "negative"},
+    ],
+    "detection": [
+        {"case_name": "smoke_object_detect", "expected_output": None},
+        {"case_name": "smoke_empty_scene", "expected_output": None},
+    ],
+    "ocr": [
+        {"case_name": "smoke_text_extract", "expected_output": None},
+        {"case_name": "smoke_blank_image", "expected_output": None},
+    ],
+    "structured_extraction": [
+        {"case_name": "smoke_field_extract", "expected_output": None},
+        {"case_name": "smoke_empty_doc", "expected_output": None},
+    ],
+}
+
 
 class TestTaskNotFoundError(ValueError):
     """测试任务不存在。"""
@@ -92,24 +132,161 @@ def _resolve_model(catalog: dict[str, object], capability_name: str, model_versi
     raise ValueError("未找到匹配的模型版本，请先同步 ai-train 模型目录。")
 
 
+def _load_model_manifest(model: dict[str, object]) -> dict[str, object] | None:
+    """TT12/TT13：从模型目录快照条目加载 ai-train 模型包 manifest。"""
+    manifest_path_str = str(model.get("manifest_path") or "")
+    if not manifest_path_str:
+        return None
+    manifest_path = Path(manifest_path_str)
+    if not manifest_path.is_file():
+        return None
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _extract_task_type(model: dict[str, object], model_manifest: dict[str, object] | None) -> str:
+    """TT12：从模型条目或 manifest 提取任务类型，未知时回退到 classification。"""
+    task_type = str(model.get("task_type") or "")
+    if not task_type and model_manifest:
+        task_type = str(model_manifest.get("task_type") or "")
+    return task_type if task_type in TASK_TYPE_OUTPUT_SCHEMAS else "classification"
+
+
+def _build_evidence_chain(
+    model: dict[str, object],
+    model_manifest: dict[str, object] | None,
+    task_type: str,
+) -> dict[str, object]:
+    """TT13：构建模型 / 插件 / license / revision 统一验收证据链。"""
+    source_train_task_id: int | None = None
+    manifest_checksum: str | None = None
+    if model_manifest:
+        raw_task_id = model_manifest.get("source_train_task_id")
+        if isinstance(raw_task_id, int):
+            source_train_task_id = raw_task_id
+        manifest_path_str = str(model.get("manifest_path") or "")
+        if manifest_path_str and Path(manifest_path_str).is_file():
+            manifest_checksum = hashlib.sha256(
+                Path(manifest_path_str).read_bytes()
+            ).hexdigest()
+
+    return {
+        "model": {
+            "capability_name": str(model.get("capability_name") or ""),
+            "model_version": str(model.get("model_version") or ""),
+            "task_type": task_type,
+            "source_train_task_id": source_train_task_id,
+            "manifest_path": str(model.get("manifest_path") or ""),
+            "manifest_checksum": manifest_checksum,
+            "artifact_path": str(model.get("artifact_path") or ""),
+            "backend_type": str(model.get("backend_type") or ""),
+        },
+        "plugin": {
+            "note": "如需插件追溯，请与 ai-builder delivery_package/package_manifest.json 中 provenance 字段对应。"
+        },
+        "license": {
+            "note": "如需 license 追溯，请与 ai-license-mgr 授权记录 issue_record_id 对应。"
+        },
+        "revision": {
+            "note": "如需运行时版本追溯，请参考 ai-prod /api/v1/status revision 字段。"
+        },
+    }
+
+
+def _validate_expected_output(expected_output: str | None, task_type: str) -> dict[str, object]:
+    """TT12：校验测试用例期望输出与任务类型 schema 的兼容性。"""
+    if expected_output is None or expected_output.strip() == "":
+        return {"status": "no_expected_output", "task_type": task_type}
+    schema = TASK_TYPE_OUTPUT_SCHEMAS.get(task_type, {})
+    required_keys = list(schema.get("required_keys", []))
+
+    # 尝试将 expected_output 解析为 JSON 做 schema 对齐校验
+    try:
+        parsed = json.loads(expected_output)
+        if isinstance(parsed, dict) and required_keys:
+            missing = [k for k in required_keys if k not in parsed]
+            if missing:
+                return {
+                    "status": "schema_mismatch",
+                    "task_type": task_type,
+                    "missing_keys": missing,
+                    "hint": f"{task_type} 类型期望输出应包含 {required_keys}",
+                }
+            return {"status": "schema_match", "task_type": task_type}
+    except (ValueError, TypeError):
+        # 非 JSON 格式：视为标签字符串，仅对 classification 类型有效
+        if task_type == "classification":
+            return {"status": "label_string", "task_type": task_type}
+        return {
+            "status": "schema_warning",
+            "task_type": task_type,
+            "hint": f"{task_type} 类型建议使用 JSON 格式期望输出",
+        }
+    return {"status": "ok", "task_type": task_type}
+
+
 def _simulate_case_execution(
     capability_name: str,
     model_version: str,
     provider: str,
     case_name: str,
     input_path: str,
+    task_type: str = "classification",
 ) -> dict[str, object]:
+    """TT12：任务类型感知的仿真推理执行。
+
+    根据 task_type 生成与训练标注 schema 对齐的仿真输出，确保测试样本输入与
+    训练标注 schema 保持一致性，便于后续期望输出校验。
+    """
     started = time.perf_counter()
     digest = hashlib.sha256(f"{capability_name}:{model_version}:{case_name}:{input_path}".encode("utf-8")).hexdigest()
-    label = "positive" if int(digest[:2], 16) % 2 == 0 else "negative"
     score = round(0.5 + (int(digest[2:6], 16) / 65535) * 0.49, 4)
     duration_ms = max(1, int((time.perf_counter() - started) * 1000))
+
+    if task_type == "detection":
+        label = "person" if int(digest[:2], 16) % 2 == 0 else "face"
+        x1 = int(digest[6:8], 16)
+        y1 = int(digest[8:10], 16)
+        x2 = x1 + int(digest[10:12], 16) + 20
+        y2 = y1 + int(digest[12:14], 16) + 20
+        raw_output = {
+            "objects": [{"label": label, "bbox": [x1, y1, x2, y2], "score": score}],
+        }
+        actual_output = label
+    elif task_type == "ocr":
+        sample_texts = ["invoice", "contract", "report", "form"]
+        text_idx = int(digest[:2], 16) % len(sample_texts)
+        raw_output = {
+            "text": sample_texts[text_idx],
+            "regions": [{"text": sample_texts[text_idx], "bbox": [0, 0, 100, 20]}],
+        }
+        actual_output = sample_texts[text_idx]
+    elif task_type == "structured_extraction":
+        raw_output = {
+            "fields": {"field_0": f"value_{digest[:4]}", "field_1": f"value_{digest[4:8]}"},
+            "confidence": {"field_0": score, "field_1": round(score - 0.05, 4)},
+        }
+        actual_output = json.dumps(raw_output["fields"], ensure_ascii=False, sort_keys=True)
+    else:
+        # classification（默认）
+        label = "positive" if int(digest[:2], 16) % 2 == 0 else "negative"
+        raw_output = {"label": label, "score": score}
+        actual_output = label
+
+    raw_output["provider"] = provider
+    raw_output["task_type"] = task_type
     return {
-        "label": label,
+        "actual_output": actual_output,
         "score": score,
         "provider": provider,
         "duration_ms": duration_ms,
-        "raw_output": {"label": label, "score": score, "provider": provider},
+        "raw_output": raw_output,
+        "task_type": task_type,
     }
 
 
@@ -120,6 +297,7 @@ def _run_case_with_timeout(
     case_name: str,
     input_path: str,
     timeout_seconds: int,
+    task_type: str = "classification",
 ) -> dict[str, object]:
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
@@ -129,6 +307,7 @@ def _run_case_with_timeout(
             provider,
             case_name,
             input_path,
+            task_type,
         )
         try:
             return future.result(timeout=timeout_seconds)
@@ -174,6 +353,12 @@ def _task_detail(task: TestTaskModel) -> dict[str, object]:
         }
         for case in task.cases
     ]
+    # TT13：附加 evidence_chain 到任务详情（从 evidence_json 字段恢复）
+    if hasattr(task, "evidence_json") and task.evidence_json:
+        try:
+            detail["evidence_chain"] = json.loads(task.evidence_json)
+        except (ValueError, TypeError):
+            detail["evidence_chain"] = None
     return detail
 
 
@@ -200,6 +385,11 @@ def create_test_task(
     model = _resolve_model(catalog, capability_name, model_version)
     execution_backend, provider = _resolve_execution_backend(requested_backend)
 
+    # TT12/TT13：加载模型 manifest，提取任务类型与证据链
+    model_manifest = _load_model_manifest(model)
+    capability_task_type = _extract_task_type(model, model_manifest)
+    evidence_chain = _build_evidence_chain(model, model_manifest, capability_task_type)
+
     task = TestTaskModel(
         task_type=task_type,
         capability_name=capability_name,
@@ -214,6 +404,9 @@ def create_test_task(
         failed_cases=0,
         started_at=datetime.now(UTC).replace(tzinfo=None),
     )
+    # TT13：将 evidence_chain 序列化写入任务记录（如模型支持该字段）
+    if hasattr(task, "evidence_json"):
+        task.evidence_json = json.dumps(evidence_chain, ensure_ascii=False, sort_keys=True)
     session.add(task)
     session.commit()
     session.refresh(task)
@@ -230,6 +423,9 @@ def create_test_task(
         session.commit()
         session.refresh(test_case)
 
+        # TT12：校验期望输出与任务类型 schema 兼容性
+        schema_check = _validate_expected_output(case_payload.expected_output, capability_task_type)
+
         try:
             execution = _run_case_with_timeout(
                 capability_name=capability_name,
@@ -238,9 +434,16 @@ def create_test_task(
                 case_name=test_case.case_name,
                 input_path=test_case.input_path,
                 timeout_seconds=timeout_seconds,
+                task_type=capability_task_type,
             )
-            actual_output = str(execution["label"])
+            actual_output = str(execution["actual_output"])
             passed = test_case.expected_output in {None, "", actual_output}
+            raw_output = dict(execution["raw_output"])
+            raw_output["schema_check"] = schema_check
+            raw_output["evidence_chain_ref"] = {
+                "task_id": task.id,
+                "source_train_task_id": evidence_chain["model"]["source_train_task_id"],
+            }
             result = TestResultModel(
                 task_id=task.id,
                 case_id=test_case.id,
@@ -251,7 +454,7 @@ def create_test_task(
                 score=float(execution["score"]),
                 expected_output=test_case.expected_output,
                 actual_output=actual_output,
-                raw_output_json=json.dumps(execution["raw_output"], ensure_ascii=False, sort_keys=True),
+                raw_output_json=json.dumps(raw_output, ensure_ascii=False, sort_keys=True),
                 error_message=None if passed else "实际输出与期望输出不一致。",
             )
             task.passed_cases += 1 if passed else 0
@@ -293,3 +496,70 @@ def get_test_task(session: Session, task_id: int) -> dict[str, object]:
     if task is None:
         raise TestTaskNotFoundError("测试任务不存在。")
     return _task_detail(task)
+
+
+def get_capability_test_template(task_type: str) -> dict[str, object]:
+    """TT14：获取指定任务类型的模板化测试用例定义。
+
+    返回标准测试用例模板，新增能力时可直接复用，避免重复定义回归用例。
+    """
+    normalized = task_type.strip().lower()
+    template_cases = TASK_TYPE_REGRESSION_TEMPLATES.get(normalized, TASK_TYPE_REGRESSION_TEMPLATES["classification"])
+    schema = TASK_TYPE_OUTPUT_SCHEMAS.get(normalized, TASK_TYPE_OUTPUT_SCHEMAS["classification"])
+    return {
+        "task_type": normalized,
+        "output_schema": schema,
+        "template_cases": template_cases,
+        "usage": (
+            "使用 template_cases 中定义的 case_name 和 expected_output，"
+            "配合 create_template_regression_task() 创建标准回归任务。"
+        ),
+    }
+
+
+def create_template_regression_task(
+    session: Session,
+    *,
+    model_catalog_snapshot_path: Path,
+    ai_train_api_base_url: str,
+    datasets_root: Path,
+    test_reports_root: Path,
+    capability_name: str,
+    model_version: str,
+    requested_backend: str = "auto",
+    timeout_seconds: int = 30,
+    sample_input_path: str = "sample.jpg",
+) -> dict[str, object]:
+    """TT14：基于任务类型模板创建标准化回归测试任务。
+
+    自动从模型 manifest 提取任务类型，生成标准测试用例，无需调用者手动指定用例。
+    新增能力时可直接使用此函数快速建立回归基线。
+    """
+    catalog = get_model_catalog(model_catalog_snapshot_path, ai_train_api_base_url)
+    model = _resolve_model(catalog, capability_name, model_version)
+    model_manifest = _load_model_manifest(model)
+    capability_task_type = _extract_task_type(model, model_manifest)
+
+    template = get_capability_test_template(capability_task_type)
+    cases = [
+        TestCaseInputPayload(
+            case_name=str(tc["case_name"]),
+            input_path=sample_input_path,
+            expected_output=str(tc["expected_output"]) if tc["expected_output"] is not None else None,
+        )
+        for tc in template["template_cases"]
+    ]
+
+    return create_test_task(
+        session,
+        model_catalog_snapshot_path=model_catalog_snapshot_path,
+        ai_train_api_base_url=ai_train_api_base_url,
+        datasets_root=datasets_root,
+        test_reports_root=test_reports_root,
+        task_type="batch",
+        capability_name=capability_name,
+        model_version=model_version,
+        requested_backend=requested_backend,
+        timeout_seconds=timeout_seconds,
+        cases=cases,
+    )

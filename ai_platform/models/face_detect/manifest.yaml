@@ -1,3 +1,0 @@
-capability_id: face_detect
-version: 1.0.0
-model_file: model.onnx

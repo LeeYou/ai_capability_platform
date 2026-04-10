@@ -15,17 +15,17 @@
 
 ## 3. 部署前准备
 
+> 以下所有命令均在**仓库根目录**（即 `ai_capability_platform/` 所在目录）下执行。
+
 1. 初始化宿主机目录
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 bash scripts/docker/init_host_root.sh
 ```
 
 2. 准备标准运行配置模板
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 cp apps/ai-prod/config/prod_defaults.env /tmp/ai-prod-prod.env
 ```
 
@@ -40,14 +40,14 @@ cp apps/ai-prod/config/prod_defaults.env /tmp/ai-prod-prod.env
 ### 4.1 启动 Python backend 外壳
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/backend
+cd apps/ai-prod/backend
 PYTHONPATH=. python3 -m uvicorn app.main:app --host 127.0.0.1 --port 26014
 ```
 
 ### 4.2 启动 C++ HTTP 主入口
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-prod/cpp
+cd apps/ai-prod/cpp
 cmake -S . -B build
 cmake --build build --parallel
 AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND_PORT=26004 ./build/ai_prod_cpp_proxy
@@ -76,7 +76,6 @@ AI_PROD_PY_BACKEND_HOST=127.0.0.1 AI_PROD_PY_BACKEND_PORT=26014 AI_PROD_CPP_BIND
 ### 5.2 验收命令
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 python3 apps/ai-prod/scripts/acceptance_check.py \
   --base-url http://127.0.0.1:26004 \
   --run-admin-checks \
@@ -86,7 +85,6 @@ python3 apps/ai-prod/scripts/acceptance_check.py \
 如需单独执行公开健康检查，而暂不触发切换链路：
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:26004
 ```
 
@@ -97,7 +95,6 @@ python3 apps/ai-prod/scripts/acceptance_check.py --base-url http://127.0.0.1:260
 ### 6.1 健康接口并发 smoke
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 python3 apps/ai-prod/scripts/pressure_smoke.py \
   --base-url http://127.0.0.1:26004 \
   --path /api/v1/health \
@@ -110,7 +107,6 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
 ### 6.2 推理接口并发 smoke（需已装载能力）
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 python3 apps/ai-prod/scripts/pressure_smoke.py \
   --base-url http://127.0.0.1:26004 \
   --path /api/v1/infer/<capability_name> \
@@ -143,7 +139,6 @@ python3 apps/ai-prod/scripts/pressure_smoke.py \
 ## 9. 与 Makefile 的对应入口
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 make ai-prod-acceptance
 make ai-prod-pressure-smoke
 ```

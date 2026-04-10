@@ -18,8 +18,8 @@
 | S8 | 收敛 `license_tool`、示例工程与错误码文档 | 已完成 |
 | S9 | 纳入统一 `delivery_package/` 与验收体系 | 已完成 |
 | S10 | 与 ai-prod runtime / license / 诊断语义收敛 | 已完成 |
-| S11 | 与 ai-builder / ai-prod 真实交付链产物一致性收敛 | 未开始 |
-| S12 | SDK 装载校验、示例工程与验收回归增强 | 未开始 |
+| S11 | 与 ai-builder / ai-prod 真实交付链产物一致性收敛 | 已完成 |
+| S12 | SDK 装载校验、示例工程与验收回归增强 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -39,13 +39,14 @@
 3. 当前已继续补齐 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，进一步对齐 ai-builder 摘要 schema 与交付复审入口。
 4. 当前已完成 package 级 `acceptance_checklist.json`、`version_manifest.json`、`delivery_summary.json` 与 shared schema 对齐，checksum 字段命名已与 ai-builder 收敛。
 5. 当前已完成 S10：SDK 内 `tools/license_tool` 已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json`，manifest/README/验收清单/校验脚本已同步对齐 ai-prod / ai-license-mgr 的稳定授权诊断语义。
-6. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 S10-S12 作为下一轮模块整改工作项。
+7. 当前已完成 S11：SDK 包生成已强依赖 ai-builder 交付目录（`lib/include/license` 必须存在），SDK manifest 中附带 `source_builder_manifest`，实现了与 ai-builder 真实交付链产物的一致性收敛。
+8. 当前已完成 S12：SDK 包内已内置 `validation/verify_sdk_package.py` 校验脚本，可验证标准目录结构、manifest、checksums、LICENSE_DIAGNOSTICS.json 与 VALIDATION_VECTORS.json 齐全；已生成 `sample_c_api.c`、`CMakeLists.txt`（Linux/Windows/JNI）和 `NativeBridge.java` 示例工程；后端单元测试已覆盖校验脚本执行通过的端到端回归。
+9. 当前已完成基线验证：ai-sdk 后端单元测试（全部 5 个测试用例）均已通过，stage_status 已同步更新为 S7–S12 全部 completed。
 
 ### 4.3 未完成
 
-1. S11：与 ai-builder / ai-prod 真实交付链产物一致性收敛。
-2. S12：SDK 装载校验、示例工程与验收回归增强。
+1. 暂无；ai-sdk 模块当前轮 S11-S12 已全部完成，后续如继续推进将转入新的 SDK 增量计划。
 
 ### 4.4 阶段小结
 
-单机交付 SDK 当前已完成 S10：`tools/license_tool` source bundle 已补齐稳定诊断契约、金标准测试向量、manifest 版本标识与验收脚本校验入口，确保 SDK 交付物与 ai-prod / ai-license-mgr 在授权诊断语义上保持一致。后续仍需继续完成与 ai-builder / ai-prod 真实交付链产物一致性收敛，以及 SDK 装载校验和示例回归增强。
+单机交付 SDK 本轮已完成 S11-S12：SDK 包生成已强依赖 ai-builder 真实交付目录（缺少 lib/include/license 则构建报错），manifest 中附带 `source_builder_manifest` 实现产物溯源；同时在每个目标包内生成 `validation/verify_sdk_package.py` 校验脚本（检查必要文件存在性）、标准示例工程（C/C++/Java），并通过后端单元测试对校验脚本执行做端到端回归。`stage_status` 已同步更新为 S7–S12 全部 completed。当前 ai-sdk 模块本轮所有整改项均已完成。

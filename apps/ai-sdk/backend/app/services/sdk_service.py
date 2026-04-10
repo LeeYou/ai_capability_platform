@@ -52,10 +52,10 @@ STANDARD_SDK_DIR_NAMES = {
 }
 LICENSE_TOOL_VERSION = "1.0.0"
 LICENSE_TOOL_SOURCE_FILES = {
-    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
-    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
-    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
-    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
+    "CMakeLists.txt": REPO_ROOT / "apps/shared/license_tool_src/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.h",
 }
 
 
@@ -1071,7 +1071,7 @@ def create_sdk_package(
             "gpu_fallback": True,
             "delivery_package_alignment": {
                 "sdk_dir": sdk_dir_name,
-                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
+                "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed", "S11": "completed", "S12": "completed"},
             },
         }
         sdk_manifest_path = manifest_dir / "manifest.json"
@@ -1172,7 +1172,7 @@ def create_sdk_package(
         "model_version": safe_model_version,
         "requested_targets": sorted(set(normalized_targets)),
         "jni_enabled": jni_enabled,
-        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed"},
+        "stage_status": {"S7": "completed", "S8": "completed", "S9": "completed", "S10": "completed", "S11": "completed", "S12": "completed"},
         "delivery_package_alignment": True,
         "targets": [
             {

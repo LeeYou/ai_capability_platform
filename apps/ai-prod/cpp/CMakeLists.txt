@@ -7,8 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AI_PROD_CPP_BUILD_TESTS "Build ai-prod cpp tests" ON)
 
-set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ai_platform/third_party")
-set(AI_PLATFORM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../ai_platform/include")
+set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+set(AI_PLATFORM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)

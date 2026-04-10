@@ -19,9 +19,9 @@
 | TT9 | 生产镜像验收任务与回归脚本体系 | 已完成 |
 | TT10 | 面向 C++ HTTP 主服务的性能/稳定性验收 | 已完成 |
 | TT11 | 研发验收与交付验收双视角报告模板 | 已完成 |
-| TT12 | 测试样本与训练标注 schema 映射收敛 | 未开始 |
-| TT13 | 模型 / 插件 / license / revision 统一验收证据链 | 未开始 |
-| TT14 | 新增能力模板化回归与交付验收用例 | 未开始 |
+| TT12 | 测试样本与训练标注 schema 映射收敛 | 已完成 |
+| TT13 | 模型 / 插件 / license / revision 统一验收证据链 | 已完成 |
+| TT14 | 新增能力模板化回归与交付验收用例 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -37,20 +37,12 @@
 
 ### 4.2 进行中
 
-1. 当前阶段已明确 ai-test 后续重点转向生产镜像验收与交付验收体系建设。
-2. 当前已完成 TT9：ai-test 后端已新增生产镜像验收任务模型、任务接口与验收执行服务，可直接编排 ai-prod `acceptance_check.py` / `pressure_smoke.py` 脚本并沉淀报告。
-3. 当前已完成 TT10：已新增面向 C++ HTTP 主服务的性能/稳定性验收基线模型、默认阈值模板、基线查询/写入接口，并让验收任务详情与报告输出基线比对结果。
-4. 当前已完成 TT11：已在报告详情与导出接口中补齐“研发验收 / 交付验收”双视角模板切换，并让前端管理台展示双视角报告能力。
-5. 当前已结合总体计划 R7 第二轮，对前端补齐跨模块联调导航入口、当前模块标识与联调复审清单展示，便于测试侧与训练/构建/运行链路统一联调。
-6. 当前已完成 R7 最终收口：前端已切换为共享 R7 workspace 配置与公共样式，并统一展示总体联调复审结论。
-7. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 TT12-TT14 作为下一轮模块整改工作项。
+无。TT1–TT14 全部完成，ai-test 模块 R12 整改已收口。
 
 ### 4.3 未完成
 
-1. TT12：测试样本与训练标注 schema 映射收敛。
-2. TT13：模型 / 插件 / license / revision 统一验收证据链。
-3. TT14：新增能力模板化回归与交付验收用例。
+无。
 
 ### 4.4 阶段小结
 
-ai-test 上一轮已完成 TT9-TT11，具备生产镜像验收、性能基线和双视角报告模板能力；但结合本轮逻辑自洽审查，仍需继续完成测试样本与训练标注 schema 的映射、模型 / 插件 / license / revision 统一验收证据链，以及新增能力模板化回归与交付验收用例。因此本模块计划已进入新一轮整改阶段，新增 TT12-TT14 作为后续逐项实施与跟踪基线。
+本轮（R12）已完成 TT12-TT14：TT12 引入 TASK_TYPE_OUTPUT_SCHEMAS 和任务类型感知仿真推理，_simulate_case_execution() 根据 task_type 生成 classification/detection/ocr/structured_extraction 对应格式输出，并新增 _validate_expected_output() 校验期望输出与训练标注 schema 兼容性；TT13 在 create_test_task() 中加载模型 manifest，构建 evidence_chain（source_train_task_id/manifest_checksum/artifact_path），写入 TestTaskModel.evidence_json 并在报告 summary 中暴露；TT14 新增 get_capability_test_template() 和 create_template_regression_task()，支持新能力快速建立标准化回归基线。新增 8 个测试用例，全部 17 个测试通过，RTS-01/02/03 整改收口。

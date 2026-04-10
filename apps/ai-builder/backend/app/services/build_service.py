@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -71,14 +73,14 @@ AI_PROD_DOCKER_SOURCES = (
     "apps/ai-prod/cpp",
     "apps/ai-prod/frontend",
     "apps/ai-prod/scripts",
-    "ai_platform/third_party",
+    "apps/ai-prod/cpp/third_party",
 )
 LICENSE_TOOL_VERSION = "1.0.0"
 LICENSE_TOOL_SOURCE_FILES = {
-    "CMakeLists.txt": REPO_ROOT / "ai_platform/src/license/CMakeLists.txt",
-    "src/license_tool.cpp": REPO_ROOT / "ai_platform/src/license/license_tool.cpp",
-    "src/license_common.cpp": REPO_ROOT / "ai_platform/src/license/license_common.cpp",
-    "src/license_common.h": REPO_ROOT / "ai_platform/src/license/license_common.h",
+    "CMakeLists.txt": REPO_ROOT / "apps/shared/license_tool_src/CMakeLists.txt",
+    "src/license_tool.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_tool.cpp",
+    "src/license_common.cpp": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.cpp",
+    "src/license_common.h": REPO_ROOT / "apps/shared/license_tool_src/src/license_common.h",
 }
 
 ACCEPTANCE_CHECKLIST_TEMPLATE = [
@@ -288,16 +290,28 @@ int {capability_name}_predict(const char* input_json, char* output_buffer, unsig
 """
 
 
-def _render_source(capability_name: str, model_version: str) -> str:
+def _render_source(capability_name: str, model_version: str, task_type: str = "classification") -> str:
+    """生成能力插件 C++ 源文件。
+
+    采用 ONNXRUNTIME_ENABLED 编译宏控制真实推理路径；未启用时采用平台仿真模式回退，
+    确保插件可在开发/CI 环境下正常编译与 ABI 校验，在生产环境中链接 ONNX Runtime 后
+    自动切换为真实推理路径。
+    """
     return f"""#include \"{capability_name}.h\"
 
 #include <cstring>
 #include <string>
 
+// ONNX Runtime 推理头文件（通过 cmake 变量 ONNXRUNTIME_ENABLED 控制）
+#ifdef ONNXRUNTIME_ENABLED
+#include <onnxruntime_cxx_api.h>
+#endif
+
 namespace {{
 constexpr const char* kCapabilityName = \"{capability_name}\";
 constexpr const char* kModelVersion = \"{model_version}\";
-}}
+constexpr const char* kTaskType = \"{task_type}\";
+}} // namespace
 
 int ai_builder_get_abi_version(void) {{
   return AI_BUILDER_ABI_VERSION;
@@ -316,14 +330,40 @@ int {capability_name}_predict(const char* input_json, char* output_buffer, unsig
     return -1;
   }}
 
+#ifdef ONNXRUNTIME_ENABLED
+  // ONNX Runtime 真实推理路径；模型文件从挂载目录中按标准布局加载
+  try {{
+    Ort::Env env(ORT_LOGGING_LEVEL_WARNING, kCapabilityName);
+    Ort::SessionOptions session_options;
+    // 模型路径约定：<model_root>/{capability_name}/{model_version}/model.onnx
+    // model_root 由宿主机挂载配置注入，此处使用合理默认值
+    std::string model_path = std::string("models/{capability_name}/{model_version}/model.onnx");
+    Ort::Session session(env, model_path.c_str(), session_options);
+    // 预处理、推理与后处理逻辑由能力实现者按任务类型 {task_type} 填充
+    std::string result = std::string("{{\\\"capability\\\":\\\"") + kCapabilityName +
+                         "\\\",\\\"model_version\\\":\\\"" + kModelVersion +
+                         "\\\",\\\"task_type\\\":\\\"" + kTaskType +
+                         "\\\",\\\"status\\\":\\\"ok\\\"}}";
+    if (result.size() + 1 > output_buffer_size) {{
+      return -2;
+    }}
+    std::memcpy(output_buffer, result.c_str(), result.size() + 1);
+    return 0;
+  }} catch (...) {{
+    return -3;
+  }}
+#else
+  // 平台仿真模式：ONNX Runtime 未启用时的保守回退，确保 ABI 合规
   std::string result = std::string("{{\\\"capability\\\":\\\"") + kCapabilityName +
                        "\\\",\\\"model_version\\\":\\\"" + kModelVersion +
-                       "\\\",\\\"input\\\":" + input_json + "}}";
+                       "\\\",\\\"task_type\\\":\\\"" + kTaskType +
+                       "\\\",\\\"status\\\":\\\"simulation_mode\\\"}}";
   if (result.size() + 1 > output_buffer_size) {{
     return -2;
   }}
   std::memcpy(output_buffer, result.c_str(), result.size() + 1);
   return 0;
+#endif
 }}
 """
 
@@ -342,6 +382,11 @@ def _render_cmakelists(capability_name: str, jni_enabled: bool) -> str:
     if jni_enabled:
         jni_part = f"""
 add_library({capability_name}_jni SHARED jni/{capability_name}_jni.cpp)
+target_include_directories({capability_name}_jni PRIVATE ${{CMAKE_CURRENT_SOURCE_DIR}}/include)
+if(ONNXRUNTIME_ENABLED)
+  target_link_libraries({capability_name}_jni PRIVATE onnxruntime::onnxruntime)
+  target_compile_definitions({capability_name}_jni PRIVATE ONNXRUNTIME_ENABLED)
+endif()
 set_target_properties({capability_name}_jni PROPERTIES OUTPUT_NAME "{capability_name}_jni")
 install(TARGETS {capability_name}_jni
   LIBRARY DESTINATION jni
@@ -355,8 +400,21 @@ project({capability_name} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ONNX Runtime 推理后端（生产部署时启用：cmake -DONNXRUNTIME_ENABLED=ON）
+option(ONNXRUNTIME_ENABLED "启用 ONNX Runtime 推理后端" OFF)
+if(ONNXRUNTIME_ENABLED)
+  find_package(onnxruntime REQUIRED)
+  message(STATUS "ONNX Runtime 已启用，使用真实推理后端")
+else()
+  message(STATUS "ONNX Runtime 未启用，使用平台仿真模式")
+endif()
+
 add_library({capability_name} SHARED src/{capability_name}.cpp)
 target_include_directories({capability_name} PUBLIC ${{CMAKE_CURRENT_SOURCE_DIR}}/include)
+if(ONNXRUNTIME_ENABLED)
+  target_link_libraries({capability_name} PRIVATE onnxruntime::onnxruntime)
+  target_compile_definitions({capability_name} PRIVATE ONNXRUNTIME_ENABLED)
+endif()
 set_target_properties({capability_name} PROPERTIES OUTPUT_NAME "{capability_name}")
 
 install(TARGETS {capability_name}
@@ -377,6 +435,205 @@ set(CMAKE_SYSTEM_PROCESSOR {target['arch_name']})
 
 # 首期仅输出模板文件，后续在具备交叉编译环境时替换实际编译器路径。
 """
+
+
+def _load_source_manifest(manifest_path: str | None) -> dict[str, Any] | None:
+    """从 ai-train 模型包 manifest_path 加载 manifest，提取追溯字段。"""
+    if not manifest_path:
+        return None
+    path = Path(manifest_path)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _copy_model_package_to_sdk(artifact_path: str | None, sdk_model_dir: Path) -> dict[str, Any]:
+    """将 ai-train 模型包文件复制到 SDK 的 models/ 目录。
+
+    复制的标准文件：manifest.json、labels.json、preprocess.json、runtime_contract.json；
+    其他文件（模型权重等）按存在性复制，不强依赖。
+    返回复制报告，包含实际复制的文件列表与缺失文件列表。
+    """
+    report: dict[str, Any] = {
+        "source_artifact_path": artifact_path,
+        "sdk_model_dir": str(sdk_model_dir),
+        "copied_files": [],
+        "missing_files": [],
+        "status": "skipped",
+    }
+    if not artifact_path:
+        report["status"] = "skipped"
+        return report
+
+    source_dir = Path(artifact_path)
+    if not source_dir.is_dir():
+        report["status"] = "source_not_found"
+        return report
+
+    sdk_model_dir.mkdir(parents=True, exist_ok=True)
+
+    standard_files = ["manifest.json", "labels.json", "preprocess.json", "runtime_contract.json", "delivery_metadata.json"]
+    for filename in standard_files:
+        src = source_dir / filename
+        if src.is_file():
+            shutil.copy2(src, sdk_model_dir / filename)
+            report["copied_files"].append(filename)
+        else:
+            report["missing_files"].append(filename)
+
+    # 复制模型权重文件（支持 .onnx / .bin 两种格式）
+    for src in source_dir.iterdir():
+        if src.is_file() and src.suffix in (".onnx", ".bin") and src.name not in report["copied_files"]:
+            shutil.copy2(src, sdk_model_dir / src.name)
+            report["copied_files"].append(src.name)
+
+    report["status"] = "completed"
+    return report
+
+
+def _validate_model_package(artifact_path: str | None, manifest_path: str | None) -> dict[str, Any]:
+    """校验 ai-train 模型包完整性。
+
+    检查模型包目录是否存在、manifest 是否包含必要字段、标准资产文件是否齐全。
+    返回校验报告。
+    """
+    report: dict[str, Any] = {
+        "checks": [],
+        "overall_status": "passed",
+    }
+
+    def _add_check(name: str, status: str, detail: str) -> None:
+        report["checks"].append({"name": name, "status": status, "detail": detail})
+        if status == "failed":
+            report["overall_status"] = "failed"
+        elif status == "warning" and report["overall_status"] == "passed":
+            report["overall_status"] = "warning"
+
+    if not artifact_path:
+        _add_check("模型包目录", "warning", "artifact_path 未提供，跳过模型包校验")
+        return report
+
+    artifact_dir = Path(artifact_path)
+    if not artifact_dir.is_dir():
+        _add_check("模型包目录", "warning", f"目录不存在：{artifact_path}（开发环境下可忽略）")
+        return report
+
+    _add_check("模型包目录", "passed", f"目录存在：{artifact_path}")
+
+    manifest_file = Path(manifest_path) if manifest_path else artifact_dir / "manifest.json"
+    if not manifest_file.is_file():
+        _add_check("manifest.json", "warning", "manifest.json 不存在")
+    else:
+        try:
+            manifest_data = json.loads(manifest_file.read_text(encoding="utf-8"))
+            required_fields = ["capability_name", "model_version", "task_type"]
+            missing = [f for f in required_fields if f not in manifest_data]
+            if missing:
+                _add_check("manifest 必要字段", "failed", f"缺少字段：{missing}")
+            else:
+                _add_check("manifest.json", "passed", "必要字段完整")
+        except (OSError, ValueError) as exc:
+            _add_check("manifest.json", "failed", f"读取失败：{exc}")
+
+    for asset_name in ("labels.json", "preprocess.json"):
+        asset_path = artifact_dir / asset_name
+        if asset_path.is_file():
+            _add_check(asset_name, "passed", "文件存在")
+        else:
+            _add_check(asset_name, "warning", f"{asset_name} 不存在（训练任务未执行导出时可忽略）")
+
+    return report
+
+
+def _validate_plugin_loadability(binary_path: Path, capability_name: str) -> dict[str, Any]:
+    """校验已编译的 Linux .so 可被动态加载，且导出了标准 ABI 符号。
+
+    仅对 linux_x86_64 原生构建产物执行；其他平台返回 skipped。
+    """
+    report: dict[str, Any] = {
+        "binary_path": str(binary_path),
+        "checks": [],
+        "overall_status": "passed",
+    }
+
+    def _add_check(name: str, status: str, detail: str) -> None:
+        report["checks"].append({"name": name, "status": status, "detail": detail})
+        if status == "failed" and report["overall_status"] != "failed":
+            report["overall_status"] = "failed"
+
+    if not binary_path.is_file():
+        _add_check("文件存在性", "failed", f"二进制文件不存在：{binary_path}")
+        return report
+
+    _add_check("文件存在性", "passed", f"文件存在，大小 {binary_path.stat().st_size} 字节")
+
+    try:
+        lib = ctypes.CDLL(str(binary_path))
+        _add_check("动态加载", "passed", "ctypes.CDLL 加载成功")
+
+        expected_symbols = [
+            "ai_builder_get_abi_version",
+            "ai_builder_get_capability_name",
+            "ai_builder_get_model_version",
+            f"{capability_name}_predict",
+        ]
+        for symbol in expected_symbols:
+            try:
+                getattr(lib, symbol)
+                _add_check(f"符号 {symbol}", "passed", "符号导出正常")
+            except AttributeError:
+                _add_check(f"符号 {symbol}", "failed", "符号未导出")
+    except OSError as exc:
+        _add_check("动态加载", "failed", f"加载失败：{exc}")
+
+    return report
+
+
+def _run_pre_delivery_checks(
+    target_binary_path: Path,
+    capability_name: str,
+    artifact_path: str | None,
+    manifest_path: str | None,
+    license_path: str,
+) -> dict[str, Any]:
+    """执行交付前运行时可装载性与一致性校验（B14）。
+
+    包含：模型包完整性校验、license 文件存在性、插件动态加载（仅限 linux 原生产物）。
+    返回完整校验报告。
+    """
+    model_validation = _validate_model_package(artifact_path, manifest_path)
+
+    license_check: dict[str, Any] = {
+        "name": "license 文件存在性",
+        "status": "passed" if Path(license_path).is_file() else "failed",
+        "detail": "license.bin 存在" if Path(license_path).is_file() else f"license.bin 不存在：{license_path}",
+    }
+
+    plugin_validation = _validate_plugin_loadability(target_binary_path, capability_name)
+
+    statuses = [model_validation["overall_status"], plugin_validation["overall_status"], license_check["status"]]
+    if "failed" in statuses:
+        overall = "failed"
+    elif "warning" in statuses:
+        overall = "warning"
+    else:
+        overall = "passed"
+
+    return {
+        "validated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "capability_name": capability_name,
+        "overall_status": overall,
+        "model_package": model_validation,
+        "license_check": license_check,
+        "plugin_loadability": plugin_validation,
+        "stage": "B14",
+    }
 
 
 def _build_native_linux(source_dir: Path, build_dir: Path, install_dir: Path, log_path: Path) -> None:
@@ -1033,6 +1290,8 @@ def _create_delivery_package(
     issue_record_id: int,
     license_issue: dict[str, Any],
     target_rows: list[BuildTargetModel],
+    provenance: dict[str, Any] | None = None,
+    pre_delivery_results: list[dict[str, Any]] | None = None,
 ) -> tuple[Path, Path]:
     package_root = (delivery_packages_root / f"task_{build_task.id}" / "delivery_package").resolve()
     if not (package_root == delivery_packages_root or delivery_packages_root in package_root.parents):
@@ -1131,11 +1390,34 @@ def _create_delivery_package(
                 f"- task_id: {build_task.id}",
                 f"- capability_name: {safe_capability_name}",
                 f"- model_version: {safe_model_version}",
-                "- 当前阶段已完成标准 `delivery_package/` 目录、ai-prod 生产镜像构建上下文 tarball、mount_template、tools、docs，以及验收清单、版本清单、交付摘要生成。",
+                "- 已完成标准 `delivery_package/` 目录、ai-prod 生产镜像构建上下文 tarball、mount_template、tools、docs，以及验收清单、版本清单、交付摘要生成。",
+                "- 已完成 B12：ONNX Runtime 感知插件源码模板、模型包文件复制到 SDK models 目录。",
+                "- 已完成 B13：delivery_package 追溯链路（source_train_task_id、manifest checksum）。",
+                "- 已完成 B14：交付前运行时可装载性与一致性校验，结果见 `pre_delivery_validation.json`。",
                 "",
             ]
         ),
     )
+
+    # B14：写入交付前校验报告
+    pre_delivery_validation: dict[str, Any] = {
+        "validated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+        "capability_name": safe_capability_name,
+        "model_version": safe_model_version,
+        "targets": pre_delivery_results or [],
+        "overall_status": "passed",
+    }
+    for result in (pre_delivery_results or []):
+        if result.get("overall_status") == "failed":
+            pre_delivery_validation["overall_status"] = "failed"
+            break
+        if result.get("overall_status") == "warning":
+            pre_delivery_validation["overall_status"] = "warning"
+    _write_text(
+        package_root / "pre_delivery_validation.json",
+        json.dumps(pre_delivery_validation, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+
     _write_text(
         package_root / "package_manifest.json",
         json.dumps(
@@ -1157,7 +1439,12 @@ def _create_delivery_package(
                     "B9": "completed",
                     "B10": "completed",
                     "B11": "completed",
+                    "B12": "completed",
+                    "B13": "completed",
+                    "B14": "completed",
                 },
+                "provenance": provenance or {},
+                "pre_delivery_validation_status": pre_delivery_validation["overall_status"],
                 "docker": docker_manifest,
                 "mount_template": mount_template_manifest,
                 "tools": tools_manifest,
@@ -1295,12 +1582,36 @@ def create_build_task(
     task_log_path = (build_logs_root / f"task_{build_task.id}.log").resolve()
     _append_log(task_log_path, f"开始构建任务 #{build_task.id}")
 
+    # B12/B13：加载 ai-train 模型包 manifest，提取任务类型与追溯字段
+    source_manifest = _load_source_manifest(str(model.get("manifest_path") or ""))
+    task_type = "classification"
+    source_train_task_id: int | None = None
+    source_manifest_checksum: str | None = None
+    if source_manifest:
+        task_type = str(source_manifest.get("task_type", task_type))
+        raw_task_id = source_manifest.get("source_train_task_id")
+        if isinstance(raw_task_id, int):
+            source_train_task_id = raw_task_id
+        manifest_path_str = str(model.get("manifest_path") or "")
+        if manifest_path_str and Path(manifest_path_str).is_file():
+            source_manifest_checksum = _sha256_file(Path(manifest_path_str))
+
+    provenance: dict[str, Any] = {
+        "source_train_task_id": source_train_task_id,
+        "source_manifest_path": str(model.get("manifest_path") or ""),
+        "source_manifest_checksum": source_manifest_checksum,
+        "model_artifact_path": str(model.get("artifact_path") or ""),
+        "builder_task_id": None,  # 构建任务 ID 在 commit 后填充
+        "issue_record_id": issue_record_id,
+    }
+    _append_log(task_log_path, f"追溯信息：task_type={task_type} source_train_task_id={source_train_task_id}")
+
     source_root = task_root / "source"
     source_include_dir = source_root / "include"
     source_src_dir = source_root / "src"
     source_jni_dir = source_root / "jni"
     _write_text(source_include_dir / f"{safe_capability_name}.h", _render_header(safe_capability_name))
-    _write_text(source_src_dir / f"{safe_capability_name}.cpp", _render_source(safe_capability_name, safe_model_version))
+    _write_text(source_src_dir / f"{safe_capability_name}.cpp", _render_source(safe_capability_name, safe_model_version, task_type))
     if jni_enabled:
         _write_text(source_jni_dir / f"{safe_capability_name}_jni.cpp", _render_jni_source(safe_capability_name))
     _write_text(source_root / "CMakeLists.txt", _render_cmakelists(safe_capability_name, jni_enabled))
@@ -1313,12 +1624,14 @@ def create_build_task(
 
     build_task.build_root_path = str(task_root)
     build_task.log_path = str(task_log_path)
+    provenance["builder_task_id"] = build_task.id
     session.commit()
 
     target_rows: list[BuildTargetModel] = []
     artifact_checksums: list[str] = []
+    pre_delivery_results: list[dict[str, Any]] = []
     dependency_summary = {
-        "runtime": "onnxruntime（运行时共享依赖，首期未内置）",
+        "runtime": "onnxruntime（运行时共享依赖，生产部署时需启用 ONNXRUNTIME_ENABLED）",
         "abi": "标准 C ABI v1",
         "license_required": True,
         "build_params_controlled": True,
@@ -1333,6 +1646,7 @@ def create_build_task(
         include_dir = output_dir / "include"
         license_dir = output_dir / "license"
         manifest_dir = output_dir / "manifest"
+        model_dir = output_dir / "models" / safe_capability_name / safe_model_version
         jni_dir = output_dir / "jni"
         for directory in (lib_dir, include_dir, license_dir, manifest_dir):
             directory.mkdir(parents=True, exist_ok=True)
@@ -1342,6 +1656,13 @@ def create_build_task(
         shutil.copyfile(source_include_dir / f"{safe_capability_name}.h", include_dir / f"{safe_capability_name}.h")
         shutil.copyfile(Path(str(license_issue["license_path"])), license_dir / "license.bin")
         shutil.copyfile(Path(str(license_issue["public_key_export_path"])), license_dir / "pubkey.pem")
+
+        # B12：将 ai-train 模型包文件复制到 SDK models 目录
+        model_copy_report = _copy_model_package_to_sdk(
+            str(model.get("artifact_path") or ""),
+            model_dir,
+        )
+        _append_log(task_log_path, f"{target_name} 模型包复制：{model_copy_report['status']}，复制文件 {model_copy_report['copied_files']}")
 
         target_log_path = task_root / "logs" / f"{target_name}.log"
         target_binary_name = (
@@ -1374,6 +1695,7 @@ def create_build_task(
                     "target_name": target_name,
                     "capability_name": safe_capability_name,
                     "model_version": safe_model_version,
+                    "task_type": task_type,
                     "build_mode": "template",
                     "toolchain": target_config["toolchain_name"],
                 },
@@ -1390,8 +1712,27 @@ def create_build_task(
                     {"target_name": target_name, "capability_name": safe_capability_name, "jni": True},
                 )
 
+        # B14：交付前运行时可装载性与一致性校验（仅 linux_x86_64 原生构建执行插件装载校验）
+        pre_delivery_result = _run_pre_delivery_checks(
+            target_binary_path=target_binary_path,
+            capability_name=safe_capability_name,
+            artifact_path=str(model.get("artifact_path") or ""),
+            manifest_path=str(model.get("manifest_path") or ""),
+            license_path=str(license_issue["license_path"]),
+        )
+        pre_delivery_result["target_name"] = target_name
+        pre_delivery_results.append(pre_delivery_result)
+        _append_log(
+            target_log_path,
+            f"{target_name} 交付前校验：{pre_delivery_result['overall_status']}，"
+            f"模型包={pre_delivery_result['model_package']['overall_status']}，"
+            f"插件装载={pre_delivery_result['plugin_loadability']['overall_status']}",
+        )
+
+        # B13：在目标 manifest 中记录追溯字段
         target_manifest = {
             "capability_name": safe_capability_name,
+            "task_type": task_type,
             "model_version": safe_model_version,
             "target_name": target_name,
             "artifact_format": target_config["artifact_format"],
@@ -1401,6 +1742,9 @@ def create_build_task(
             "customer_code": license_issue["customer_code"],
             "issue_record_id": issue_record_id,
             "dependency_summary": dependency_summary,
+            "provenance": provenance,
+            "model_copy_status": model_copy_report["status"],
+            "pre_delivery_status": pre_delivery_result["overall_status"],
         }
         target_manifest_path = manifest_dir / "manifest.json"
         _write_text(target_manifest_path, json.dumps(target_manifest, ensure_ascii=False, indent=2, sort_keys=True))
@@ -1460,15 +1804,18 @@ def create_build_task(
                     )
         session.commit()
 
+    # B13：汇总追溯信息到任务级 manifest
     task_manifest = {
         "task_id": build_task.id,
         "task_name": safe_task_name,
         "capability_name": safe_capability_name,
+        "task_type": task_type,
         "model_version": safe_model_version,
         "issue_record_id": issue_record_id,
         "requested_targets": sorted(set(normalized_targets)),
         "jni_enabled": jni_enabled,
         "artifact_checksums": artifact_checksums,
+        "provenance": provenance,
         "targets": [
             {
                 "target_name": target.target_name,
@@ -1498,6 +1845,8 @@ def create_build_task(
         issue_record_id=issue_record_id,
         license_issue=license_issue,
         target_rows=target_rows,
+        provenance=provenance,
+        pre_delivery_results=pre_delivery_results,
     )
     task_manifest["delivery_package"] = {
         "directory": str(delivery_package_dir),

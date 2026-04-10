@@ -1,3 +1,0 @@
-capability_id: doc_classify
-version: 1.0.0
-model_file: model.onnx

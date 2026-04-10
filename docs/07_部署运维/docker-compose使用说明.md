@@ -13,8 +13,9 @@
 
 ## 2. 初始化宿主机目录
 
+> 以下所有命令均在**仓库根目录**（即 `ai_capability_platform/` 所在目录）下执行。
+
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 bash scripts/docker/init_host_root.sh
 ```
 
@@ -27,14 +28,12 @@ export AI_CAP_HOST_ROOT=/data/ai_capability_platform
 ## 3. 启动方式
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 docker compose up --build
 ```
 
 ## 4. 健康检查
 
 ```bash
-cd /home/runner/work/ai_capability_platform/ai_capability_platform
 bash scripts/docker/health_check.sh
 ```
 

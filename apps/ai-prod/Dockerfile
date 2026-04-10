@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY apps/ai-prod/cpp /workspace/apps/ai-prod/cpp
-COPY ai_platform/third_party /workspace/ai_platform/third_party
 
 RUN rm -rf /workspace/apps/ai-prod/cpp/build
 

@@ -190,6 +190,16 @@ def _delivery_template_summary(task: TestTaskModel, results: list[TestResultMode
 
 
 def _compose_summary(session: Session, task: TestTaskModel, results: list[TestResultModel]) -> dict[str, object]:
+    import json as _json
+
+    # TT13：从任务记录中恢复证据链
+    evidence_chain: dict[str, object] | None = None
+    if hasattr(task, "evidence_json") and task.evidence_json:
+        try:
+            evidence_chain = _json.loads(task.evidence_json)
+        except (ValueError, TypeError):
+            evidence_chain = None
+
     return {
         "task_id": task.id,
         "task_type": task.task_type,
@@ -199,6 +209,7 @@ def _compose_summary(session: Session, task: TestTaskModel, results: list[TestRe
         "total_cases": task.total_cases,
         "passed_cases": task.passed_cases,
         "failed_cases": task.failed_cases,
+        "evidence_chain": evidence_chain,
         "available_template_types": list(REPORT_TEMPLATE_TYPES),
         "results": [
             {
