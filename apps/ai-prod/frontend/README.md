@@ -18,6 +18,12 @@ ai-prod 前端为 **内部测试 / 验收外壳**，基于 React + TypeScript + 
 2. 本前端通过 `/api/v1/*` 直连 C++ runtime API（含 `/api/v1/admin/metrics`），通过 `/internal/*` 查询 Python 壳层内部 revision / operation / audit 等验收信息
 3. 本前端仅供研发、QA、交付联调阶段使用
 
+## 当前访问方式
+
+1. 生产测试主入口页面：优先使用 `ai-test` 的 `http://127.0.0.1:26001/`
+2. ai-prod 控制台当前仍作为内部控制台使用；如需单独打开，请在前端开发模式下运行本模块前端
+3. 公开运行接口仍以 `http://127.0.0.1:26004/api/v1/*` 为准
+
 ## 本地运行
 
 ```bash

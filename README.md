@@ -23,6 +23,15 @@ bash scripts/docker/init_host_root.sh
 docker compose up --build
 ```
 
+启动后可直接打开以下 Web 页面：
+
+1. 标注 / 训练 / 模型管理：`http://127.0.0.1:26000/`
+2. 测试 / 报告 / 生产镜像验收：`http://127.0.0.1:26001/`
+3. 授权 / license 签发：`http://127.0.0.1:26002/`
+4. 推理库构建 / delivery_package：`http://127.0.0.1:26003/`
+
+详细链路说明见：[Web 页面访问说明](docs/07_部署运维/Web页面访问说明.md)
+
 如网络较慢，可先调大 pip 构建超时，必要时切换镜像源：
 
 ```bash

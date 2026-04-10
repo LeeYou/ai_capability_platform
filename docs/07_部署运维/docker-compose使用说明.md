@@ -59,12 +59,19 @@ bash scripts/docker/health_check.sh
 
 ## 5. 端口规划
 
-1. ai-train：26000
-2. ai-test：26001
-3. ai-license-mgr：26002
-4. ai-builder：26003
+1. ai-train：26000（Web 标注 / 训练 / 模型管理页面）
+2. ai-test：26001（Web 测试 / 报告 / 生产镜像验收页面）
+3. ai-license-mgr：26002（Web 授权页面）
+4. ai-builder：26003（Web 构建页面）
 5. ai-prod：26004（C++ HTTP 对外主入口）
 6. ai-sdk：26005
+
+Web 页面入口速查：
+
+1. `http://127.0.0.1:26000/`：标注、训练、模型管理
+2. `http://127.0.0.1:26001/`：测试、报告、生产镜像验收
+3. `http://127.0.0.1:26002/`：授权、license 签发 / 校验
+4. `http://127.0.0.1:26003/`：推理库构建、delivery_package 下载
 
 ## 6. 联调说明
 
