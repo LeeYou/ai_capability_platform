@@ -58,7 +58,11 @@ RUN python3 -m pip install --no-cache-dir \
     cryptography==46.0.6 \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
-    sqlalchemy==2.0.41
+    sqlalchemy==2.0.41 \
+    onnxruntime==1.18.1 \
+    ultralytics==8.2.50 \
+    Pillow==10.4.0 \
+    numpy==1.26.4
 
 COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
 COPY --from=cpp-builder /workspace/apps/ai-prod/cpp/build/ai_prod_cpp_proxy /workspace/cpp/ai_prod_cpp_proxy

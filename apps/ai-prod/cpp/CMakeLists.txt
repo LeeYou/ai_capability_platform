@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AI_PROD_CPP_BUILD_TESTS "Build ai-prod cpp tests" ON)
+option(AI_PROD_CPP_BUILD_PLUGINS "Build ai-prod capability inference plugins" ON)
 
 set(AI_PLATFORM_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 set(AI_PLATFORM_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -260,4 +261,11 @@ if(AI_PROD_CPP_BUILD_TESTS)
     target_link_libraries(test_license_manager PRIVATE OpenSSL::Crypto)
 
     add_test(NAME ai_prod_cpp_test_license_manager COMMAND test_license_manager)
+endif()
+
+# ── 能力推理插件 ──
+if(AI_PROD_CPP_BUILD_PLUGINS)
+    message(STATUS "构建能力推理插件: face_detect, face_attribute")
+    add_subdirectory(plugins/face_detect)
+    add_subdirectory(plugins/face_attribute)
 endif()
