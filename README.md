@@ -23,6 +23,16 @@ bash scripts/docker/init_host_root.sh
 docker compose up --build
 ```
 
+如网络较慢，可先调大 pip 构建超时，必要时切换镜像源：
+
+```bash
+export PIP_DEFAULT_TIMEOUT=300
+export PIP_RETRIES=10
+# 可按需切换为企业内网或就近镜像
+# export PIP_INDEX_URL=https://pypi.org/simple
+docker compose up --build
+```
+
 共享 schema 位于 `apps/shared/`，平台级校验命令如下：
 
 ```bash

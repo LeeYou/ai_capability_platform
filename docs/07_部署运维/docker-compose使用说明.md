@@ -31,6 +31,16 @@ export AI_CAP_HOST_ROOT=/data/ai_capability_platform
 docker compose up --build
 ```
 
+如构建阶段下载 Python 依赖较慢，可在启动前覆盖 pip 构建参数：
+
+```bash
+export PIP_DEFAULT_TIMEOUT=300
+export PIP_RETRIES=10
+# 如需使用内网/就近镜像，可额外设置
+# export PIP_INDEX_URL=https://pypi.org/simple
+docker compose up --build
+```
+
 ## 4. 健康检查
 
 ```bash
