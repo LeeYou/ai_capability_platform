@@ -14,9 +14,13 @@ type PlatformTargetItem = {
 }
 
 type CatalogModelItem = {
+  artifact_id: number | null
   capability_name: string
   model_version: string
+  artifact_path: string
+  manifest_path: string
   backend_type: string
+  checksum: string
   status: string
 }
 
@@ -26,6 +30,8 @@ type LicenseIssueItem = {
   key_name: string
   status: string
   capability_scope: string[]
+  license_path: string
+  issued_at_cst: string
 }
 
 type CatalogResponse = {
@@ -50,16 +56,27 @@ type BuildTaskItem = {
   manifest_path?: string | null
   delivery_package_dir?: string | null
   delivery_package_archive_path?: string | null
+  started_at?: string | null
+  completed_at?: string | null
 }
 
 type BuildTargetItem = {
   target_id: number
   task_id: number
   target_name: string
+  os_name: string
+  arch_name: string
+  artifact_format: string
   build_mode: string
+  toolchain_name: string
+  jni_enabled: boolean
   status: string
-  checksum: string
+  output_dir: string
   binary_path: string
+  header_dir: string
+  manifest_path: string
+  checksum: string
+  log_path: string
   download_archive_path: string
 }
 
@@ -112,8 +129,7 @@ type BuildFormState = {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const workspace = buildR7Workspace(import.meta.env, 'ai-builder')
-
-const tabs = ['overview', 'build', 'detail'] as const
+const tabs = ['overview', 'wizard', 'tasks', 'package'] as const
 type TabKey = (typeof tabs)[number]
 
 const initialState: DashboardState = {
@@ -158,6 +174,13 @@ async function fetchList<T>(path: string): Promise<T[]> {
   return payload.items
 }
 
+function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
+  if (['completed', 'ready', 'success', 'ok'].includes(status)) return 'good'
+  if (['failed', 'error'].includes(status)) return 'danger'
+  if (['running', 'pending', 'queued', 'created'].includes(status)) return 'warn'
+  return 'neutral'
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
@@ -179,8 +202,7 @@ function App() {
         fetchList<AuditLogItem>('/api/v1/audit-logs?limit=8'),
       ])
       setDashboard({ platforms, catalog, buildTasks, auditLogs })
-      const firstTask = buildTasks[0]
-      setSelectedTaskId((current) => current ?? firstTask?.task_id ?? null)
+      setSelectedTaskId((current) => current ?? buildTasks[0]?.task_id ?? null)
       setBuildForm((current) => ({
         ...current,
         capability_name: current.capability_name || catalog.models[0]?.capability_name || '',
@@ -210,121 +232,119 @@ function App() {
 
   const overviewCards = useMemo(
     () => [
-      { title: '平台矩阵', value: dashboard.platforms.length, description: '统一管理 Linux / Windows / JNI 交付目标。' },
-      { title: '模型目录', value: dashboard.catalog.models.length, description: '从 ai-train 同步可构建模型清单。' },
-      { title: '授权记录', value: dashboard.catalog.license_issues.length, description: '从 ai-license-mgr 同步有效授权记录。' },
-      { title: '构建任务', value: dashboard.buildTasks.length, description: '统一管理交付构建、归档与 delivery_package。' },
+      { title: '平台矩阵', value: dashboard.platforms.length, description: '统一管理 Linux / Windows / JNI / 多架构交付目标。' },
+      { title: '可构建模型', value: dashboard.catalog.models.length, description: '从 ai-train 同步真实模型与 manifest。' },
+      { title: '可用授权', value: dashboard.catalog.license_issues.length, description: '与 ai-license-mgr 对齐后的签发记录。' },
+      { title: '构建队列', value: dashboard.buildTasks.length, description: '当前 delivery_package / SDK / 动态库构建任务总数。' },
     ],
     [dashboard],
   )
 
+  const failedTasks = useMemo(
+    () => dashboard.buildTasks.filter((item) => item.status === 'failed').slice(0, 4),
+    [dashboard.buildTasks],
+  )
+
+  const readyModels = useMemo(
+    () => dashboard.catalog.models.slice(0, 4),
+    [dashboard.catalog.models],
+  )
+
   async function handleCreateBuildTask(): Promise<void> {
-    const created = await request<BuildTaskDetail>('/api/v1/build-tasks', {
-      method: 'POST',
-      body: JSON.stringify({
-        task_name: buildForm.task_name,
-        capability_name: buildForm.capability_name,
-        model_version: buildForm.model_version,
-        issue_record_id: Number(buildForm.issue_record_id),
-        requested_targets: buildForm.requested_targets
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
-        jni_enabled: buildForm.jni_enabled,
-      }),
-    })
-    setSelectedTaskId(created.task_id)
-    setActiveTab('detail')
-    setActionMessage(`构建任务 #${created.task_id} 已创建`)
-    await loadDashboard()
+    try {
+      setActionMessage('正在创建构建任务...')
+      const created = await request<BuildTaskDetail>('/api/v1/build-tasks', {
+        method: 'POST',
+        body: JSON.stringify({
+          task_name: buildForm.task_name,
+          capability_name: buildForm.capability_name,
+          model_version: buildForm.model_version,
+          issue_record_id: Number(buildForm.issue_record_id),
+          requested_targets: buildForm.requested_targets
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean),
+          jni_enabled: buildForm.jni_enabled,
+        }),
+      })
+      setSelectedTaskId(created.task_id)
+      setActiveTab('tasks')
+      setActionMessage(`构建任务 #${created.task_id} 已创建`)
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '创建构建任务失败')
+    }
   }
 
-  function fileUrl(path: string): string {
-    return `${apiBaseUrl}${path}`
+  function taskDeliveryDownloadUrl(taskId: number): string {
+    return `${apiBaseUrl}/api/v1/build-tasks/${taskId}/delivery-package/download`
+  }
+
+  function targetDownloadUrl(targetId: number): string {
+    return `${apiBaseUrl}/api/v1/build-targets/${targetId}/download`
   }
 
   return (
     <div className="page">
+      <div className="workspace-topbar">
+        <div className="workspace-brand">
+          <strong>Agile Star AI Capability Platform</strong>
+          <span>统一交付工作台 / 当前模块：{workspace.currentModule.title}</span>
+        </div>
+        <nav className="workspace-nav">
+          {workspace.moduleLinks.map((item) => (
+            <a key={item.id} className={`workspace-nav-link${item.isCurrent ? ' active' : ''}`} href={item.url}>
+              <strong>{item.shortTitle}</strong>
+              <span>{item.stageLabel}</span>
+            </a>
+          ))}
+        </nav>
+      </div>
+
+      <div className="workflow-strip">
+        {workspace.workflowSteps.map((item) => (
+          <a key={item.moduleId} className={`workflow-step${item.isCurrent ? ' active' : ''}`} href={item.url}>
+            <span>步骤 {item.order}</span>
+            <strong>{item.label}</strong>
+            <span>{item.summary}</span>
+          </a>
+        ))}
+      </div>
+
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
-          <h1>ai-builder 专业交付构建台</h1>
-          <p>围绕标准 delivery_package 组织能力目录、授权输入、构建任务、产物下载与交付摘要。</p>
+          <h1>ai-builder 交付构建工作台</h1>
+          <p>
+            围绕“选择模型 → 绑定授权 → 选择平台 → 构建 delivery_package → 校验产物 → 推进生产验收”
+            六个步骤组织交付工程作业，减少手工拼接目录与定位日志的成本。
+          </p>
+          <div className="workspace-action-row">
+            {workspace.nextModule && (
+              <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                去 {workspace.nextModule.shortTitle}
+              </a>
+            )}
+          </div>
         </div>
         <div className="hero-panel">
           <div><span className="label">服务端口</span><strong>26003</strong></div>
-          <div><span className="label">标准目录</span><strong>delivery_package / libs / sdk_*</strong></div>
-          <div><span className="label">当前阶段</span><strong>R7 专业化增强</strong></div>
+          <div><span className="label">构建目标</span><strong>动态库 / SDK / delivery_package</strong></div>
+          <div><span className="label">目录同步</span><strong>{dashboard.catalog.synced_at ?? '待同步'}</strong></div>
         </div>
       </header>
 
       <main className="content">
         <section className="panel">
           <div className="section-header">
-            <h2>跨模块联调导航</h2>
-            <span className="badge badge-muted">R7 第二轮</span>
-          </div>
-          <div className="module-grid">
-            {workspace.moduleLinks.map((item) => (
-              <a
-                key={item.id}
-                className={`module-link-card${item.isCurrent ? ' active' : ''}`}
-                href={item.url}
-              >
-                <div className="module-link-header">
-                  <strong>{item.title}</strong>
-                  <span className="module-tag">{item.isCurrent ? '当前模块' : '联调入口'}</span>
-                </div>
-                <p>{item.summary}</p>
-              </a>
-            ))}
-          </div>
-          <ul className="module-checklist">
-            {workspace.reviewItems.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </section>
-        <section className="panel">
-          <div className="section-header">
-            <h2>总体联调复审</h2>
-            <span className="badge">R7 已完成</span>
-          </div>
-          <div className="review-grid">
-            {workspace.reviewSummary.map((item) => (
-              <article key={item.title} className="review-card">
-                <div className="module-link-header">
-                  <h3>{item.title}</h3>
-                  <span className="review-status">{item.status}</span>
-                </div>
-                <p>{item.detail}</p>
-              </article>
-            ))}
-          </div>
-          <p className="module-note">
-            当前模块定位：{workspace.currentModule.title} / {workspace.currentModule.summary}
-          </p>
-        </section>
-        <section className="panel">
-          <div className="section-header">
-            <h2>构建工作台</h2>
-            <div className="toolbar">
-              <div className="tab-list">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab}
-                    className={`tab-button${activeTab === tab ? ' active' : ''}`}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {tab === 'overview' ? '概览' : tab === 'build' ? '创建任务' : '任务详情'}
-                  </button>
-                ))}
-              </div>
-              <button className="action-button" onClick={() => void loadDashboard()}>刷新数据</button>
+            <div>
+              <h2>首页概览</h2>
+              <p>优先把模型、授权、平台矩阵与失败任务放到同一视图下统一决策。</p>
             </div>
+            <span className="badge">B15-B18</span>
           </div>
-          {loading && <p className="info-text">正在加载 ai-builder 当前数据...</p>}
-          {error && <p className="error-text">{error}</p>}
+          {loading && <p className="info-text">正在加载交付构建数据...</p>}
+          {error && <p className="error-text">数据加载失败：{error}</p>}
           {actionMessage && <p className="success-text">{actionMessage}</p>}
           <div className="card-grid">
             {overviewCards.map((card) => (
@@ -335,196 +355,392 @@ function App() {
               </article>
             ))}
           </div>
-        </section>
-
-        {activeTab === 'overview' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>平台矩阵与目录同步</h3>
-              <p className="meta-text">最近同步：{dashboard.catalog.synced_at ?? '未同步'}</p>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>目标</th><th>工具链</th><th>JNI</th></tr></thead>
-                  <tbody>
-                    {dashboard.platforms.map((item) => (
-                      <tr key={item.target_name}>
-                        <td>{item.target_name}</td>
-                        <td>{item.toolchain_name}</td>
-                        <td>{item.supports_jni ? '支持' : '否'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className="workspace-summary-grid">
+            <article className="workspace-summary-card">
+              <h3>优先构建模型</h3>
+              {readyModels.length === 0 ? (
+                <div className="workspace-empty">当前没有可构建模型，请先在 ai-train / ai-test 完成上游动作。</div>
+              ) : (
+                <div className="workspace-list">
+                  {readyModels.map((item) => (
+                    <button
+                      key={`${item.capability_name}-${item.model_version}`}
+                      className="workspace-list-item"
+                      onClick={() => {
+                        setBuildForm((current) => ({
+                          ...current,
+                          capability_name: item.capability_name,
+                          model_version: item.model_version,
+                          task_name: current.task_name || `${item.capability_name}-${item.model_version}-delivery`,
+                        }))
+                        setActiveTab('wizard')
+                      }}
+                      type="button"
+                    >
+                      <strong>{item.capability_name}</strong>
+                      <div className="workspace-meta-row">
+                        <span>{item.model_version}</span>
+                        <span>{item.backend_type}</span>
+                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </article>
-            <article className="sub-panel">
-              <h3>授权与模型输入</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>能力</th><th>模型版本</th><th>授权记录</th></tr></thead>
-                  <tbody>
-                    {dashboard.catalog.models.map((item) => (
-                      <tr key={`${item.capability_name}-${item.model_version}`}>
-                        <td>{item.capability_name}</td>
-                        <td>{item.model_version}</td>
-                        <td>{dashboard.catalog.license_issues[0]?.issue_record_id ?? '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <article className="workspace-summary-card">
+              <h3>失败任务回看</h3>
+              {failedTasks.length === 0 ? (
+                <div className="workspace-empty">当前暂无失败构建任务。</div>
+              ) : (
+                <div className="workspace-list">
+                  {failedTasks.map((item) => (
+                    <button
+                      key={item.task_id}
+                      className={`workspace-list-item${selectedTaskId === item.task_id ? ' active' : ''}`}
+                      onClick={() => {
+                        setSelectedTaskId(item.task_id)
+                        setActiveTab('tasks')
+                      }}
+                      type="button"
+                    >
+                      <strong>任务 #{item.task_id}</strong>
+                      <div className="workspace-meta-row">
+                        <span>{item.capability_name}</span>
+                        <span>{item.model_version}</span>
+                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </article>
-          </section>
-        )}
-
-        {activeTab === 'build' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>创建构建任务</h3>
-              <div className="form-grid">
-                <label>任务名称<input value={buildForm.task_name} onChange={(event) => setBuildForm((current) => ({ ...current, task_name: event.target.value }))} /></label>
-                <label>
-                  能力
-                  <select value={buildForm.capability_name} onChange={(event) => {
-                    const capabilityName = event.target.value
-                    const matchedModel = dashboard.catalog.models.find((item) => item.capability_name === capabilityName)
-                    setBuildForm((current) => ({ ...current, capability_name: capabilityName, model_version: matchedModel?.model_version ?? current.model_version }))
-                  }}>
-                    <option value="">请选择能力</option>
-                    {dashboard.catalog.capabilities.map((item) => <option key={item.capability_name} value={item.capability_name}>{item.display_name}</option>)}
-                  </select>
-                </label>
-                <label>
-                  模型版本
-                  <select value={buildForm.model_version} onChange={(event) => setBuildForm((current) => ({ ...current, model_version: event.target.value }))}>
-                    <option value="">请选择模型</option>
-                    {dashboard.catalog.models
-                      .filter((item) => !buildForm.capability_name || item.capability_name === buildForm.capability_name)
-                      .map((item) => <option key={`${item.capability_name}-${item.model_version}`} value={item.model_version}>{item.capability_name} / {item.model_version}</option>)}
-                  </select>
-                </label>
-                <label>
-                  授权记录
-                  <select value={buildForm.issue_record_id} onChange={(event) => setBuildForm((current) => ({ ...current, issue_record_id: event.target.value }))}>
-                    <option value="">请选择授权</option>
-                    {dashboard.catalog.license_issues.map((item) => <option key={item.issue_record_id} value={item.issue_record_id}>#{item.issue_record_id} / {item.customer_code}</option>)}
-                  </select>
-                </label>
-                <label>目标平台<input value={buildForm.requested_targets} onChange={(event) => setBuildForm((current) => ({ ...current, requested_targets: event.target.value }))} placeholder="linux_x86_64,windows_x86_64" /></label>
-                <label className="checkbox-row"><input type="checkbox" checked={buildForm.jni_enabled} onChange={(event) => setBuildForm((current) => ({ ...current, jni_enabled: event.target.checked }))} />启用 JNI</label>
-              </div>
-              <div className="button-row"><button className="action-button" onClick={() => void handleCreateBuildTask()}>创建任务</button></div>
-            </article>
-
-            <article className="sub-panel">
-              <h3>最近构建任务</h3>
-              <div className="list-stack">
-                {dashboard.buildTasks.map((item) => (
-                  <button
-                    key={item.task_id}
-                    className={`list-item-button${selectedTaskId === item.task_id ? ' active' : ''}`}
-                    onClick={() => {
-                      setSelectedTaskId(item.task_id)
-                      setActiveTab('detail')
-                    }}
-                  >
-                    <strong>{item.task_name}</strong>
-                    <span>{item.capability_name} / {item.model_version}</span>
-                    <span>{item.status}</span>
-                  </button>
-                ))}
-              </div>
-            </article>
-          </section>
-        )}
-
-        {activeTab === 'detail' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>任务列表</h3>
-              <div className="list-stack">
-                {dashboard.buildTasks.map((item) => (
-                  <button
-                    key={item.task_id}
-                    className={`list-item-button${selectedTaskId === item.task_id ? ' active' : ''}`}
-                    onClick={() => setSelectedTaskId(item.task_id)}
-                  >
-                    <strong>#{item.task_id} {item.task_name}</strong>
-                    <span>{item.capability_name} / {item.model_version}</span>
-                    <span>{item.status}</span>
-                  </button>
-                ))}
-              </div>
-              <h3 className="section-title">最近审计</h3>
+            <article className="workspace-summary-card">
+              <h3>当前设计原则</h3>
               <ul>
-                {dashboard.auditLogs.map((item) => (
-                  <li key={`${item.entity_type}-${item.entity_id}-${item.happened_at_cst}`}>{item.happened_at_cst} / {item.action}</li>
-                ))}
+                <li>构建任务创建要向导化，不再要求工程师手工理解所有平台参数。</li>
+                <li>产物详情必须展示 provenance、校验结果与下载动作。</li>
+                <li>构建完成后明确下一步动作：去 ai-prod 做生产验收。</li>
               </ul>
             </article>
+          </div>
+        </section>
 
-            <article className="sub-panel">
-              <h3>任务详情 / delivery_package</h3>
-              {selectedTaskDetail == null ? (
-                <p className="info-text">请选择构建任务。</p>
-              ) : (
-                <>
-                  <div className="button-row">
-                    {selectedTaskDetail.delivery_package_archive_path && (
-                      <a className="action-link" href={fileUrl(`/api/v1/build-tasks/${selectedTaskDetail.task_id}/delivery-package/download`)}>
-                        下载 delivery_package
-                      </a>
-                    )}
-                  </div>
-                  <pre className="json-block">
-                    {JSON.stringify(
-                      {
-                        task_id: selectedTaskDetail.task_id,
-                        status: selectedTaskDetail.status,
-                        requested_targets: selectedTaskDetail.requested_targets,
-                        build_root_path: selectedTaskDetail.build_root_path,
-                        manifest_path: selectedTaskDetail.manifest_path,
-                        delivery_package_dir: selectedTaskDetail.delivery_package_dir,
-                      },
-                      null,
-                      2,
-                    )}
-                  </pre>
-                  <h4>构建目标</h4>
-                  <div className="table-wrap">
-                    <table>
-                      <thead><tr><th>目标</th><th>状态</th><th>下载</th></tr></thead>
+        <section className="panel">
+          <div className="toolbar">
+            <div>
+              <h2>交付工作台</h2>
+              <p>从构建向导到 delivery_package 目录树再到验收联动的完整闭环。</p>
+            </div>
+            <div className="tab-list">
+              {tabs.map((tab) => (
+                <button
+                  key={tab}
+                  className={`tab-button${activeTab === tab ? ' active' : ''}`}
+                  onClick={() => setActiveTab(tab)}
+                  type="button"
+                >
+                  {tab === 'overview' && '总览'}
+                  {tab === 'wizard' && '构建向导'}
+                  {tab === 'tasks' && '任务工作台'}
+                  {tab === 'package' && '交付包视图'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {activeTab === 'overview' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>平台矩阵</h3>
+                  <div className="workspace-table-wrap">
+                    <table className="workspace-table">
+                      <thead>
+                        <tr>
+                          <th>目标</th>
+                          <th>平台</th>
+                          <th>格式</th>
+                          <th>工具链</th>
+                        </tr>
+                      </thead>
                       <tbody>
-                        {selectedTaskDetail.targets.map((item) => (
-                          <tr key={item.target_id}>
+                        {dashboard.platforms.map((item) => (
+                          <tr key={item.target_name}>
                             <td>{item.target_name}</td>
-                            <td>{item.status}</td>
-                            <td><a className="action-link" href={fileUrl(`/api/v1/build-targets/${item.target_id}/download`)}>归档</a></td>
+                            <td>{item.os_name}/{item.arch_name}</td>
+                            <td>{item.artifact_format}</td>
+                            <td>{item.toolchain_name}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <h4>交付摘要</h4>
-                  <pre className="json-block">
-                    {JSON.stringify(
-                      {
-                        manifest: selectedTaskDetail.manifest?.manifest ?? null,
-                        dependency_summary: selectedTaskDetail.manifest?.dependency_summary ?? null,
-                        artifacts: selectedTaskDetail.artifacts.map((item) => ({
-                          artifact_type: item.artifact_type,
-                          relative_path: item.relative_path,
-                        })),
-                      },
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </>
-              )}
-            </article>
-          </section>
-        )}
+                </article>
+              </div>
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>最近构建队列</h3>
+                  <div className="workspace-list">
+                    {dashboard.buildTasks.slice(0, 5).map((item) => (
+                      <button
+                        key={item.task_id}
+                        className={`workspace-list-item${selectedTaskId === item.task_id ? ' active' : ''}`}
+                        onClick={() => {
+                          setSelectedTaskId(item.task_id)
+                          setActiveTab('tasks')
+                        }}
+                        type="button"
+                      >
+                        <strong>任务 #{item.task_id}</strong>
+                        <div className="workspace-meta-row">
+                          <span>{item.capability_name}</span>
+                          <span>{item.model_version}</span>
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'wizard' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>构建向导</h3>
+                    <span className="badge badge-muted">B15</span>
+                  </div>
+                  <div className="workspace-form-grid">
+                    <label className="workspace-field">
+                      任务名称
+                      <input value={buildForm.task_name} onChange={(event) => setBuildForm((current) => ({ ...current, task_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      模型能力
+                      <select value={buildForm.capability_name} onChange={(event) => setBuildForm((current) => ({ ...current, capability_name: event.target.value }))}>
+                        {dashboard.catalog.models.map((item) => (
+                          <option key={`${item.capability_name}-${item.model_version}`} value={item.capability_name}>
+                            {item.capability_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="workspace-field">
+                      模型版本
+                      <select value={buildForm.model_version} onChange={(event) => setBuildForm((current) => ({ ...current, model_version: event.target.value }))}>
+                        {dashboard.catalog.models
+                          .filter((item) => item.capability_name === buildForm.capability_name)
+                          .map((item) => (
+                            <option key={item.model_version} value={item.model_version}>
+                              {item.model_version}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="workspace-field">
+                      授权记录
+                      <select value={buildForm.issue_record_id} onChange={(event) => setBuildForm((current) => ({ ...current, issue_record_id: event.target.value }))}>
+                        {dashboard.catalog.license_issues.map((item) => (
+                          <option key={item.issue_record_id} value={String(item.issue_record_id)}>
+                            #{item.issue_record_id} / {item.customer_code}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="workspace-field full-span">
+                      平台目标（逗号分隔）
+                      <input value={buildForm.requested_targets} onChange={(event) => setBuildForm((current) => ({ ...current, requested_targets: event.target.value }))} placeholder="linux_x86_64, windows_x86_64" />
+                    </label>
+                    <label className="workspace-field">
+                      JNI 交付
+                      <select
+                        value={buildForm.jni_enabled ? 'true' : 'false'}
+                        onChange={(event) => setBuildForm((current) => ({ ...current, jni_enabled: event.target.value === 'true' }))}
+                      >
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleCreateBuildTask()} type="button">创建构建任务</button>
+                  </div>
+                </article>
+              </div>
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>交付预览</h3>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>模型</span>
+                      <strong>{buildForm.capability_name || '-'}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>版本</span>
+                      <strong>{buildForm.model_version || '-'}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>授权</span>
+                      <strong>{buildForm.issue_record_id || '-'}</strong>
+                    </article>
+                  </div>
+                  <ul>
+                    <li>输出动态库、头文件、示例工程与标准 delivery_package。</li>
+                    <li>任务级 manifest 将记录 provenance、依赖摘要与校验链路。</li>
+                    <li>构建完成后直接进入 ai-prod 运行验收。</li>
+                  </ul>
+                </article>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'tasks' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>构建任务队列</h3>
+                    <span className="badge badge-muted">B16</span>
+                  </div>
+                  <div className="workspace-list">
+                    {dashboard.buildTasks.map((item) => (
+                      <button
+                        key={item.task_id}
+                        className={`workspace-list-item${selectedTaskId === item.task_id ? ' active' : ''}`}
+                        onClick={() => setSelectedTaskId(item.task_id)}
+                        type="button"
+                      >
+                        <strong>任务 #{item.task_id} / {item.task_name}</strong>
+                        <div className="workspace-meta-row">
+                          <span>{item.capability_name}</span>
+                          <span>{item.model_version}</span>
+                          <span>{item.requested_targets.join(', ') || '未指定'}</span>
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              </div>
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>阶段状态与实时日志</h3>
+                    {selectedTaskDetail && <span className={`status-pill ${statusTone(selectedTaskDetail.status)}`}>{selectedTaskDetail.status}</span>}
+                  </div>
+                  {!selectedTaskDetail ? (
+                    <div className="workspace-empty">请选择构建任务查看详细内容。</div>
+                  ) : (
+                    <>
+                      <div className="workspace-kpi-grid">
+                        <article className="workspace-kpi-card">
+                          <span>目标数</span>
+                          <strong>{selectedTaskDetail.targets.length}</strong>
+                        </article>
+                        <article className="workspace-kpi-card">
+                          <span>产物数</span>
+                          <strong>{selectedTaskDetail.artifacts.length}</strong>
+                        </article>
+                        <article className="workspace-kpi-card">
+                          <span>JNI</span>
+                          <strong>{selectedTaskDetail.jni_enabled ? '开启' : '关闭'}</strong>
+                        </article>
+                      </div>
+                      <pre className="workspace-code-block">{selectedTaskDetail.log_path}</pre>
+                      <div className="workspace-table-wrap">
+                        <table className="workspace-table">
+                          <thead>
+                            <tr>
+                              <th>目标</th>
+                              <th>状态</th>
+                              <th>输出</th>
+                              <th>操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedTaskDetail.targets.map((item) => (
+                              <tr key={item.target_id}>
+                                <td>{item.target_name}</td>
+                                <td><span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span></td>
+                                <td>{item.binary_path}</td>
+                                <td><a href={targetDownloadUrl(item.target_id)}>下载归档</a></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </article>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'package' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>delivery_package 目录树</h3>
+                    <span className="badge badge-muted">B17-B18</span>
+                  </div>
+                  {!selectedTaskDetail ? (
+                    <div className="workspace-empty">请选择构建任务查看交付包。</div>
+                  ) : (
+                    <>
+                      <div className="workspace-action-row">
+                        {selectedTaskDetail.delivery_package_archive_path && (
+                          <a className="workspace-action-chip" href={taskDeliveryDownloadUrl(selectedTaskDetail.task_id)}>
+                            下载 delivery_package
+                          </a>
+                        )}
+                        {workspace.nextModule && (
+                          <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                            去 {workspace.nextModule.shortTitle}
+                          </a>
+                        )}
+                      </div>
+                      <div className="workspace-table-wrap">
+                        <table className="workspace-table">
+                          <thead>
+                            <tr>
+                              <th>类型</th>
+                              <th>相对路径</th>
+                              <th>校验</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedTaskDetail.artifacts.map((item) => (
+                              <tr key={item.artifact_id}>
+                                <td>{item.artifact_type}</td>
+                                <td>{item.relative_path}</td>
+                                <td>{item.checksum.slice(0, 12)}...</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </article>
+              </div>
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>manifest / provenance / 校验结果</h3>
+                  {!selectedTaskDetail?.manifest ? (
+                    <div className="workspace-empty">当前任务暂无 manifest 信息。</div>
+                  ) : (
+                    <pre className="workspace-code-block">{JSON.stringify(selectedTaskDetail.manifest.manifest, null, 2)}</pre>
+                  )}
+                </article>
+              </div>
+            </div>
+          )}
+        </section>
       </main>
     </div>
   )
