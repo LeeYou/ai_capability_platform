@@ -2,12 +2,13 @@ ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 FROM node:22-bookworm-slim AS frontend-builder
 
-WORKDIR /workspace/frontend
+WORKDIR /workspace/apps/ai-prod/frontend
 
 COPY apps/ai-prod/frontend/package.json apps/ai-prod/frontend/package-lock.json ./
 RUN npm ci
 
-COPY apps/ai-prod/frontend/ ./
+COPY apps/ai-prod/frontend/ /workspace/apps/ai-prod/frontend/
+COPY apps/frontend-common/ /workspace/apps/frontend-common/
 RUN npm run build
 
 
@@ -21,6 +22,7 @@ WORKDIR /workspace
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
+    libsqlite3-dev \
     libssl-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
@@ -60,7 +62,7 @@ RUN python3 -m pip install --no-cache-dir \
     uvicorn==0.35.0 \
     sqlalchemy==2.0.41
 
-COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
+COPY --from=frontend-builder /workspace/apps/ai-prod/frontend/dist /workspace/frontend-dist
 COPY --from=cpp-builder /workspace/apps/ai-prod/cpp/build/ai_prod_cpp_proxy /workspace/cpp/ai_prod_cpp_proxy
 
 RUN chmod +x /workspace/run_prod_stack.sh

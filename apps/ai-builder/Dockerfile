@@ -2,12 +2,13 @@ ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 FROM node:22-bookworm-slim AS frontend-builder
 
-WORKDIR /workspace/frontend
+WORKDIR /workspace/apps/ai-builder/frontend
 
 COPY apps/ai-builder/frontend/package.json apps/ai-builder/frontend/package-lock.json ./
 RUN npm ci
 
-COPY apps/ai-builder/frontend/ ./
+COPY apps/ai-builder/frontend/ /workspace/apps/ai-builder/frontend/
+COPY apps/frontend-common/ /workspace/apps/frontend-common/
 RUN npm run build
 
 
@@ -31,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     uvicorn==0.35.0 \
     sqlalchemy==2.0.41
 
-COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
+COPY --from=frontend-builder /workspace/apps/ai-builder/frontend/dist /workspace/frontend-dist
 
 EXPOSE 26003
 

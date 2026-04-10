@@ -2,12 +2,13 @@ ARG AI_CAP_BASE_IMAGE=nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 FROM node:22-bookworm-slim AS frontend-builder
 
-WORKDIR /workspace/frontend
+WORKDIR /workspace/apps/ai-test/frontend
 
 COPY apps/ai-test/frontend/package.json apps/ai-test/frontend/package-lock.json ./
 RUN npm ci
 
-COPY apps/ai-test/frontend/ ./
+COPY apps/ai-test/frontend/ /workspace/apps/ai-test/frontend/
+COPY apps/frontend-common/ /workspace/apps/frontend-common/
 RUN npm run build
 
 
@@ -32,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlalchemy==2.0.41 \
     onnxruntime==1.23.2
 
-COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
+COPY --from=frontend-builder /workspace/apps/ai-test/frontend/dist /workspace/frontend-dist
 
 EXPOSE 26001
 
