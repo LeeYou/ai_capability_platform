@@ -8,6 +8,7 @@ import OverviewPage from './pages/OverviewPage'
 import VerifyPage from './pages/VerifyPage'
 import ControlPage from './pages/ControlPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
+import StatusPage from './pages/StatusPage'
 
 const workspace = buildR7Workspace(import.meta.env, 'ai-prod')
 
@@ -16,6 +17,7 @@ const sidebarItems = [
   { path: '/verify', label: '在线验证', icon: '🔍' },
   { path: '/control', label: '版本控制', icon: '🎛️' },
   { path: '/diagnostics', label: '监控诊断', icon: '📈' },
+  { path: '/status', label: '运行状态', icon: '🟢' },
 ]
 
 function App() {
@@ -37,6 +39,7 @@ function App() {
           <Route path="/verify" element={<VerifyPage />} />
           <Route path="/control" element={<ControlPage />} />
           <Route path="/diagnostics" element={<DiagnosticsPage />} />
+          <Route path="/status" element={<StatusPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>
