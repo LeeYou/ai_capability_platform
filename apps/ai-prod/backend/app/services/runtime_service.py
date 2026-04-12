@@ -819,18 +819,51 @@ def infer(
             else:
                 device = "gpu" if capability.get("gpu_available", False) else "cpu"
             request_id = str(uuid4())
-            result_hash = hashlib.sha256(
-                f"{capability_name}|{capability['model_version']}|{input_type}|{payload}|{json.dumps(options, ensure_ascii=False, sort_keys=True)}".encode("utf-8")
-            ).hexdigest()
-            result = {
-                "summary": f"{capability_name} 推理完成",
-                "digest": result_hash,
-                "score": round(int(result_hash[:4], 16) / 65535, 4),
-                "input_type": input_type,
-                "payload_size": len(payload.encode("utf-8")),
-                "instance_id": instance["instance_id"],
-                "fallback_applied": prefer_device == "gpu" and device == "cpu",
-            }
+
+            # ── 尝试真实推理适配器 ──
+            real_result = None
+            try:
+                from app.services.capability_adapters import get_inference_adapter
+
+                adapter = get_inference_adapter(capability_name)
+                if adapter is not None:
+                    adapter_output = adapter.infer(
+                        capability_name=capability_name,
+                        model_version=str(capability["model_version"]),
+                        model_root=str(capability.get("model_root", "")),
+                        input_type=input_type,
+                        payload=payload,
+                        device=device,
+                        options=options,
+                    )
+                    real_result = {
+                        "summary": adapter_output.get("summary", f"{capability_name} 推理完成"),
+                        "score": adapter_output.get("score", 0.0),
+                        "input_type": input_type,
+                        "payload_size": len(payload.encode("utf-8")),
+                        "instance_id": instance["instance_id"],
+                        "fallback_applied": prefer_device == "gpu" and device == "cpu",
+                        "adapter_result": adapter_output.get("result", {}),
+                    }
+            except Exception:
+                pass  # 适配器不可用时静默回退到模拟推理
+
+            if real_result is not None:
+                result = real_result
+            else:
+                # ── 回退：模拟推理 ──
+                result_hash = hashlib.sha256(
+                    f"{capability_name}|{capability['model_version']}|{input_type}|{payload}|{json.dumps(options, ensure_ascii=False, sort_keys=True)}".encode("utf-8")
+                ).hexdigest()
+                result = {
+                    "summary": f"{capability_name} 推理完成",
+                    "digest": result_hash,
+                    "score": round(int(result_hash[:4], 16) / 65535, 4),
+                    "input_type": input_type,
+                    "payload_size": len(payload.encode("utf-8")),
+                    "instance_id": instance["instance_id"],
+                    "fallback_applied": prefer_device == "gpu" and device == "cpu",
+                }
             _append_runtime_log(
                 runtime_log_path,
                 {

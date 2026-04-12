@@ -25,7 +25,15 @@ COPY apps/ai-train/backend/ /workspace/backend/
 RUN python3 -m pip install --no-cache-dir \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
-    sqlalchemy==2.0.41
+    sqlalchemy==2.0.41 \
+    torch==2.3.1 \
+    torchvision==0.18.1 \
+    ultralytics==8.2.50 \
+    onnx==1.16.1 \
+    onnxruntime==1.18.1 \
+    pandas==2.2.2 \
+    Pillow==10.4.0 \
+    numpy==1.26.4
 
 COPY --from=frontend-builder /workspace/frontend/dist /workspace/frontend-dist
 
