@@ -89,3 +89,10 @@ export type AnnotationDraft = {
   fieldsJson: string
   confidenceJson: string
 }
+
+export type DatasetItem = {
+  capability_name: string
+  dataset_path: string
+  dataset_status: string
+  source: string
+}

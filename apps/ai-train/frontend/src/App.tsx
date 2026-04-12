@@ -8,6 +8,8 @@ import OverviewPage from './pages/OverviewPage.tsx'
 import AnnotationPage from './pages/AnnotationPage.tsx'
 import TrainingPage from './pages/TrainingPage.tsx'
 import ModelPage from './pages/ModelPage.tsx'
+import DatasetsPage from './pages/DatasetsPage.tsx'
+import CapabilitiesPage from './pages/CapabilitiesPage.tsx'
 
 const workspace = buildR7Workspace(import.meta.env, 'ai-train')
 const sidebarItems = [
@@ -15,6 +17,8 @@ const sidebarItems = [
   { path: '/annotation', label: '标注工作台', icon: '📝' },
   { path: '/training', label: '训练工作台', icon: '🏋️' },
   { path: '/model', label: '模型资产', icon: '📦' },
+  { path: '/datasets', label: '数据集', icon: '💾' },
+  { path: '/capabilities', label: '能力目录', icon: '🧩' },
 ]
 
 function App() {
@@ -27,6 +31,8 @@ function App() {
           <Route path="/annotation" element={<AnnotationPage />} />
           <Route path="/training" element={<TrainingPage />} />
           <Route path="/model" element={<ModelPage />} />
+          <Route path="/datasets" element={<DatasetsPage />} />
+          <Route path="/capabilities" element={<CapabilitiesPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>
