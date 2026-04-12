@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -278,7 +278,7 @@ def create_acceptance_task(
         total_cases=2,
         passed_cases=0,
         failed_cases=0,
-        started_at=datetime.now(UTC).replace(tzinfo=None),
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     session.add(task)
     session.commit()
@@ -427,7 +427,7 @@ def create_acceptance_task(
         )
 
     task.status = "completed" if task.failed_cases == 0 else "failed"
-    task.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     generate_test_report(session, test_reports_root, task.id)
     session.refresh(task)

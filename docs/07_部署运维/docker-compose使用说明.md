@@ -31,6 +31,26 @@ export AI_CAP_HOST_ROOT=/data/ai_capability_platform
 docker compose up --build
 ```
 
+如构建阶段下载 Python 依赖较慢，可在启动前覆盖 pip 构建参数：
+
+```bash
+export PIP_DEFAULT_TIMEOUT=300
+export PIP_RETRIES=10
+# 如需使用内网/就近镜像，可额外设置
+# export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# 如需经代理访问外网资源（例如 PyPI / GitHub）
+# export HTTP_PROXY=http://127.0.0.1:7890
+# export HTTPS_PROXY=http://127.0.0.1:7890
+# export NO_PROXY=127.0.0.1,localhost
+docker compose up --build
+```
+
+说明：
+
+1. 各后端镜像已优先缓存系统依赖和固定 Python 依赖，源码改动不会触发整层重装
+2. `ai-test` 中体积较大的 `onnxruntime` 已单独分层，便于重复构建复用缓存
+3. 若显式设置了 `PIP_INDEX_URL`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`，compose 构建阶段会自动传递给各镜像
+
 ## 4. 健康检查
 
 ```bash
@@ -39,12 +59,19 @@ bash scripts/docker/health_check.sh
 
 ## 5. 端口规划
 
-1. ai-train：26000
-2. ai-test：26001
-3. ai-license-mgr：26002
-4. ai-builder：26003
+1. ai-train：26000（Web 标注 / 训练 / 模型管理页面）
+2. ai-test：26001（Web 测试 / 报告 / 生产镜像验收页面）
+3. ai-license-mgr：26002（Web 授权页面）
+4. ai-builder：26003（Web 构建页面）
 5. ai-prod：26004（C++ HTTP 对外主入口）
 6. ai-sdk：26005
+
+Web 页面入口速查：
+
+1. `http://127.0.0.1:26000/`：标注、训练、模型管理
+2. `http://127.0.0.1:26001/`：测试、报告、生产镜像验收
+3. `http://127.0.0.1:26002/`：授权、license 签发 / 校验
+4. `http://127.0.0.1:26003/`：推理库构建、delivery_package 下载
 
 ## 6. 联调说明
 

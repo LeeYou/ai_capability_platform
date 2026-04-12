@@ -22,6 +22,11 @@
 | TT12 | 测试样本与训练标注 schema 映射收敛 | 已完成 |
 | TT13 | 模型 / 插件 / license / revision 统一验收证据链 | 已完成 |
 | TT14 | 新增能力模板化回归与交付验收用例 | 已完成 |
+| TT15 | 单测工作台向导化与在线结果对比重构 | 已完成 |
+| TT16 | 批量测试任务创建、执行、问题样本分析工作台 | 已完成 |
+| TT17 | 生产验收工作台与 acceptance / pressure 日志视图 | 已完成 |
+| TT18 | 报告中心、证据链与“推送授权 / 构建”主流程收口 | 已完成 |
+| TT19 | ai-test 首页概览、待测清单与推荐动作重构 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -37,12 +42,17 @@
 
 ### 4.2 进行中
 
-无。TT1–TT14 全部完成，ai-test 模块 R12 整改已收口。
+1. 当前已完成 TT15-TT19：前端已从展示型列表页升级为“中枢视图 / 单测工作台 / 批量测试 / 生产验收 / 报告中心”五段式工作台。
+2. 当前已完成 TT15：单测页面已改造为向导式输入与结果对比布局，可直接从待测模型进入单测、查看用例级期望 / 实际结果与失败信息。
+3. 当前已完成 TT16：批量测试页面已补齐任务创建、用例清单输入、失败样本回看与基线模板维护入口。
+4. 当前已完成 TT17：生产验收页面已补齐镜像 / 目标地址 / 推理载荷配置与脚本结果视图，统一承接 acceptance / pressure 结果展示。
+5. 当前已完成 TT18：报告中心已补齐研发 / 交付双视角切换、摘要证据链展示与导出 / 下游推进入口。
+6. 当前已完成 TT19：首页已重构为待测模型、失败任务与推荐动作驱动的测试中枢视图。
 
 ### 4.3 未完成
 
-无。
+1. 暂无；TT15-TT19 已全部完成，后续如继续推进将进入下一轮增量体验优化。
 
 ### 4.4 阶段小结
 
-本轮（R12）已完成 TT12-TT14：TT12 引入 TASK_TYPE_OUTPUT_SCHEMAS 和任务类型感知仿真推理，_simulate_case_execution() 根据 task_type 生成 classification/detection/ocr/structured_extraction 对应格式输出，并新增 _validate_expected_output() 校验期望输出与训练标注 schema 兼容性；TT13 在 create_test_task() 中加载模型 manifest，构建 evidence_chain（source_train_task_id/manifest_checksum/artifact_path），写入 TestTaskModel.evidence_json 并在报告 summary 中暴露；TT14 新增 get_capability_test_template() 和 create_template_regression_task()，支持新能力快速建立标准化回归基线。新增 8 个测试用例，全部 17 个测试通过，RTS-01/02/03 整改收口。
+ai-test 已完成 TT15-TT19：现已形成统一的测试中枢首页、向导式单测与批测页面、生产验收工作台，以及研发 / 交付双视角报告中心；测试人员可直接从待测模型进入单测或批测，从失败任务回看问题样本，再把通过结果推进到授权 / 构建环节，不再依赖分散列表页或人工记录上下游对象。经前端 `npm run build && npm run lint` 验证，当前 ai-test Web 工作台重构已完成。

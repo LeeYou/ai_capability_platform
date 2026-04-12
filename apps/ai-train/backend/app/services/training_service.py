@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -225,7 +225,7 @@ def create_training_task(
 
     log_path = _log_path(training_logs_root, task.id)
     log_path.write_text(
-        f"{datetime.now(UTC).isoformat()} [pending] 训练任务已创建\n",
+        f"{datetime.now(timezone.utc).isoformat()} [pending] 训练任务已创建\n",
         encoding="utf-8",
     )
     task.log_path = str(log_path.resolve())
@@ -269,9 +269,9 @@ def update_training_task_status(session: Session, task_id: int, status: str) -> 
             task.retry_count += 1
             task.completed_at = None
         if normalized_status == "running" and task.started_at is None:
-            task.started_at = datetime.now(UTC).replace(tzinfo=None)
+            task.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if normalized_status in {"completed", "failed"}:
-            task.completed_at = datetime.now(UTC).replace(tzinfo=None)
+            task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         task.status = normalized_status
         session.commit()
         session.refresh(task)
@@ -300,7 +300,7 @@ def append_training_task_log(
         raise ValueError("训练日志内容过大，超过单任务存储限制。")
 
     with log_path.open("a", encoding="utf-8") as file_obj:
-        file_obj.write(f"{datetime.now(UTC).isoformat()} [{task.status}] {normalized_message}\n")
+        file_obj.write(f"{datetime.now(timezone.utc).isoformat()} [{task.status}] {normalized_message}\n")
 
     task.log_path = str(log_path.resolve())
     session.commit()
@@ -624,7 +624,7 @@ def record_training_task_result(
     payload.setdefault("capability_name", task.capability.capability_name)
     payload.setdefault("task_name", task.task_name)
     payload.setdefault("backend_type", task.backend_type)
-    payload.setdefault("recorded_at", datetime.now(UTC).isoformat())
+    payload.setdefault("recorded_at", datetime.now(timezone.utc).isoformat())
     summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return _to_summary(task, training_jobs_root=training_jobs_root)
 

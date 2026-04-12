@@ -1,5 +1,8 @@
 SHELL := /bin/bash
 
+DOCKER_BUILD_PROXY_ARGS := --build-arg HTTP_PROXY="$${HTTP_PROXY:-}" --build-arg HTTPS_PROXY="$${HTTPS_PROXY:-}" --build-arg NO_PROXY="$${NO_PROXY:-}"
+DOCKER_BUILD_PIP_ARGS := --build-arg PIP_INDEX_URL="$${PIP_INDEX_URL:-https://pypi.org/simple}" --build-arg PIP_DEFAULT_TIMEOUT="$${PIP_DEFAULT_TIMEOUT:-300}" --build-arg PIP_RETRIES="$${PIP_RETRIES:-10}"
+
 .PHONY: init-host-root shared-assets backend-test frontend-check docker-build compose-config ai-prod-cpp-build ai-prod-cpp-test ai-prod-acceptance ai-prod-pressure-smoke
 
 init-host-root:
@@ -24,13 +27,13 @@ frontend-check:
 	cd apps/ai-prod/frontend && npm ci && npm run build && npm run lint
 
 docker-build:
-	docker build -f Dockerfile.base.cuda118 -t ai-capability-platform/base:cuda118 .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-train/Dockerfile .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-test/Dockerfile .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-license-mgr/Dockerfile .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-builder/Dockerfile .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-prod/Dockerfile .
-	docker build --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-sdk/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) -f Dockerfile.base.cuda118 -t ai-capability-platform/base:cuda118 .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-train/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-test/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-license-mgr/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-builder/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-prod/Dockerfile .
+	docker build $(DOCKER_BUILD_PROXY_ARGS) $(DOCKER_BUILD_PIP_ARGS) --build-arg AI_CAP_BASE_IMAGE=ai-capability-platform/base:cuda118 -f apps/ai-sdk/Dockerfile .
 
 compose-config:
 	docker compose config >/dev/null

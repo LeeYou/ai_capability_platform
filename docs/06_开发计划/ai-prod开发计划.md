@@ -48,6 +48,10 @@
 | P38 | 真实交付链 bootstrap / reload / infer / rollback 端到端校验 | 已完成 |
 | P39 | 平台授权字段消费、上下文采集与拒绝诊断收口 | 已完成 |
 | P40 | 平台授权契约与 ai-license-mgr / ai-sdk 一致性回归 | 已完成 |
+| P41 | 内部运行控制台首页、状态总览与风险告警重构 | 已完成 |
+| P42 | 在线演示 / 在线验证工作台重构 | 已完成 |
+| P43 | revision / reload / rollback 高风险操作体验重构 | 已完成 |
+| P44 | 监控、诊断、admission_checklist 可行动视图重构 | 已完成 |
 
 ## 3. 进度维护要求
 
@@ -65,21 +69,16 @@
 
 ### 4.2 进行中
 
-1. 当前已完成 P9-P38 全量收口，`apps/ai-prod/cpp/` 已成为面向客户交付的 C++ 生产主链路，实现了真实插件执行、bootstrap、reload/rollback、revision/operation 持久化、显式状态机、请求跟踪、批处理、deadline、审计日志、运行时编排诊断、manifest 强契约校验、capability 接入门禁与公开链路端到端验收收口。
-2. 当前已完成与 ai-license-mgr 的 License / 热更新 / 回滚语义统一：版本约束、`license_tool` 协同、密钥轮转后的运行态校验以及现场交付链路所需的能力范围与版本控制均已在代码与测试层完成对齐。
-3. 当前已完成 P36：Python / C++ runtime 已统一输出 `result / code / stage / details / diagnostics_version` 稳定授权诊断字段；C++ `infer` / `reload` 拒绝响应与审计日志也已补齐稳定 code/stage/details。
-4. 当前已完成内部验收外壳与交付材料收口：Python backend 仅保留 `/internal/*` 诊断能力，React 前端已补齐能力目录、在线控制台、revision/operation 视图、跨模块导航、共享 workspace 配置与总体联调复审展示。
-5. 当前已完成 P35：C++ runtime resource scanner 与 Python 验收外壳已对 ai-train 模型包 manifest、ai-builder 插件 manifest 建立强校验；无效资源会在 bootstrap / reload 阶段被跳过并记录到 `source_summary` 失败明细，模型版本不一致的能力也会被拒绝装载。
-6. 当前已完成 P37：C++ runtime 已在 bootstrap / reload / rollback 阶段为每个 capability 输出结构化接入检查清单，并执行插件预装载门禁；未通过 ABI / 运行时装载探测的能力会被拦截并写入 `source_summary.admission_gate_failures`，通过门禁的能力会在 snapshot / catalog 中暴露 `admission_checklist`。
-7. 当前已完成 P38：`apps/ai-prod/scripts/acceptance_check.py` 已补齐公开 `/api/v1/*` 主链路的 bootstrap / license-reload / reload / infer / rollback 端到端校验，验收时会校验 revision 切换、切换后再次推理与 `admission_checklist` / 稳定授权诊断字段输出。
-8. 当前已完成本轮整改设计基线刷新：已补齐整改设计章节，并新增 P35-P38 作为下一轮模块整改工作项，其中 P35-P38 已完成收口。
-9. 当前已完成 P39：Python / C++ runtime 已统一消费 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段，并通过环境变量/宿主机探测补齐运行态上下文。
-10. 当前已完成 P40：稳定诊断契约已新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并完成 ai-license-mgr / ai-prod / ai-sdk 三侧一致性回归。
+1. 当前已完成 P41-P44：ai-prod 前端已升级为“首页概览 / 在线验证 / 版本控制 / 监控诊断”四段式内部运行控制台。
+2. 当前已完成 P41：首页已突出 revision、license 结果码、队列风险与最近变更，不再停留在静态展示页。
+3. 当前已完成 P42：在线验证页已补齐能力选择、推理载荷、设备偏好与实时推理结果回显。
+4. 当前已完成 P43：版本控制页已补齐 revision 列表、受控 reload / rollback 动作与 detail 影响范围展示。
+5. 当前已完成 P44：诊断页已把 metrics、source_summary 与审计日志收口为可行动的监控诊断视图。
 
 ### 4.3 未完成
 
-1. ai-prod 本轮整改项已全部完成，后续如继续推进应转入新一轮增量计划。
+1. 暂无；P41-P44 已全部完成，后续如继续推进将进入下一轮运行体验优化。
 
 ### 4.4 阶段小结
 
-ai-prod 当前已完成 P35-P40：在既有 manifest 强契约、capability 接入门禁、公开主链路验收闭环的基础上，又把 `operating_system`、`min_operating_system_version`、`system_architecture`、`application_name` 四个授权平台字段纳入 Python / C++ runtime 统一消费，并补齐宿主机自动探测 + 环境变量覆盖的运行上下文采集；同时新增 `operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied` 三个稳定诊断结果码，与 ai-license-mgr / ai-sdk 交付物保持一致。经 ai-prod backend unittest 与 C++ build/ctest 验证，当前 ai-prod 模块本轮增量已完成。
+ai-prod 已完成 P41-P44：现已把现有内部验收外壳重构为真正的运行控制台，研发、QA、交付、运维可以在同一页面中查看 revision / license 状态、执行在线验证、触发 reload / rollback，并通过 metrics、source_summary 与审计日志定位问题。经前端 `npm run build && npm run lint` 验证，当前 ai-prod 控制台重构已完成。

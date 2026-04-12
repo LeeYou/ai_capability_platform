@@ -1,14 +1,22 @@
 # ai-license-mgr frontend
 
-ai-license-mgr 前端管理台骨架，基于 React + TypeScript + Vite 初始化，用于承载客户台、密钥台与授权台。
+ai-license-mgr 前端管理台，基于 React + TypeScript + Vite，用于承载客户台、密钥台与授权台。
 
 ## 当前页面内容
 
 1. 公司信息与版本信息展示
 2. 客户、密钥对、授权策略、签发记录、审计日志列表展示
-3. 授权能力说明与后续建设方向提示
+3. 客户创建、密钥创建 / 轮转 / 隔离
+4. 授权策略创建、license 签发、license 校验
+5. `license_tool` 默认发布同步与导出入口
 
-## 本地运行
+## Web 访问入口
+
+1. docker compose 联调入口：`http://127.0.0.1:26002/`
+2. 页面职责：客户管理、授权策略、license 签发 / 校验
+3. 同源接口：`/api/v1/*`
+
+## 本地运行（前端开发模式）
 
 ```bash
 cd /home/runner/work/ai_capability_platform/ai_capability_platform/apps/ai-license-mgr/frontend

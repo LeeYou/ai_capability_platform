@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = "1.0"
@@ -209,7 +209,7 @@ def build_onboarding_guide(capability_name: str, task_type: str) -> dict[str, ob
     cap = capability_name.strip()
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "capability_name": cap,
         "task_type": normalized,
         "annotation_schema": build_annotation_schema(normalized),

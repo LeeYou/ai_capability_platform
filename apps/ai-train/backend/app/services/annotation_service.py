@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -255,7 +255,7 @@ def update_annotation_task_samples(
         annotation_payload = {key: value for key, value in item.items() if key != "sample_id"}
         target["annotation"] = annotation_payload
         target["status"] = "submitted" if mark_submitted else "labeled"
-        target["updated_at"] = datetime.now(UTC).isoformat()
+        target["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     ordered_items = sorted(item_map.values(), key=lambda current: str(current.get("sample_id")))
     next_payload = _build_payload(task, ordered_items)

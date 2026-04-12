@@ -5,6 +5,15 @@ x-backend-common: &backend-common
     - ${AI_CAP_HOST_ROOT:-/data/ai_capability_platform}:/data/ai_capability_platform
   restart: unless-stopped
 
+# 统一声明构建网络参数，支持显式覆盖 pip 源、超时/重试与 HTTP(S) 代理。
+x-build-network-args: &build-network-args
+  PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+  PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-300}
+  PIP_RETRIES: ${PIP_RETRIES:-10}
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-}
+
 services:
   ai-train:
     <<: *backend-common
@@ -12,6 +21,7 @@ services:
       context: .
       dockerfile: apps/ai-train/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     ports:
       - "26000:26000"
@@ -22,6 +32,7 @@ services:
       context: .
       dockerfile: apps/ai-test/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     environment:
       AI_CAP_HOST_ROOT: /data/ai_capability_platform
@@ -37,6 +48,7 @@ services:
       context: .
       dockerfile: apps/ai-license-mgr/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     ports:
       - "26002:26002"
@@ -47,6 +59,7 @@ services:
       context: .
       dockerfile: apps/ai-builder/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     environment:
       AI_CAP_HOST_ROOT: /data/ai_capability_platform
@@ -64,6 +77,7 @@ services:
       context: .
       dockerfile: apps/ai-prod/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     environment:
       AI_CAP_HOST_ROOT: /data/ai_capability_platform
@@ -81,6 +95,7 @@ services:
       context: .
       dockerfile: apps/ai-sdk/Dockerfile
       args:
+        <<: *build-network-args
         AI_CAP_BASE_IMAGE: ${AI_CAP_BASE_IMAGE:-nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04}
     ports:
       - "26005:26005"

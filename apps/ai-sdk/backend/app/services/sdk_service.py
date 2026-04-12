@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -963,7 +963,7 @@ def create_sdk_package(
         package_root_path="",
         log_path="",
         manifest_path="",
-        started_at=datetime.now(UTC).replace(tzinfo=None),
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     session.add(package)
     session.commit()
@@ -1236,7 +1236,7 @@ def create_sdk_package(
 
     package.status = "completed"
     package.manifest_path = str(package_manifest_path)
-    package.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    package.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
 
     append_audit_log(

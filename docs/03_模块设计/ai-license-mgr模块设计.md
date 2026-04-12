@@ -99,5 +99,37 @@
 3. 运行态诊断契约新增稳定结果码：`operating_system_denied`、`operating_system_version_denied`、`system_architecture_denied`，并分别对应 `operating_system`、`operating_system_version`、`system_architecture` 三个稳定 stage。
 4. `VALIDATION_VECTORS.json`、`LICENSE_DIAGNOSTICS.json`、README、错误码说明与 `license_tool` source bundle 必须同步携带上述字段和诊断契约，确保 ai-license-mgr / ai-prod / ai-sdk 三侧一致。
 5. 本增量按模块跟踪：
-   - L14：授权平台字段设计、策略/签发/前端/tool bundle 收口。
-   - L15：与 ai-prod / ai-sdk 平台准入诊断契约同步。
+    - L14：授权平台字段设计、策略/签发/前端/tool bundle 收口。
+    - L15：与 ai-prod / ai-sdk 平台准入诊断契约同步。
+
+## 11. Web 产品化设计补充
+
+### 11.1 页面定位
+
+1. `ai-license-mgr` 不是纯后台配置页，而是商业交付链路中的授权工作台。
+2. 页面需要让交付工程师在一个连续流程中完成“客户 → 密钥 → 策略 → 签发 → 校验 → 导出 / 发布”。
+3. 授权页面必须兼顾专业严肃性与可审计性，高风险操作需强提示。
+
+### 11.2 页面结构
+
+1. 概览页：客户数、有效密钥、待签发、即将过期、最近审计风险。
+2. 客户台：客户列表、详情、关联 license、关联交付记录。
+3. 密钥台：
+   - 密钥对列表
+   - 状态、用途、轮转记录、隔离记录
+   - 风险提示与审计摘要
+4. 策略与签发工作台：
+   - 左侧策略列表
+   - 中间策略编辑 / 签发表单
+   - 右侧平台字段、版本约束、能力范围说明
+5. 校验与工具页：
+   - license 校验结果
+   - diagnostics / vectors / tool release 导出
+   - 与 ai-prod / ai-sdk 契约一致性说明
+
+### 11.3 关键交互要求
+
+1. 签发流程采用分步向导：选择客户 → 选择密钥 → 配置策略 → 预览载荷 → 签发与导出。
+2. 轮转、隔离、失效等高风险动作必须展示影响范围（策略、签发记录、交付对象）。
+3. 校验结果页需突出稳定 code / stage / details，不允许只显示原始文本。
+4. 授权完成后需要给出“去构建交付包”的明确跳转入口。

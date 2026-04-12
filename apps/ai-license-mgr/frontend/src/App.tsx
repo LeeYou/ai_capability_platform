@@ -81,6 +81,8 @@ type ValidateLicenseResult = {
   stage: string
   details: Record<string, unknown>
   diagnostics_version: string
+  issue_record_id: number
+  checked_at_cst: string
 }
 
 type LicenseToolReleaseItem = {
@@ -102,6 +104,19 @@ type AuditLogItem = {
   detail: Record<string, unknown>
 }
 
+type ValidationContract = {
+  diagnostics_version: string
+  fields: Record<string, unknown>
+  code_catalog: Record<string, unknown>
+}
+
+type ValidationVectors = {
+  diagnostics_version: string
+  fingerprint_vectors: Array<Record<string, unknown>>
+  version_constraint_vectors: Array<Record<string, unknown>>
+  license_validation_vectors: Array<Record<string, unknown>>
+}
+
 type ApiListResponse<T> = { items: T[] }
 
 type DashboardState = {
@@ -111,6 +126,8 @@ type DashboardState = {
   issues: LicenseIssueItem[]
   toolReleases: LicenseToolReleaseItem[]
   auditLogs: AuditLogItem[]
+  validationContract: ValidationContract | null
+  validationVectors: ValidationVectors | null
 }
 
 type CustomerFormState = {
@@ -147,7 +164,8 @@ type ValidationFormState = {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const workspace = buildR7Workspace(import.meta.env, 'ai-license-mgr')
-
+const tabs = ['overview', 'issuance', 'risk', 'validation'] as const
+type TabKey = (typeof tabs)[number]
 
 const initialState: DashboardState = {
   customers: [],
@@ -156,6 +174,8 @@ const initialState: DashboardState = {
   issues: [],
   toolReleases: [],
   auditLogs: [],
+  validationContract: null,
+  validationVectors: null,
 }
 
 const initialCustomerForm: CustomerFormState = {
@@ -176,8 +196,8 @@ const initialPolicyForm: PolicyFormState = {
   min_operating_system_version: '',
   system_architecture: '',
   application_name: 'ai-prod',
-  start_at_cst: '2026-04-05T00:00:00+08:00',
-  expire_at_cst: '2027-04-05T00:00:00+08:00',
+  start_at_cst: '2026-04-10T00:00:00+08:00',
+  expire_at_cst: '2027-04-10T00:00:00+08:00',
   notes: '',
 }
 
@@ -189,9 +209,6 @@ const initialValidationForm: ValidationFormState = {
   operating_system_version: '',
   system_architecture: '',
 }
-
-const tabs = ['overview', 'customer', 'policy', 'issue', 'tool'] as const
-type TabKey = (typeof tabs)[number]
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -213,6 +230,13 @@ async function fetchList<T>(path: string): Promise<T[]> {
   return payload.items
 }
 
+function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
+  if (['active', 'issued', 'valid', 'ready', 'completed'].includes(status)) return 'good'
+  if (['isolated', 'disabled', 'failed', 'expired'].includes(status)) return 'danger'
+  if (['draft', 'pending', 'created'].includes(status)) return 'warn'
+  return 'neutral'
+}
+
 function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
@@ -224,6 +248,8 @@ function App() {
   const [rotateReason, setRotateReason] = useState('例行轮转')
   const [isolateReason, setIsolateReason] = useState('风险隔离')
   const [policyForm, setPolicyForm] = useState<PolicyFormState>(initialPolicyForm)
+  const [selectedKeyPairId, setSelectedKeyPairId] = useState<number | null>(null)
+  const [selectedPolicyId, setSelectedPolicyId] = useState<number | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<number | null>(null)
   const [issueDetail, setIssueDetail] = useState<LicenseIssueDetail | null>(null)
   const [validationForm, setValidationForm] = useState<ValidationFormState>(initialValidationForm)
@@ -233,15 +259,19 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      const [customers, keyPairs, policies, issues, toolReleases, auditLogs] = await Promise.all([
+      const [customers, keyPairs, policies, issues, toolReleases, auditLogs, validationContract, validationVectors] = await Promise.all([
         fetchList<CustomerItem>('/api/v1/customers'),
         fetchList<KeyPairItem>('/api/v1/key-pairs'),
         fetchList<LicensePolicyItem>('/api/v1/license-policies'),
         fetchList<LicenseIssueItem>('/api/v1/license-issues'),
         fetchList<LicenseToolReleaseItem>('/api/v1/tool-releases'),
         fetchList<AuditLogItem>('/api/v1/audit-logs?limit=8'),
+        request<ValidationContract>('/api/v1/license-validation/contract'),
+        request<ValidationVectors>('/api/v1/license-validation/vectors'),
       ])
-      setDashboard({ customers, keyPairs, policies, issues, toolReleases, auditLogs })
+      setDashboard({ customers, keyPairs, policies, issues, toolReleases, auditLogs, validationContract, validationVectors })
+      setSelectedKeyPairId((current) => current ?? keyPairs[0]?.key_pair_id ?? null)
+      setSelectedPolicyId((current) => current ?? policies[0]?.policy_id ?? null)
       setSelectedIssueId((current) => current ?? issues[0]?.issue_record_id ?? null)
       setPolicyForm((current) => ({
         ...current,
@@ -262,7 +292,6 @@ function App() {
   useEffect(() => {
     if (selectedIssueId == null) {
       setIssueDetail(null)
-      setLastValidationResult(null)
       return
     }
     void request<LicenseIssueDetail>(`/api/v1/license-issues/${selectedIssueId}`).then(setIssueDetail).catch(() => {
@@ -270,199 +299,235 @@ function App() {
     })
   }, [selectedIssueId])
 
+  const selectedKeyPair = dashboard.keyPairs.find((item) => item.key_pair_id === selectedKeyPairId) ?? null
+
   const overviewCards = useMemo(
     () => [
-      { title: '客户', value: dashboard.customers.length, description: '支持客户主数据与联系人信息管理。' },
-      { title: '密钥对', value: dashboard.keyPairs.length, description: '支持创建、轮转、隔离与前序链路追踪。' },
-      { title: '授权策略', value: dashboard.policies.length, description: '支持能力范围、版本约束与指纹规则。' },
-      { title: '签发记录', value: dashboard.issues.length, description: '支持签发、校验、导出与运行态复核。' },
+      { title: '客户数', value: dashboard.customers.length, description: '正在受理签发与交付服务的客户对象。' },
+      { title: '有效密钥', value: dashboard.keyPairs.filter((item) => item.status === 'active').length, description: '当前可用于策略签发的密钥对。' },
+      { title: '签发记录', value: dashboard.issues.length, description: '已完成签发并可供 builder 消费的 license 记录。' },
+      { title: '工具版本', value: dashboard.toolReleases.length, description: 'license_tool 与诊断材料的发布归档。' },
     ],
     [dashboard],
   )
 
+  const isolatedKeys = useMemo(
+    () => dashboard.keyPairs.filter((item) => item.status === 'isolated'),
+    [dashboard.keyPairs],
+  )
+
   async function handleCreateCustomer(): Promise<void> {
-    await request<CustomerItem>('/api/v1/customers', {
-      method: 'POST',
-      body: JSON.stringify(customerForm),
-    })
-    setCustomerForm(initialCustomerForm)
-    setActionMessage('客户已创建')
-    await loadDashboard()
+    try {
+      setActionMessage('正在创建客户...')
+      await request('/api/v1/customers', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_code: customerForm.customer_code,
+          customer_name: customerForm.customer_name,
+          contact_name: customerForm.contact_name || null,
+          contact_email: customerForm.contact_email || null,
+        }),
+      })
+      setCustomerForm(initialCustomerForm)
+      setActionMessage('客户已创建')
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '创建客户失败')
+    }
   }
 
   async function handleCreateKeyPair(): Promise<void> {
-    await request<KeyPairItem>('/api/v1/key-pairs', {
-      method: 'POST',
-      body: JSON.stringify({ key_name: keyName }),
-    })
-    setActionMessage('密钥对已创建')
-    await loadDashboard()
+    try {
+      setActionMessage('正在创建密钥对...')
+      await request('/api/v1/key-pairs', {
+        method: 'POST',
+        body: JSON.stringify({ key_name: keyName }),
+      })
+      setActionMessage('密钥对已创建')
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '创建密钥失败')
+    }
   }
 
-  async function handleRotateKeyPair(keyPairId: number): Promise<void> {
-    await request(`/api/v1/key-pairs/${keyPairId}/rotate`, {
-      method: 'POST',
-      body: JSON.stringify({ reason: rotateReason }),
-    })
-    setActionMessage(`密钥 #${keyPairId} 已轮转`)
-    await loadDashboard()
+  async function handleRotateKeyPair(): Promise<void> {
+    if (selectedKeyPairId == null) return
+    try {
+      setActionMessage('正在轮转密钥对...')
+      await request(`/api/v1/key-pairs/${selectedKeyPairId}/rotate`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: rotateReason }),
+      })
+      setActionMessage('密钥轮转完成')
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '轮转失败')
+    }
   }
 
-  async function handleIsolateKeyPair(keyPairId: number): Promise<void> {
-    await request(`/api/v1/key-pairs/${keyPairId}/isolate`, {
-      method: 'POST',
-      body: JSON.stringify({ reason: isolateReason }),
-    })
-    setActionMessage(`密钥 #${keyPairId} 已隔离`)
-    await loadDashboard()
+  async function handleIsolateKeyPair(): Promise<void> {
+    if (selectedKeyPairId == null) return
+    try {
+      setActionMessage('正在隔离密钥对...')
+      await request(`/api/v1/key-pairs/${selectedKeyPairId}/isolate`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: isolateReason }),
+      })
+      setActionMessage('密钥已隔离')
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '隔离失败')
+    }
   }
 
   async function handleCreatePolicy(): Promise<void> {
-    await request<LicensePolicyItem>('/api/v1/license-policies', {
-      method: 'POST',
-      body: JSON.stringify({
-        ...policyForm,
-        customer_id: Number(policyForm.customer_id),
-        key_pair_id: Number(policyForm.key_pair_id),
-        capability_scope: policyForm.capability_scope
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
-        version_constraints: JSON.parse(policyForm.version_constraints),
-        hardware_fingerprint: policyForm.hardware_fingerprint || null,
-        operating_system: policyForm.operating_system,
-        min_operating_system_version: policyForm.min_operating_system_version || null,
-        system_architecture: policyForm.system_architecture || null,
-        application_name: policyForm.application_name,
-        notes: policyForm.notes || null,
-      }),
-    })
-    setActionMessage('授权策略已创建')
-    await loadDashboard()
+    try {
+      setActionMessage('正在创建授权策略...')
+      const created = await request<LicensePolicyItem>('/api/v1/license-policies', {
+        method: 'POST',
+        body: JSON.stringify({
+          policy_name: policyForm.policy_name,
+          customer_id: Number(policyForm.customer_id),
+          key_pair_id: Number(policyForm.key_pair_id),
+          capability_scope: policyForm.capability_scope.split(',').map((item) => item.trim()).filter(Boolean),
+          version_constraints: JSON.parse(policyForm.version_constraints),
+          hardware_fingerprint: policyForm.hardware_fingerprint || null,
+          operating_system: policyForm.operating_system,
+          min_operating_system_version: policyForm.min_operating_system_version || null,
+          system_architecture: policyForm.system_architecture || null,
+          application_name: policyForm.application_name,
+          start_at_cst: policyForm.start_at_cst,
+          expire_at_cst: policyForm.expire_at_cst,
+          notes: policyForm.notes || null,
+        }),
+      })
+      setSelectedPolicyId(created.policy_id)
+      setActionMessage(`授权策略 #${created.policy_id} 已创建`)
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '创建策略失败')
+    }
   }
 
-  async function handleIssueLicense(policyId: number): Promise<void> {
-    const created = await request<LicenseIssueDetail>('/api/v1/license-issues', {
-      method: 'POST',
-      body: JSON.stringify({ policy_id: policyId }),
-    })
-    setSelectedIssueId(created.issue_record_id)
-    setActionMessage(`策略 #${policyId} 已完成签发`)
-    await loadDashboard()
+  async function handleIssueLicense(): Promise<void> {
+    if (selectedPolicyId == null) return
+    try {
+      setActionMessage('正在签发 license...')
+      const created = await request<LicenseIssueDetail>('/api/v1/license-issues', {
+        method: 'POST',
+        body: JSON.stringify({ policy_id: selectedPolicyId }),
+      })
+      setSelectedIssueId(created.issue_record_id)
+      setActionMessage(`签发记录 #${created.issue_record_id} 已生成`)
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '签发失败')
+    }
   }
 
   async function handleValidateIssue(): Promise<void> {
-    if (selectedIssueId == null) {
-      return
+    if (selectedIssueId == null) return
+    try {
+      setActionMessage('正在执行授权校验...')
+      const result = await request<ValidateLicenseResult>(`/api/v1/license-issues/${selectedIssueId}/validate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          hardware_fingerprint: validationForm.hardware_fingerprint || null,
+          capability_name: validationForm.capability_name || null,
+          product_version: validationForm.product_version || null,
+          operating_system: validationForm.operating_system || null,
+          operating_system_version: validationForm.operating_system_version || null,
+          system_architecture: validationForm.system_architecture || null,
+        }),
+      })
+      setLastValidationResult(result)
+      setActionMessage(`校验完成：${result.code}`)
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '校验失败')
     }
-    const result = await request<ValidateLicenseResult>(`/api/v1/license-issues/${selectedIssueId}/validate`, {
-      method: 'POST',
-      body: JSON.stringify({
-        hardware_fingerprint: validationForm.hardware_fingerprint || null,
-        capability_name: validationForm.capability_name || null,
-        product_version: validationForm.product_version || null,
-        operating_system: validationForm.operating_system || null,
-        operating_system_version: validationForm.operating_system_version || null,
-        system_architecture: validationForm.system_architecture || null,
-      }),
-    })
-    setLastValidationResult(result)
-    setActionMessage(`校验结果：${result.valid ? '通过' : '失败'} / ${result.code}`)
-    await loadDashboard()
   }
 
   async function handleSyncToolRelease(): Promise<void> {
-    await request<LicenseToolReleaseItem>('/api/v1/tool-releases/sync-default', { method: 'POST' })
-    setActionMessage('默认 license_tool 发布已同步')
-    await loadDashboard()
+    try {
+      setActionMessage('正在同步默认 license_tool...')
+      await request('/api/v1/tool-releases/sync-default', { method: 'POST' })
+      setActionMessage('默认工具版本已同步')
+      await loadDashboard()
+    } catch (loadError) {
+      setActionMessage(loadError instanceof Error ? loadError.message : '同步工具失败')
+    }
   }
 
-  function exportUrl(path: string): string {
-    return `${apiBaseUrl}${path}`
+  function issueExportUrl(issueRecordId: number, format: 'bin' | 'pubkey'): string {
+    return `${apiBaseUrl}/api/v1/license-issues/${issueRecordId}/export?export_format=${format}`
+  }
+
+  function toolExportUrl(releaseId: number, format: 'archive' | 'manifest' | 'readme' | 'diagnostics' | 'vectors'): string {
+    return `${apiBaseUrl}/api/v1/tool-releases/${releaseId}/export?export_format=${format}`
   }
 
   return (
     <div className="page">
+      <div className="workspace-topbar">
+        <div className="workspace-brand">
+          <strong>Agile Star AI Capability Platform</strong>
+          <span>统一授权工作台 / 当前模块：{workspace.currentModule.title}</span>
+        </div>
+        <nav className="workspace-nav">
+          {workspace.moduleLinks.map((item) => (
+            <a key={item.id} className={`workspace-nav-link${item.isCurrent ? ' active' : ''}`} href={item.url}>
+              <strong>{item.shortTitle}</strong>
+              <span>{item.stageLabel}</span>
+            </a>
+          ))}
+        </nav>
+      </div>
+
+      <div className="workflow-strip">
+        {workspace.workflowSteps.map((item) => (
+          <a key={item.moduleId} className={`workflow-step${item.isCurrent ? ' active' : ''}`} href={item.url}>
+            <span>步骤 {item.order}</span>
+            <strong>{item.label}</strong>
+            <span>{item.summary}</span>
+          </a>
+        ))}
+      </div>
+
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
-          <h1>ai-license-mgr 专业授权台</h1>
-          <p>统一收口授权金标准测试向量、稳定诊断字段、签发校验与工具发布，支撑 ai-prod / SDK / license_tool 一致性联调。</p>
+          <h1>ai-license-mgr 授权签发工作台</h1>
+          <p>
+            将客户、密钥、策略、签发、校验、tool release 六类动作收口为连续工作流，
+            让交付工程师可以在一个工作台内完成授权全链路作业并直接进入 ai-builder。
+          </p>
+          <div className="workspace-action-row">
+            {workspace.nextModule && (
+              <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                去 {workspace.nextModule.shortTitle}
+              </a>
+            )}
+          </div>
         </div>
         <div className="hero-panel">
           <div><span className="label">服务端口</span><strong>26002</strong></div>
-          <div><span className="label">关键物料</span><strong>license.bin / pubkey.pem / license_tool</strong></div>
-          <div><span className="label">当前阶段</span><strong>L11 / L12 / L13 执行中</strong></div>
+          <div><span className="label">当前重点</span><strong>签发向导 / 风险操作 / 校验工作台</strong></div>
+          <div><span className="label">诊断版本</span><strong>{dashboard.validationContract?.diagnostics_version ?? '未加载'}</strong></div>
         </div>
       </header>
 
       <main className="content">
         <section className="panel">
           <div className="section-header">
-            <h2>跨模块联调导航</h2>
-            <span className="badge badge-muted">R7 第二轮</span>
-          </div>
-          <div className="module-grid">
-            {workspace.moduleLinks.map((item) => (
-              <a
-                key={item.id}
-                className={`module-link-card${item.isCurrent ? ' active' : ''}`}
-                href={item.url}
-              >
-                <div className="module-link-header">
-                  <strong>{item.title}</strong>
-                  <span className="module-tag">{item.isCurrent ? '当前模块' : '联调入口'}</span>
-                </div>
-                <p>{item.summary}</p>
-              </a>
-            ))}
-          </div>
-          <ul className="module-checklist">
-            {workspace.reviewItems.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </section>
-        <section className="panel">
-          <div className="section-header">
-            <h2>总体联调复审</h2>
-            <span className="badge">R7 已完成</span>
-          </div>
-          <div className="review-grid">
-            {workspace.reviewSummary.map((item) => (
-              <article key={item.title} className="review-card">
-                <div className="module-link-header">
-                  <h3>{item.title}</h3>
-                  <span className="review-status">{item.status}</span>
-                </div>
-                <p>{item.detail}</p>
-              </article>
-            ))}
-          </div>
-          <p className="module-note">
-            当前模块定位：{workspace.currentModule.title} / {workspace.currentModule.summary}
-          </p>
-        </section>
-        <section className="panel">
-          <div className="section-header">
-            <h2>工作台</h2>
-            <div className="toolbar">
-              <div className="tab-list">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab}
-                    className={`tab-button${activeTab === tab ? ' active' : ''}`}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {tab === 'overview' ? '概览' : tab === 'customer' ? '客户与密钥' : tab === 'policy' ? '策略与签发' : tab === 'issue' ? '签发详情' : '工具发布'}
-                  </button>
-                ))}
-              </div>
-              <button className="action-button" onClick={() => void loadDashboard()}>刷新数据</button>
+            <div>
+              <h2>首页概览</h2>
+              <p>把客户、密钥风险、签发记录与下游动作放在同一个授权首页中统一决策。</p>
             </div>
+            <span className="badge">L16-L19</span>
           </div>
-          {loading && <p className="info-text">正在加载 ai-license-mgr 当前数据...</p>}
-          {error && <p className="error-text">{error}</p>}
+          {loading && <p className="info-text">正在加载授权工作台数据...</p>}
+          {error && <p className="error-text">数据加载失败：{error}</p>}
           {actionMessage && <p className="success-text">{actionMessage}</p>}
           <div className="card-grid">
             {overviewCards.map((card) => (
@@ -473,268 +538,447 @@ function App() {
               </article>
             ))}
           </div>
+          <div className="workspace-summary-grid">
+            <article className="workspace-summary-card">
+              <h3>风险密钥与影响面</h3>
+              {isolatedKeys.length === 0 ? (
+                <div className="workspace-empty">当前没有已隔离密钥。</div>
+              ) : (
+                <div className="workspace-list">
+                  {isolatedKeys.map((item) => (
+                    <button
+                      key={item.key_pair_id}
+                      className={`workspace-list-item${selectedKeyPairId === item.key_pair_id ? ' active' : ''}`}
+                      onClick={() => {
+                        setSelectedKeyPairId(item.key_pair_id)
+                        setActiveTab('risk')
+                      }}
+                      type="button"
+                    >
+                      <strong>{item.key_name}</strong>
+                      <div className="workspace-meta-row">
+                        <span>轮转版本 {item.rotation_version}</span>
+                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </article>
+            <article className="workspace-summary-card">
+              <h3>当前推荐动作</h3>
+              <ul>
+                <li>先在“连续签发工作台”完成客户、密钥、策略与签发闭环。</li>
+                <li>再在“校验与工具工作台”验证平台字段、结果码与 tool bundle。</li>
+                <li>最终把签发记录推进到 ai-builder 构建交付包。</li>
+              </ul>
+            </article>
+          </div>
         </section>
 
-        {activeTab === 'overview' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>最近审计日志</h3>
-              <ul>
-                {dashboard.auditLogs.map((item) => (
-                  <li key={`${item.entity_type}-${item.entity_id}-${item.happened_at_cst}`}>
-                    {item.happened_at_cst} / {item.action} / {item.entity_type} #{item.entity_id}
-                  </li>
-                ))}
-                {dashboard.auditLogs.length === 0 && <li>暂无审计记录</li>}
-              </ul>
-            </article>
-            <article className="sub-panel">
-              <h3>联调就绪项</h3>
-              <ul>
-                <li>已支持私钥轮转、隔离与策略迁移。</li>
-                <li>已支持签发记录稳定 code / stage / details 校验输出。</li>
-                <li>已支持默认 license_tool 发布同步、诊断契约与测试向量导出。</li>
-              </ul>
-            </article>
-          </section>
-        )}
+        <section className="panel">
+          <div className="toolbar">
+            <div>
+              <h2>授权工作台</h2>
+              <p>围绕连续签发、风险操作与诊断校验组织企业级授权流程。</p>
+            </div>
+            <div className="tab-list">
+              {tabs.map((tab) => (
+                <button
+                  key={tab}
+                  className={`tab-button${activeTab === tab ? ' active' : ''}`}
+                  onClick={() => setActiveTab(tab)}
+                  type="button"
+                >
+                  {tab === 'overview' && '总览'}
+                  {tab === 'issuance' && '连续签发'}
+                  {tab === 'risk' && '风险操作'}
+                  {tab === 'validation' && '校验与工具'}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {activeTab === 'customer' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>创建客户</h3>
-              <div className="form-grid">
-                <label>客户编码<input value={customerForm.customer_code} onChange={(event) => setCustomerForm((current) => ({ ...current, customer_code: event.target.value }))} /></label>
-                <label>客户名称<input value={customerForm.customer_name} onChange={(event) => setCustomerForm((current) => ({ ...current, customer_name: event.target.value }))} /></label>
-                <label>联系人<input value={customerForm.contact_name} onChange={(event) => setCustomerForm((current) => ({ ...current, contact_name: event.target.value }))} /></label>
-                <label>联系邮箱<input value={customerForm.contact_email} onChange={(event) => setCustomerForm((current) => ({ ...current, contact_email: event.target.value }))} /></label>
-              </div>
-              <div className="button-row"><button className="action-button" onClick={() => void handleCreateCustomer()}>创建客户</button></div>
-
-              <h3 className="section-title">创建密钥对</h3>
-              <div className="form-grid">
-                <label>密钥名称<input value={keyName} onChange={(event) => setKeyName(event.target.value)} /></label>
-                <label>轮转原因<input value={rotateReason} onChange={(event) => setRotateReason(event.target.value)} /></label>
-                <label>隔离原因<input value={isolateReason} onChange={(event) => setIsolateReason(event.target.value)} /></label>
-              </div>
-              <div className="button-row"><button className="action-button" onClick={() => void handleCreateKeyPair()}>创建密钥对</button></div>
-            </article>
-
-            <article className="sub-panel">
-              <h3>客户列表</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>编码</th><th>名称</th><th>状态</th></tr></thead>
-                  <tbody>
-                    {dashboard.customers.map((item) => (
-                      <tr key={item.customer_id}><td>{item.customer_code}</td><td>{item.customer_name}</td><td>{item.status}</td></tr>
+          {activeTab === 'overview' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>最近签发记录</h3>
+                  <div className="workspace-list">
+                    {dashboard.issues.slice(0, 5).map((item) => (
+                      <button
+                        key={item.issue_record_id}
+                        className={`workspace-list-item${selectedIssueId === item.issue_record_id ? ' active' : ''}`}
+                        onClick={() => {
+                          setSelectedIssueId(item.issue_record_id)
+                          setActiveTab('validation')
+                        }}
+                        type="button"
+                      >
+                        <strong>签发 #{item.issue_record_id}</strong>
+                        <div className="workspace-meta-row">
+                          <span>{item.customer_code}</span>
+                          <span>{item.application_name}</span>
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                        </div>
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <h3 className="section-title">密钥列表</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>名称</th><th>状态</th><th>轮转</th><th>操作</th></tr></thead>
-                  <tbody>
-                    {dashboard.keyPairs.map((item) => (
-                      <tr key={item.key_pair_id}>
-                        <td>{item.key_name}</td>
-                        <td>{item.status}</td>
-                        <td>v{item.rotation_version}</td>
-                        <td>
-                          <div className="button-row compact">
-                            <button onClick={() => void handleRotateKeyPair(item.key_pair_id)}>轮转</button>
-                            <button onClick={() => void handleIsolateKeyPair(item.key_pair_id)}>隔离</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </section>
-        )}
-
-        {activeTab === 'policy' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>创建授权策略</h3>
-              <div className="form-grid">
-                <label>策略名称<input value={policyForm.policy_name} onChange={(event) => setPolicyForm((current) => ({ ...current, policy_name: event.target.value }))} /></label>
-                <label>
-                  客户
-                  <select value={policyForm.customer_id} onChange={(event) => setPolicyForm((current) => ({ ...current, customer_id: event.target.value }))}>
-                    <option value="">请选择客户</option>
-                    {dashboard.customers.map((item) => <option key={item.customer_id} value={item.customer_id}>{item.customer_code}</option>)}
-                  </select>
-                </label>
-                <label>
-                  密钥
-                  <select value={policyForm.key_pair_id} onChange={(event) => setPolicyForm((current) => ({ ...current, key_pair_id: event.target.value }))}>
-                    <option value="">请选择密钥</option>
-                    {dashboard.keyPairs.map((item) => <option key={item.key_pair_id} value={item.key_pair_id}>{item.key_name}</option>)}
-                  </select>
-                </label>
-                <label>能力范围<input value={policyForm.capability_scope} onChange={(event) => setPolicyForm((current) => ({ ...current, capability_scope: event.target.value }))} placeholder="capability_a,capability_b" /></label>
-                <label>硬件指纹<input value={policyForm.hardware_fingerprint} onChange={(event) => setPolicyForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} /></label>
-                <label>
-                  操作系统
-                  <select value={policyForm.operating_system} onChange={(event) => setPolicyForm((current) => ({ ...current, operating_system: event.target.value }))}>
-                    <option value="windows">windows</option>
-                    <option value="linux">linux</option>
-                    <option value="android">android</option>
-                    <option value="ios">ios</option>
-                  </select>
-                </label>
-                <label>最低系统版本<input value={policyForm.min_operating_system_version} onChange={(event) => setPolicyForm((current) => ({ ...current, min_operating_system_version: event.target.value }))} placeholder="可选，例如 13.0.0" /></label>
-                <label>系统架构<input value={policyForm.system_architecture} onChange={(event) => setPolicyForm((current) => ({ ...current, system_architecture: event.target.value }))} placeholder="可选，例如 x86_64 / arm64" /></label>
-                <label>应用名称<input value={policyForm.application_name} onChange={(event) => setPolicyForm((current) => ({ ...current, application_name: event.target.value }))} /></label>
-                <label>开始时间<input value={policyForm.start_at_cst} onChange={(event) => setPolicyForm((current) => ({ ...current, start_at_cst: event.target.value }))} /></label>
-                <label>结束时间<input value={policyForm.expire_at_cst} onChange={(event) => setPolicyForm((current) => ({ ...current, expire_at_cst: event.target.value }))} /></label>
-                <label className="full-width">版本约束<textarea rows={5} value={policyForm.version_constraints} onChange={(event) => setPolicyForm((current) => ({ ...current, version_constraints: event.target.value }))} /></label>
-                <label className="full-width">备注<textarea rows={3} value={policyForm.notes} onChange={(event) => setPolicyForm((current) => ({ ...current, notes: event.target.value }))} /></label>
-              </div>
-              <div className="button-row"><button className="action-button" onClick={() => void handleCreatePolicy()}>创建策略</button></div>
-            </article>
-
-            <article className="sub-panel">
-              <h3>策略列表与签发</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>策略</th><th>客户</th><th>密钥</th><th>操作</th></tr></thead>
-                  <tbody>
-                    {dashboard.policies.map((item) => (
-                      <tr key={item.policy_id}>
-                        <td>{item.policy_name}</td>
-                        <td>{item.customer_code}</td>
-                        <td>{item.key_name}</td>
-                        <td><button onClick={() => void handleIssueLicense(item.policy_id)}>签发</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </section>
-        )}
-
-        {activeTab === 'issue' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <h3>签发记录</h3>
-              <div className="list-stack">
-                {dashboard.issues.map((item) => (
-                  <button
-                    key={item.issue_record_id}
-                    className={`list-item-button${selectedIssueId === item.issue_record_id ? ' active' : ''}`}
-                    onClick={() => setSelectedIssueId(item.issue_record_id)}
-                  >
-                    <strong>#{item.issue_record_id}</strong>
-                    <span>{item.customer_code}</span>
-                    <span>{item.last_validation_code ?? item.status}</span>
-                  </button>
-                ))}
-              </div>
-            </article>
-
-            <article className="sub-panel">
-              <div className="section-header">
-                <h3>签发详情 / 校验 / 导出</h3>
-                {selectedIssueId != null && (
-                  <div className="button-row compact">
-                    <a className="action-link" href={exportUrl(`/api/v1/license-issues/${selectedIssueId}/export?export_format=bin`)}>导出 license</a>
-                    <a className="action-link" href={exportUrl(`/api/v1/license-issues/${selectedIssueId}/export?export_format=pubkey`)}>导出公钥</a>
                   </div>
-                )}
+                </article>
               </div>
-              {issueDetail == null ? (
-                <p className="info-text">请选择签发记录。</p>
-              ) : (
-                <>
-                  <pre className="json-block">{JSON.stringify(issueDetail.payload, null, 2)}</pre>
-                  <pre className="json-block">
-                    {JSON.stringify(
-                      {
-                        operating_system: issueDetail.operating_system,
-                        min_operating_system_version: issueDetail.min_operating_system_version,
-                        system_architecture: issueDetail.system_architecture,
-                        application_name: issueDetail.application_name,
-                        last_validation_result: issueDetail.last_validation_result,
-                        last_validation_code: issueDetail.last_validation_code,
-                        last_validation_details: issueDetail.last_validation_details ?? {},
-                        latest_validation_response: lastValidationResult ?? undefined,
-                      },
-                      null,
-                      2,
-                    )}
-                  </pre>
-                  <div className="form-grid">
-                    <label>硬件指纹<input value={validationForm.hardware_fingerprint} onChange={(event) => setValidationForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} /></label>
-                    <label>能力<input value={validationForm.capability_name} onChange={(event) => setValidationForm((current) => ({ ...current, capability_name: event.target.value }))} /></label>
-                    <label>产品版本<input value={validationForm.product_version} onChange={(event) => setValidationForm((current) => ({ ...current, product_version: event.target.value }))} /></label>
-                    <label>
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>最近审计留痕</h3>
+                  <div className="workspace-table-wrap">
+                    <table className="workspace-table">
+                      <thead>
+                        <tr>
+                          <th>时间</th>
+                          <th>动作</th>
+                          <th>实体</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dashboard.auditLogs.map((item) => (
+                          <tr key={`${item.happened_at_cst}-${item.entity_id}`}>
+                            <td>{item.happened_at_cst}</td>
+                            <td>{item.action}</td>
+                            <td>{item.entity_type} / {item.entity_id}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'issuance' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>步骤 1：创建客户</h3>
+                    <span className="badge badge-muted">L16</span>
+                  </div>
+                  <div className="workspace-form-grid">
+                    <label className="workspace-field">
+                      客户编码
+                      <input value={customerForm.customer_code} onChange={(event) => setCustomerForm((current) => ({ ...current, customer_code: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      客户名称
+                      <input value={customerForm.customer_name} onChange={(event) => setCustomerForm((current) => ({ ...current, customer_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      联系人
+                      <input value={customerForm.contact_name} onChange={(event) => setCustomerForm((current) => ({ ...current, contact_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      邮箱
+                      <input value={customerForm.contact_email} onChange={(event) => setCustomerForm((current) => ({ ...current, contact_email: event.target.value }))} />
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleCreateCustomer()} type="button">创建客户</button>
+                  </div>
+                </article>
+
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>步骤 2：创建密钥对</h3>
+                    <span className="badge badge-muted">L16</span>
+                  </div>
+                  <div className="workspace-form-grid">
+                    <label className="workspace-field full-span">
+                      密钥名称
+                      <input value={keyName} onChange={(event) => setKeyName(event.target.value)} />
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleCreateKeyPair()} type="button">创建密钥对</button>
+                  </div>
+                </article>
+              </div>
+
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>步骤 3：创建策略</h3>
+                    <span className="badge badge-muted">L16</span>
+                  </div>
+                  <div className="workspace-form-grid">
+                    <label className="workspace-field">
+                      策略名称
+                      <input value={policyForm.policy_name} onChange={(event) => setPolicyForm((current) => ({ ...current, policy_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      客户
+                      <select value={policyForm.customer_id} onChange={(event) => setPolicyForm((current) => ({ ...current, customer_id: event.target.value }))}>
+                        {dashboard.customers.map((item) => (
+                          <option key={item.customer_id} value={String(item.customer_id)}>
+                            {item.customer_code}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="workspace-field">
+                      密钥
+                      <select value={policyForm.key_pair_id} onChange={(event) => setPolicyForm((current) => ({ ...current, key_pair_id: event.target.value }))}>
+                        {dashboard.keyPairs.map((item) => (
+                          <option key={item.key_pair_id} value={String(item.key_pair_id)}>
+                            {item.key_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="workspace-field">
                       操作系统
-                      <select value={validationForm.operating_system} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system: event.target.value }))}>
-                        <option value="">自动/不传</option>
-                        <option value="windows">windows</option>
+                      <select value={policyForm.operating_system} onChange={(event) => setPolicyForm((current) => ({ ...current, operating_system: event.target.value }))}>
                         <option value="linux">linux</option>
+                        <option value="windows">windows</option>
                         <option value="android">android</option>
                         <option value="ios">ios</option>
                       </select>
                     </label>
-                    <label>系统版本<input value={validationForm.operating_system_version} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system_version: event.target.value }))} placeholder="例如 5.15.0 / 13.0.0" /></label>
-                    <label>系统架构<input value={validationForm.system_architecture} onChange={(event) => setValidationForm((current) => ({ ...current, system_architecture: event.target.value }))} placeholder="例如 x86_64 / arm64" /></label>
+                    <label className="workspace-field">
+                      最低系统版本
+                      <input value={policyForm.min_operating_system_version} onChange={(event) => setPolicyForm((current) => ({ ...current, min_operating_system_version: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      系统架构
+                      <input value={policyForm.system_architecture} onChange={(event) => setPolicyForm((current) => ({ ...current, system_architecture: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      应用名
+                      <input value={policyForm.application_name} onChange={(event) => setPolicyForm((current) => ({ ...current, application_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field full-span">
+                      能力范围（逗号分隔）
+                      <input value={policyForm.capability_scope} onChange={(event) => setPolicyForm((current) => ({ ...current, capability_scope: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field full-span">
+                      版本约束 JSON
+                      <textarea rows={5} value={policyForm.version_constraints} onChange={(event) => setPolicyForm((current) => ({ ...current, version_constraints: event.target.value }))} />
+                    </label>
                   </div>
-                  <div className="button-row"><button className="action-button" onClick={() => void handleValidateIssue()}>执行校验</button></div>
-                </>
-              )}
-            </article>
-          </section>
-        )}
+                  <div className="button-row">
+                    <button onClick={() => void handleCreatePolicy()} type="button">创建策略</button>
+                    <button onClick={() => void handleIssueLicense()} type="button">按当前策略签发</button>
+                  </div>
+                </article>
+              </div>
+            </div>
+          )}
 
-        {activeTab === 'tool' && (
-          <section className="panel split-layout">
-            <article className="sub-panel">
-              <div className="section-header">
-                <h3>license_tool 发布</h3>
-                <button className="action-button" onClick={() => void handleSyncToolRelease()}>同步默认发布</button>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>版本</th><th>状态</th><th>导出</th></tr></thead>
-                  <tbody>
-                    {dashboard.toolReleases.map((item) => (
-                      <tr key={item.release_id}>
-                        <td>{item.version}</td>
-                        <td>{item.status}</td>
-                        <td>
-                          <div className="button-row compact">
-                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=archive`)}>归档</a>
-                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=manifest`)}>manifest</a>
-                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=readme`)}>README</a>
-                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=diagnostics`)}>diagnostics</a>
-                            <a className="action-link" href={exportUrl(`/api/v1/tool-releases/${item.release_id}/export?export_format=vectors`)}>vectors</a>
-                          </div>
-                        </td>
-                      </tr>
+          {activeTab === 'risk' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>高风险操作工作台</h3>
+                    <span className="badge badge-muted">L17</span>
+                  </div>
+                  <div className="workspace-list">
+                    {dashboard.keyPairs.map((item) => (
+                      <button
+                        key={item.key_pair_id}
+                        className={`workspace-list-item${selectedKeyPairId === item.key_pair_id ? ' active' : ''}`}
+                        onClick={() => setSelectedKeyPairId(item.key_pair_id)}
+                        type="button"
+                      >
+                        <strong>{item.key_name}</strong>
+                        <div className="workspace-meta-row">
+                          <span>版本 {item.rotation_version}</span>
+                          <span>{item.algorithm}</span>
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                        </div>
+                      </button>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </article>
               </div>
-            </article>
-            <article className="sub-panel">
-              <h3>本轮专业化增强</h3>
-              <ul>
-                <li>将客户台、策略台、签发台与工具发布整合为页签式工作台。</li>
-                <li>提供轮转、隔离、签发、稳定诊断校验与导出直达操作。</li>
-                <li>为跨模块联调保留统一的审计、诊断契约与测试向量导出入口。</li>
-              </ul>
-            </article>
-          </section>
-        )}
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>影响面与确认说明</h3>
+                  {!selectedKeyPair ? (
+                    <div className="workspace-empty">请选择密钥对查看影响范围。</div>
+                  ) : (
+                    <>
+                      <div className="workspace-kpi-grid">
+                        <article className="workspace-kpi-card">
+                          <span>关联策略</span>
+                          <strong>{dashboard.policies.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
+                        </article>
+                        <article className="workspace-kpi-card">
+                          <span>关联签发</span>
+                          <strong>{dashboard.issues.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
+                        </article>
+                        <article className="workspace-kpi-card">
+                          <span>当前状态</span>
+                          <strong>{selectedKeyPair.status}</strong>
+                        </article>
+                      </div>
+                      <div className="workspace-form-grid" style={{ marginTop: 16 }}>
+                        <label className="workspace-field">
+                          轮转说明
+                          <input value={rotateReason} onChange={(event) => setRotateReason(event.target.value)} />
+                        </label>
+                        <label className="workspace-field">
+                          隔离说明
+                          <input value={isolateReason} onChange={(event) => setIsolateReason(event.target.value)} />
+                        </label>
+                      </div>
+                      <div className="button-row">
+                        <button onClick={() => void handleRotateKeyPair()} type="button">执行轮转</button>
+                        <button onClick={() => void handleIsolateKeyPair()} type="button">执行隔离</button>
+                      </div>
+                    </>
+                  )}
+                </article>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'validation' && (
+            <div className="workspace-panel-grid">
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>签发记录与校验</h3>
+                    <span className="badge badge-muted">L18-L19</span>
+                  </div>
+                  <div className="workspace-list">
+                    {dashboard.issues.map((item) => (
+                      <button
+                        key={item.issue_record_id}
+                        className={`workspace-list-item${selectedIssueId === item.issue_record_id ? ' active' : ''}`}
+                        onClick={() => setSelectedIssueId(item.issue_record_id)}
+                        type="button"
+                      >
+                        <strong>签发 #{item.issue_record_id}</strong>
+                        <div className="workspace-meta-row">
+                          <span>{item.customer_code}</span>
+                          <span>{item.application_name}</span>
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="workspace-form-grid" style={{ marginTop: 16 }}>
+                    <label className="workspace-field">
+                      指纹
+                      <input value={validationForm.hardware_fingerprint} onChange={(event) => setValidationForm((current) => ({ ...current, hardware_fingerprint: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      能力
+                      <input value={validationForm.capability_name} onChange={(event) => setValidationForm((current) => ({ ...current, capability_name: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      产品版本
+                      <input value={validationForm.product_version} onChange={(event) => setValidationForm((current) => ({ ...current, product_version: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      OS
+                      <input value={validationForm.operating_system} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      OS 版本
+                      <input value={validationForm.operating_system_version} onChange={(event) => setValidationForm((current) => ({ ...current, operating_system_version: event.target.value }))} />
+                    </label>
+                    <label className="workspace-field">
+                      架构
+                      <input value={validationForm.system_architecture} onChange={(event) => setValidationForm((current) => ({ ...current, system_architecture: event.target.value }))} />
+                    </label>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleValidateIssue()} type="button">执行校验</button>
+                  </div>
+                </article>
+
+                <article className="workspace-note-block">
+                  <div className="section-header">
+                    <h3>tool release 与诊断材料</h3>
+                    <span className="badge badge-muted">L18</span>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleSyncToolRelease()} type="button">同步默认工具版本</button>
+                  </div>
+                  <div className="workspace-list" style={{ marginTop: 16 }}>
+                    {dashboard.toolReleases.map((item) => (
+                      <div key={item.release_id} className="workspace-list-item">
+                        <strong>{item.tool_name} / {item.version}</strong>
+                        <div className="workspace-meta-row">
+                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                          <a href={toolExportUrl(item.release_id, 'archive')}>归档</a>
+                          <a href={toolExportUrl(item.release_id, 'diagnostics')}>诊断</a>
+                          <a href={toolExportUrl(item.release_id, 'vectors')}>向量</a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="workspace-stack">
+                <article className="workspace-note-block">
+                  <h3>校验详情与下游动作</h3>
+                  {lastValidationResult && (
+                    <div className="workspace-kpi-grid">
+                      <article className="workspace-kpi-card">
+                        <span>结果码</span>
+                        <strong>{lastValidationResult.code}</strong>
+                      </article>
+                      <article className="workspace-kpi-card">
+                        <span>阶段</span>
+                        <strong>{lastValidationResult.stage}</strong>
+                      </article>
+                      <article className="workspace-kpi-card">
+                        <span>结论</span>
+                        <strong>{lastValidationResult.valid ? '通过' : '拒绝'}</strong>
+                      </article>
+                    </div>
+                  )}
+                  {issueDetail ? (
+                    <>
+                      <div className="workspace-action-row">
+                        <a className="workspace-action-chip" href={issueExportUrl(issueDetail.issue_record_id, 'bin')}>导出 license.bin</a>
+                        <a className="workspace-action-chip" href={issueExportUrl(issueDetail.issue_record_id, 'pubkey')}>导出 pubkey.pem</a>
+                        {workspace.nextModule && (
+                          <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                            推进到 {workspace.nextModule.shortTitle}
+                          </a>
+                        )}
+                      </div>
+                      <pre className="workspace-code-block">{JSON.stringify(issueDetail.payload, null, 2)}</pre>
+                    </>
+                  ) : (
+                    <div className="workspace-empty">请选择签发记录查看详细载荷。</div>
+                  )}
+                </article>
+
+                <article className="workspace-note-block">
+                  <h3>诊断契约摘要</h3>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>字段数</span>
+                      <strong>{Object.keys(dashboard.validationContract?.fields ?? {}).length}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>结果码数</span>
+                      <strong>{Object.keys(dashboard.validationContract?.code_catalog ?? {}).length}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>测试向量</span>
+                      <strong>{dashboard.validationVectors?.license_validation_vectors.length ?? 0}</strong>
+                    </article>
+                  </div>
+                </article>
+              </div>
+            </div>
+          )}
+        </section>
       </main>
     </div>
   )
