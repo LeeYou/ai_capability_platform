@@ -20,7 +20,7 @@ RUN npm ci
 
 COPY apps/ai-license-mgr/frontend/ /workspace/apps/ai-license-mgr/frontend/
 COPY apps/frontend-common/ /workspace/apps/frontend-common/
-RUN npm run build
+RUN ln -s /workspace/apps/ai-license-mgr/frontend/node_modules /workspace/apps/frontend-common/node_modules && npm run build
 
 
 ARG AI_CAP_BASE_IMAGE
