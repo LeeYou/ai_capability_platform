@@ -13,27 +13,31 @@ export default function ModelPage() {
   const [modelDetail, setModelDetail] = useState<ModelArtifactItem | null>(null)
 
   useEffect(() => {
-    setLoading(true)
-    setError(null)
-    fetchList<ModelArtifactItem>('/api/v1/models')
-      .then((items) => {
-        setModelArtifacts(items)
-        setSelectedModelArtifactId((current) => current ?? items[0]?.artifact_id ?? null)
-      })
-      .catch((loadError) => {
-        setError(loadError instanceof Error ? loadError.message : '加载数据失败')
-      })
-      .finally(() => {
-        setLoading(false)
-      })
+    let cancelled = false
+    async function load() {
+      try {
+        const items = await fetchList<ModelArtifactItem>('/api/v1/models')
+        if (!cancelled) {
+          setModelArtifacts(items)
+          setSelectedModelArtifactId((current) => current ?? items[0]?.artifact_id ?? null)
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : '加载数据失败')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    if (selectedModelArtifactId == null) {
-      setModelDetail(null)
-      return
-    }
-    void request<ModelArtifactItem>(`/api/v1/models/${selectedModelArtifactId}`).then(setModelDetail)
+    if (selectedModelArtifactId == null) return
+    let cancelled = false
+    void request<ModelArtifactItem>(`/api/v1/models/${selectedModelArtifactId}`).then((detail) => {
+      if (!cancelled) setModelDetail(detail)
+    })
+    return () => { cancelled = true }
   }, [selectedModelArtifactId])
 
   return (

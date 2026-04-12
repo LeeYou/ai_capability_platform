@@ -33,24 +33,30 @@ export default function WizardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
-    Promise.all([
-      request<CatalogResponse>('/api/v1/catalog'),
-      fetchList<BuildTaskItem>('/api/v1/build-tasks'),
-    ])
-      .then(([catalogData]) => {
-        setCatalog(catalogData)
-        setBuildForm((current) => ({
-          ...current,
-          capability_name: current.capability_name || catalogData.models[0]?.capability_name || '',
-          model_version: current.model_version || catalogData.models[0]?.model_version || '',
-          issue_record_id: current.issue_record_id || String(catalogData.license_issues[0]?.issue_record_id ?? ''),
-        }))
-      })
-      .catch(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const [catalogData] = await Promise.all([
+          request<CatalogResponse>('/api/v1/catalog'),
+          fetchList<BuildTaskItem>('/api/v1/build-tasks'),
+        ])
+        if (!cancelled) {
+          setCatalog(catalogData)
+          setBuildForm((current) => ({
+            ...current,
+            capability_name: current.capability_name || catalogData.models[0]?.capability_name || '',
+            model_version: current.model_version || catalogData.models[0]?.model_version || '',
+            issue_record_id: current.issue_record_id || String(catalogData.license_issues[0]?.issue_record_id ?? ''),
+          }))
+        }
+      } catch {
         /* catalog load errors are non-fatal for wizard */
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
   }, [])
 
   async function handleCreateBuildTask(): Promise<void> {

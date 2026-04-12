@@ -14,28 +14,35 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
-    fetchList<BuildTaskItem>('/api/v1/build-tasks')
-      .then((tasks) => {
-        setBuildTasks(tasks)
-        setSelectedTaskId((current) => current ?? tasks[0]?.task_id ?? null)
-      })
-      .catch(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const tasks = await fetchList<BuildTaskItem>('/api/v1/build-tasks')
+        if (!cancelled) {
+          setBuildTasks(tasks)
+          setSelectedTaskId((current) => current ?? tasks[0]?.task_id ?? null)
+        }
+      } catch {
         /* non-fatal */
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    if (selectedTaskId == null) {
-      setSelectedTaskDetail(null)
-      return
-    }
+    if (selectedTaskId == null) return
+    let cancelled = false
     setSearchParams({ taskId: String(selectedTaskId) }, { replace: true })
-    void request<BuildTaskDetail>(`/api/v1/build-tasks/${selectedTaskId}`).then(setSelectedTaskDetail).catch(() => {
-      setSelectedTaskDetail(null)
+    void request<BuildTaskDetail>(`/api/v1/build-tasks/${selectedTaskId}`).then((d) => {
+      if (!cancelled) setSelectedTaskDetail(d)
+    }).catch(() => {
+      if (!cancelled) setSelectedTaskDetail(null)
     })
-  }, [selectedTaskId])
+    return () => { cancelled = true }
+  }, [selectedTaskId, setSearchParams])
 
   return (
     <div className="page-container">

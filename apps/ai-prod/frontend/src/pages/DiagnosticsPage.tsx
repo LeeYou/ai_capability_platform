@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { DashboardState } from '../types'
-import { initialState, loadDashboard, statusTone } from '../api'
+import { initialState, loadDashboard } from '../api'
 
 export default function DiagnosticsPage() {
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)

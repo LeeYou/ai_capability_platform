@@ -17,23 +17,24 @@ export default function OverviewPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setLoading(true)
-    setError(null)
-    Promise.all([
-      fetchList<CapabilityItem>('/api/v1/capabilities'),
-      fetchList<AnnotationTaskItem>('/api/v1/annotation-tasks'),
-      fetchList<TrainingTaskItem>('/api/v1/training-tasks'),
-      fetchList<ModelArtifactItem>('/api/v1/models'),
-    ])
-      .then(([capabilities, annotationTasks, trainingTasks, modelArtifacts]) => {
-        setData({ capabilities, annotationTasks, trainingTasks, modelArtifacts })
-      })
-      .catch((loadError) => {
-        setError(loadError instanceof Error ? loadError.message : '加载数据失败')
-      })
-      .finally(() => {
-        setLoading(false)
-      })
+    let cancelled = false
+    async function load() {
+      try {
+        const [capabilities, annotationTasks, trainingTasks, modelArtifacts] = await Promise.all([
+          fetchList<CapabilityItem>('/api/v1/capabilities'),
+          fetchList<AnnotationTaskItem>('/api/v1/annotation-tasks'),
+          fetchList<TrainingTaskItem>('/api/v1/training-tasks'),
+          fetchList<ModelArtifactItem>('/api/v1/models'),
+        ])
+        if (!cancelled) setData({ capabilities, annotationTasks, trainingTasks, modelArtifacts })
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : '加载数据失败')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
   }, [])
 
   const overviewCards = useMemo(
