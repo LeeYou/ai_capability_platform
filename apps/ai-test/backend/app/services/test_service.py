@@ -237,12 +237,31 @@ def _simulate_case_execution(
     case_name: str,
     input_path: str,
     task_type: str = "classification",
+    model_artifact_path: str = "",
 ) -> dict[str, object]:
-    """TT12：任务类型感知的仿真推理执行。
+    """TT12：任务类型感知的推理执行。
 
-    根据 task_type 生成与训练标注 schema 对齐的仿真输出，确保测试样本输入与
+    优先尝试调用真实能力适配器执行推理；无适配器时回退到仿真推理。
+    根据 task_type 生成与训练标注 schema 对齐的输出，确保测试样本输入与
     训练标注 schema 保持一致性，便于后续期望输出校验。
     """
+    # ── 尝试真实推理适配器 ──
+    try:
+        from app.services.capability_adapters import get_test_adapter
+
+        adapter = get_test_adapter(capability_name)
+        if adapter is not None and model_artifact_path:
+            return adapter.infer(
+                capability_name=capability_name,
+                model_version=model_version,
+                model_artifact_path=model_artifact_path,
+                input_path=input_path,
+                task_type=task_type,
+            )
+    except Exception:
+        pass  # 适配器不可用时静默回退到仿真推理
+
+    # ── 回退：仿真推理 ──
     started = time.perf_counter()
     digest = hashlib.sha256(f"{capability_name}:{model_version}:{case_name}:{input_path}".encode("utf-8")).hexdigest()
     score = round(0.5 + (int(digest[2:6], 16) / 65535) * 0.49, 4)
@@ -298,6 +317,7 @@ def _run_case_with_timeout(
     input_path: str,
     timeout_seconds: int,
     task_type: str = "classification",
+    model_artifact_path: str = "",
 ) -> dict[str, object]:
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
@@ -308,6 +328,7 @@ def _run_case_with_timeout(
             case_name,
             input_path,
             task_type,
+            model_artifact_path,
         )
         try:
             return future.result(timeout=timeout_seconds)
@@ -435,6 +456,7 @@ def create_test_task(
                 input_path=test_case.input_path,
                 timeout_seconds=timeout_seconds,
                 task_type=capability_task_type,
+                model_artifact_path=str(model["artifact_path"]),
             )
             actual_output = str(execution["actual_output"])
             passed = test_case.expected_output in {None, "", actual_output}

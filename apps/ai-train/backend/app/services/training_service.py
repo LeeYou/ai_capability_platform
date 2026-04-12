@@ -469,22 +469,81 @@ def execute_training_task(
     training_input_path = _training_input_path(training_jobs_root, task_id)
     template_bundle_path = _template_bundle_path(training_jobs_root, task_id)
     export_dir = _export_dir(training_jobs_root, task_id)
+    workspace_dir = _workspace_dir(training_jobs_root, task_id)
     train_params = json.loads(task.train_params_json) if task.train_params_json else {}
-    epochs = train_params.get("epochs", 1)
-    if not isinstance(epochs, int) or epochs <= 0:
-        epochs = 1
-    epochs = min(epochs, 20)
-
     training_input = json.loads(training_input_path.read_text(encoding="utf-8"))
     template_bundle = json.loads(template_bundle_path.read_text(encoding="utf-8"))
     sample_count = int(training_input.get("sample_count", 0))
+    task_type = normalize_task_type(task.capability.task_type)
+    capability_name = task.capability.capability_name
 
     append_training_task_log(
         session=session,
         training_logs_root=training_logs_root,
         task_id=task_id,
-        message=f"训练输入适配完成，样本数={sample_count}，任务类型={training_input.get('task_type', 'classification')}",
+        message=f"训练输入适配完成，样本数={sample_count}，任务类型={task_type}",
     )
+
+    # ── 尝试分发到真实训练适配器 ──
+    from app.services.capability_adapters import get_training_adapter
+
+    adapter = get_training_adapter(capability_name)
+    if adapter is not None:
+        append_training_task_log(
+            session=session,
+            training_logs_root=training_logs_root,
+            task_id=task_id,
+            message=f"检测到真实训练适配器: {capability_name}，启动真实训练...",
+        )
+
+        def _log_callback(msg: str) -> None:
+            append_training_task_log(
+                session=session,
+                training_logs_root=training_logs_root,
+                task_id=task_id,
+                message=msg,
+            )
+
+        try:
+            result_summary = adapter.execute(
+                capability_name=capability_name,
+                task_type=task_type,
+                workspace_dir=workspace_dir,
+                dataset_path=task.dataset_binding.dataset_path,
+                export_dir=export_dir,
+                train_params=train_params,
+                log_callback=_log_callback,
+            )
+            result_summary.setdefault("task_id", task_id)
+            result_summary.setdefault("training_input_path", str(training_input_path.resolve()))
+            result_summary.setdefault("template_bundle_path", str(template_bundle_path.resolve()))
+            result_summary.setdefault("export_dir", str(export_dir.resolve()))
+        except Exception as exc:
+            append_training_task_log(
+                session=session,
+                training_logs_root=training_logs_root,
+                task_id=task_id,
+                message=f"真实训练执行失败: {exc}",
+            )
+            update_training_task_status(session, task_id, "failed")
+            raise ValueError(f"训练执行失败: {exc}") from exc
+
+        record_training_task_result(session, training_jobs_root, task_id, result_summary)
+        update_training_task_status(session, task_id, "completed")
+        append_training_task_log(
+            session=session,
+            training_logs_root=training_logs_root,
+            task_id=task_id,
+            message=f"真实训练执行完成: {capability_name}",
+        )
+        return get_training_task_detail(session, training_jobs_root, task_id)
+
+    # ── 回退：模拟训练（无真实适配器时） ──
+    epochs = train_params.get("epochs", 1)
+    if not isinstance(epochs, int) or epochs <= 0:
+        epochs = 1
+    epochs = min(epochs, 20)
+
     for epoch in range(1, epochs + 1):
         loss = max(0.01, 1.0 / (epoch + 1))
         append_training_task_log(
@@ -513,8 +572,8 @@ def execute_training_task(
         json.dumps(
             {
                 "task_id": task_id,
-                "capability_name": task.capability.capability_name,
-                "task_type": training_input.get("task_type", "classification"),
+                "capability_name": capability_name,
+                "task_type": task_type,
                 "template_bundle": template_bundle,
                 "exported_files": exported_files,
             },
@@ -526,8 +585,8 @@ def execute_training_task(
 
     result_summary = {
         "task_id": task_id,
-        "capability_name": task.capability.capability_name,
-        "task_type": training_input.get("task_type", "classification"),
+        "capability_name": capability_name,
+        "task_type": task_type,
         "best_metric": best_metric,
         "epochs": epochs,
         "sample_count": sample_count,

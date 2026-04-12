@@ -98,7 +98,11 @@ RUN python3 -m pip install \
     cryptography==46.0.6 \
     fastapi==0.116.1 \
     uvicorn==0.35.0 \
-    sqlalchemy==2.0.41
+    sqlalchemy==2.0.41 \
+    onnxruntime==1.18.1 \
+    ultralytics==8.2.50 \
+    Pillow==10.4.0 \
+    numpy==1.26.4
 COPY apps/ai-prod/backend/ /workspace/backend/
 COPY apps/ai-prod/scripts/run_prod_stack.sh /workspace/run_prod_stack.sh
 
