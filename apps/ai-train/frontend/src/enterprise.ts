@@ -1,4 +1,5 @@
 import type {
+  AnnotationDraft,
   AnnotationSampleItem,
   AnnotationTaskItem,
   CapabilityItem,
@@ -29,6 +30,20 @@ export type EnterpriseRiskItem = {
   tone: EnterpriseTone
 }
 
+export type EnterpriseTimelineItem = {
+  label: string
+  detail: string
+  done: boolean
+  tone: EnterpriseTone
+}
+
+export type EnterpriseComparisonRow = {
+  label: string
+  current: string
+  baseline: string
+  same: boolean
+}
+
 export function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
@@ -53,6 +68,12 @@ export function freshnessLabel(value?: string | null): string {
   if (hours <= 72) return '3 天内'
   if (hours <= 24 * 7) return '7 天内'
   return '超 7 天'
+}
+
+export function stringifyComparableValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value == null) return '-'
+  return JSON.stringify(value, null, 2)
 }
 
 export function datasetGovernanceLabel(item: DatasetItem): string {
@@ -301,6 +322,117 @@ export function buildSampleOpsSummary(sampleItems: AnnotationSampleItem[]): Ente
       title: '长期滞留样本',
       detail: stale > 0 ? `${stale} 个样本超 3 天未更新` : '无长期滞留样本',
       tone: stale > 0 ? 'danger' : 'good',
+    },
+  ]
+}
+
+export function isAnnotationDraftDirty(sample: AnnotationSampleItem, draft: AnnotationDraft | undefined): boolean {
+  if (!draft) return false
+  const current = {
+    label: typeof sample.annotation?.label === 'string' ? sample.annotation.label : '',
+    note: typeof sample.annotation?.note === 'string' ? sample.annotation.note : '',
+    attributesJson: stringifyComparableValue(sample.annotation?.attributes ?? {}),
+    objectsJson: stringifyComparableValue(sample.annotation?.objects ?? []),
+    text: typeof sample.annotation?.text === 'string' ? sample.annotation.text : '',
+    regionsJson: stringifyComparableValue(sample.annotation?.regions ?? []),
+    fieldsJson: stringifyComparableValue(sample.annotation?.fields ?? {}),
+    confidenceJson: stringifyComparableValue(sample.annotation?.confidence ?? {}),
+  }
+  return JSON.stringify(current) !== JSON.stringify(draft)
+}
+
+export function buildTrainingTimeline(task: TrainingTaskItem | null): EnterpriseTimelineItem[] {
+  if (!task) return []
+  return [
+    {
+      label: '任务创建',
+      detail: task.created_at ?? '未记录',
+      done: Boolean(task.created_at),
+      tone: 'good',
+    },
+    {
+      label: '工作区准备',
+      detail: task.workspace_path ?? '未准备',
+      done: Boolean(task.workspace_path),
+      tone: task.workspace_path ? 'good' : 'warn',
+    },
+    {
+      label: '训练启动',
+      detail: task.started_at ?? '未启动',
+      done: Boolean(task.started_at),
+      tone: task.started_at ? 'good' : 'warn',
+    },
+    {
+      label: '结果沉淀',
+      detail: task.completed_at ?? (task.status === 'failed' ? '执行失败' : '未完成'),
+      done: task.status === 'completed',
+      tone: task.status === 'failed' ? 'danger' : task.status === 'completed' ? 'good' : 'warn',
+    },
+    {
+      label: '导出产物',
+      detail: task.export_dir ?? '未导出',
+      done: Boolean(task.export_dir),
+      tone: task.export_dir ? 'good' : 'warn',
+    },
+  ]
+}
+
+export function filterLogLines(lines: string[], query: string): string[] {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return lines
+  return lines.filter((line) => line.toLowerCase().includes(normalized))
+}
+
+export function pickBestModelArtifact(items: ModelArtifactItem[]): ModelArtifactItem | null {
+  if (items.length === 0) return null
+  const ranked = [...items].sort((left, right) => {
+    const leftReady = left.status === 'ready' ? 1 : 0
+    const rightReady = right.status === 'ready' ? 1 : 0
+    if (leftReady !== rightReady) return rightReady - leftReady
+    const leftTime = new Date(left.updated_at ?? left.created_at ?? 0).getTime()
+    const rightTime = new Date(right.updated_at ?? right.created_at ?? 0).getTime()
+    return rightTime - leftTime
+  })
+  return ranked[0]
+}
+
+export function buildModelComparisonRows(current: ModelArtifactItem, baseline: ModelArtifactItem): EnterpriseComparisonRow[] {
+  return [
+    {
+      label: '模型版本',
+      current: current.model_version,
+      baseline: baseline.model_version,
+      same: current.model_version === baseline.model_version,
+    },
+    {
+      label: '状态',
+      current: current.status,
+      baseline: baseline.status,
+      same: current.status === baseline.status,
+    },
+    {
+      label: '后端',
+      current: current.backend_type,
+      baseline: baseline.backend_type,
+      same: current.backend_type === baseline.backend_type,
+    },
+    {
+      label: '来源训练任务',
+      current: String(current.source_training_task_id),
+      baseline: String(baseline.source_training_task_id),
+      same: current.source_training_task_id === baseline.source_training_task_id,
+    },
+    {
+      label: '运行时契约',
+      current: stringifyComparableValue(current.runtime_contract ?? {}),
+      baseline: stringifyComparableValue(baseline.runtime_contract ?? {}),
+      same: JSON.stringify(current.runtime_contract ?? {}) === JSON.stringify(baseline.runtime_contract ?? {}),
+    },
+    {
+      label: '交付元数据',
+      current: stringifyComparableValue(current.delivery_metadata ?? {}),
+      baseline: stringifyComparableValue(baseline.delivery_metadata ?? {}),
+      same: JSON.stringify(current.delivery_metadata ?? {}) === JSON.stringify(baseline.delivery_metadata ?? {}),
     },
   ]
 }

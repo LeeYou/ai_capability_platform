@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AnnotationTaskItem, AnnotationDraft, CapabilityItem } from '../types'
 import { request, fetchList, statusTone, extractDraft, buildAnnotationPayload, prettyJson, formatDateTime, emptyAnnotationDraft } from '../api'
-import { buildAnnotationChecklist, buildSampleOpsSummary, clampScore, scoreTone } from '../enterprise'
+import { buildAnnotationChecklist, buildSampleOpsSummary, clampScore, isAnnotationDraftDirty, scoreTone } from '../enterprise'
 
 const initialTaskForm = {
   capability_name: '',
@@ -22,6 +22,7 @@ export default function AnnotationPage() {
   const [taskCapabilityFilter, setTaskCapabilityFilter] = useState('all')
   const [taskStatusFilter, setTaskStatusFilter] = useState('all')
   const [sampleStatusFilter, setSampleStatusFilter] = useState('all')
+  const [sampleSearchQuery, setSampleSearchQuery] = useState('')
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null)
   const [jumpSampleId, setJumpSampleId] = useState('')
 
@@ -77,9 +78,12 @@ export default function AnnotationPage() {
 
   const filteredSamples = useMemo(() => {
     const sampleItems = annotationDetail?.sample_items ?? []
-    if (sampleStatusFilter === 'all') return sampleItems
-    return sampleItems.filter((item) => item.status === sampleStatusFilter)
-  }, [annotationDetail?.sample_items, sampleStatusFilter])
+    return sampleItems.filter((item) => {
+      if (sampleStatusFilter !== 'all' && item.status !== sampleStatusFilter) return false
+      if (sampleSearchQuery.trim() && !item.sample_id.toLowerCase().includes(sampleSearchQuery.trim().toLowerCase())) return false
+      return true
+    })
+  }, [annotationDetail?.sample_items, sampleSearchQuery, sampleStatusFilter])
 
   const currentSampleIndex = useMemo(
     () => filteredSamples.findIndex((item) => item.sample_id === selectedSampleId),
@@ -99,6 +103,14 @@ export default function AnnotationPage() {
     () => buildSampleOpsSummary(annotationDetail?.sample_items ?? []),
     [annotationDetail?.sample_items],
   )
+  const dirtySampleIds = useMemo(
+    () =>
+      (annotationDetail?.sample_items ?? [])
+        .filter((item) => isAnnotationDraftDirty(item, annotationDrafts[item.sample_id]))
+        .map((item) => item.sample_id),
+    [annotationDetail?.sample_items, annotationDrafts],
+  )
+  const dirtyCurrentSample = currentSample ? dirtySampleIds.includes(currentSample.sample_id) : false
 
   useEffect(() => {
     if (filteredSamples.length === 0) {
@@ -143,6 +155,15 @@ export default function AnnotationPage() {
         ...patch,
       },
     }))
+  }
+
+  function restoreCurrentSampleDraft(): void {
+    if (!currentSample) return
+    setAnnotationDrafts((current) => ({
+      ...current,
+      [currentSample.sample_id]: extractDraft(currentSample),
+    }))
+    setActionMessage(`样本 ${currentSample.sample_id} 已恢复为最近一次保存状态`)
   }
 
   async function handleCreateTask(event: React.FormEvent): Promise<void> {
@@ -404,6 +425,7 @@ export default function AnnotationPage() {
                     <button className="action-button" type="button" onClick={() => void saveAnnotations(currentSample ? [currentSample.sample_id] : [], false)}>保存当前样本</button>
                     <button className="action-button" type="button" onClick={() => void saveAnnotations(filteredSamples.map((item) => item.sample_id), false)}>批量保存</button>
                     <button className="action-button" type="button" onClick={() => void saveAnnotations(filteredSamples.map((item) => item.sample_id), true)}>提交当前筛选集</button>
+                    <button className="action-button" type="button" onClick={() => restoreCurrentSampleDraft()}>恢复当前样本</button>
                     <button className="action-button" type="button" onClick={() => exportCurrentTask()}>导出结果</button>
                     <button className="action-button danger-button" type="button" onClick={() => void handleDeleteTask(annotationDetail.task_id)}>删除任务</button>
                   </div>
@@ -436,6 +458,32 @@ export default function AnnotationPage() {
                     </article>
                   </div>
 
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>作业恢复与未保存提示</strong>
+                      <div className="enterprise-stack">
+                        <div className={`enterprise-inline-card tone-${dirtySampleIds.length > 0 ? 'warn' : 'good'}`}>
+                          <strong>未保存样本数</strong>
+                          <p>{dirtySampleIds.length} 个样本存在本地修改未落库。</p>
+                        </div>
+                        {currentSample && (
+                          <div className={`enterprise-inline-card tone-${dirtyCurrentSample ? 'warn' : 'good'}`}>
+                            <strong>当前样本状态</strong>
+                            <p>{currentSample.sample_id} {dirtyCurrentSample ? '存在未保存修改' : '已与服务端保存状态一致'}</p>
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>快捷键与恢复说明</strong>
+                      <ul className="enterprise-list">
+                        <li>← / →：切换前后样本。</li>
+                        <li>样本搜索：按 sample_id 快速定位目标样本。</li>
+                        <li>恢复当前样本：放弃本地修改，回退到最近一次保存状态。</li>
+                      </ul>
+                    </article>
+                  </div>
+
                   <div className="workspace-form-grid">
                     <label className="workspace-field">
                       样本状态筛选
@@ -445,6 +493,14 @@ export default function AnnotationPage() {
                         <option value="labeled">labeled</option>
                         <option value="submitted">submitted</option>
                       </select>
+                    </label>
+                    <label className="workspace-field">
+                      样本搜索
+                      <input
+                        value={sampleSearchQuery}
+                        onChange={(event) => setSampleSearchQuery(event.target.value)}
+                        placeholder="按 sample_id 搜索"
+                      />
                     </label>
                     <label className="workspace-field">
                       跳转样本 ID
@@ -469,13 +525,13 @@ export default function AnnotationPage() {
                     <div className="workspace-note-block">
                       <div className="section-header">
                         <h3>样本列表</h3>
-                        <span className="badge badge-muted">{filteredSamples.length} 条</span>
+                        <span className="badge badge-muted">{filteredSamples.length} 条 / 未保存 {dirtySampleIds.length}</span>
                       </div>
                       <div className="workspace-list sample-scroll-list">
                         {filteredSamples.map((sample) => (
                           <button
                             key={sample.sample_id}
-                            className={`workspace-list-item${selectedSampleId === sample.sample_id ? ' active' : ''}`}
+                            className={`workspace-list-item${selectedSampleId === sample.sample_id ? ' active' : ''}${dirtySampleIds.includes(sample.sample_id) ? ' workspace-list-item-dirty' : ''}`}
                             onClick={() => {
                               setSelectedSampleId(sample.sample_id)
                               setJumpSampleId(sample.sample_id)
@@ -485,6 +541,7 @@ export default function AnnotationPage() {
                             <strong>{sample.sample_id}</strong>
                             <div className="workspace-meta-row">
                               <span className={`status-pill ${statusTone(sample.status)}`}>{sample.status}</span>
+                              {dirtySampleIds.includes(sample.sample_id) && <span className="status-pill warn">unsaved</span>}
                               <span>{formatDateTime(sample.updated_at)}</span>
                             </div>
                           </button>

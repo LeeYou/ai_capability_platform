@@ -340,6 +340,19 @@ code {
   gap: 12px;
 }
 
+.enterprise-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.enterprise-search-field {
+  min-width: min(320px, 100%);
+}
+
 .enterprise-score-card,
 .enterprise-note-card,
 .enterprise-stage-card,
@@ -357,6 +370,17 @@ code {
 
 .enterprise-inline-card {
   padding: 14px 16px;
+}
+
+.enterprise-cta-card {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: white;
+  cursor: pointer;
 }
 
 .enterprise-score-card {
@@ -453,6 +477,45 @@ code {
 .enterprise-checklist li p,
 .enterprise-list li {
   margin: 4px 0 0;
+}
+
+.enterprise-timeline {
+  display: grid;
+  gap: 12px;
+}
+
+.enterprise-timeline-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.enterprise-timeline-item span {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.workspace-list-item-dirty {
+  border-color: rgba(180, 83, 9, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.12);
+}
+
+.comparison-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
+.comparison-same {
+  background: rgba(29, 131, 72, 0.06);
+}
+
+.comparison-diff {
+  background: rgba(180, 83, 9, 0.08);
 }
 
 .data-grid {

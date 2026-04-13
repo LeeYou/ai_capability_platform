@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CapabilityItem, ModelArtifactItem } from '../types'
 import { fetchList, formatDateTime, request, statusTone } from '../api'
 import { buildR7Workspace } from '../../../../frontend-common/src/r7Workspace.ts'
-import { buildModelChecklist, clampScore, scoreTone } from '../enterprise'
+import { buildModelChecklist, buildModelComparisonRows, clampScore, pickBestModelArtifact, scoreTone } from '../enterprise'
 
 const workspace = buildR7Workspace(import.meta.env, 'ai-train')
 
@@ -15,6 +15,7 @@ export default function ModelPage() {
   const [modelDetail, setModelDetail] = useState<ModelArtifactItem | null>(null)
   const [capabilityFilter, setCapabilityFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [compareArtifactId, setCompareArtifactId] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -70,6 +71,22 @@ export default function ModelPage() {
   const modelChecklist = useMemo(() => buildModelChecklist(modelDetail), [modelDetail])
   const modelReadinessScore = clampScore(modelChecklist.filter((item) => item.done).length / Math.max(1, modelChecklist.length) * 100)
   const downstreamTargets = Object.keys(modelDetail?.delivery_metadata ?? {})
+  const sameCapabilityArtifacts = useMemo(
+    () => modelArtifacts.filter((item) => item.capability_name === modelDetail?.capability_name && item.artifact_id !== modelDetail?.artifact_id),
+    [modelArtifacts, modelDetail?.artifact_id, modelDetail?.capability_name],
+  )
+  const bestArtifactForCapability = useMemo(
+    () => pickBestModelArtifact(modelArtifacts.filter((item) => item.capability_name === modelDetail?.capability_name)),
+    [modelArtifacts, modelDetail?.capability_name],
+  )
+  const compareTarget = useMemo(
+    () => sameCapabilityArtifacts.find((item) => item.artifact_id === compareArtifactId) ?? sameCapabilityArtifacts[0] ?? null,
+    [compareArtifactId, sameCapabilityArtifacts],
+  )
+  const comparisonRows = useMemo(
+    () => (modelDetail && compareTarget ? buildModelComparisonRows(modelDetail, compareTarget) : []),
+    [compareTarget, modelDetail],
+  )
 
   return (
     <div className="page-container">
@@ -201,6 +218,9 @@ export default function ModelPage() {
                         送测到 {workspace.nextModule.shortTitle}
                       </a>
                     )}
+                    {bestArtifactForCapability && modelDetail.artifact_id === bestArtifactForCapability.artifact_id && (
+                      <span className="badge">推荐最佳版本</span>
+                    )}
                   </div>
                   <div className="enterprise-two-column">
                     <article className="enterprise-note-card">
@@ -228,6 +248,64 @@ export default function ModelPage() {
                           </div>
                         ))}
                       </div>
+                    </article>
+                  </div>
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>最佳版本判断</strong>
+                      {!bestArtifactForCapability ? (
+                        <div className="workspace-empty">当前能力暂无可推荐版本。</div>
+                      ) : (
+                        <div className={`enterprise-inline-card tone-${modelDetail.artifact_id === bestArtifactForCapability.artifact_id ? 'good' : 'warn'}`}>
+                          <strong>{bestArtifactForCapability.model_version}</strong>
+                          <p>
+                            当前能力推荐版本为 #{bestArtifactForCapability.artifact_id}，
+                            {modelDetail.artifact_id === bestArtifactForCapability.artifact_id ? '当前选中版本即最佳候选。' : '建议对比后决定是否送测。'}
+                          </p>
+                        </div>
+                      )}
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>同能力版本对比</strong>
+                      {sameCapabilityArtifacts.length === 0 ? (
+                        <div className="workspace-empty">当前能力暂无其它版本可对比。</div>
+                      ) : (
+                        <>
+                          <label className="workspace-field">
+                            对比版本
+                            <select
+                              value={compareTarget ? String(compareTarget.artifact_id) : ''}
+                              onChange={(event) => setCompareArtifactId(Number(event.target.value))}
+                            >
+                              {sameCapabilityArtifacts.map((item) => (
+                                <option key={item.artifact_id} value={String(item.artifact_id)}>
+                                  #{item.artifact_id} {item.model_version}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="workspace-table-wrap">
+                            <table className="workspace-table">
+                              <thead>
+                                <tr>
+                                  <th>维度</th>
+                                  <th>当前版本</th>
+                                  <th>对比版本</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {comparisonRows.map((item) => (
+                                  <tr key={item.label}>
+                                    <td>{item.label}</td>
+                                    <td className={item.same ? 'comparison-same' : 'comparison-diff'}><pre className="comparison-pre">{item.current}</pre></td>
+                                    <td className={item.same ? 'comparison-same' : 'comparison-diff'}><pre className="comparison-pre">{item.baseline}</pre></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
                     </article>
                   </div>
                   <div className="workspace-stack">

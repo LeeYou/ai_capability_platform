@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AnnotationTaskItem, CapabilityItem, TrainingTaskItem } from '../types'
 import { fetchList, formatDateTime, prettyJson, request, statusTone } from '../api'
-import { buildTrainingChecklist, clampScore, scoreTone, hoursSince } from '../enterprise'
+import { buildTrainingChecklist, buildTrainingTimeline, clampScore, filterLogLines, scoreTone, hoursSince } from '../enterprise'
 
 const initialTrainingForm = {
   capability_name: '',
@@ -39,6 +39,8 @@ export default function TrainingPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [trainingForm, setTrainingForm] = useState(initialTrainingForm)
   const [modelForm, setModelForm] = useState(initialModelForm)
+  const [activeDetailTab, setActiveDetailTab] = useState<'logs' | 'plan' | 'result' | 'timeline'>('logs')
+  const [logSearchQuery, setLogSearchQuery] = useState('')
 
   async function loadTrainingWorkspace(): Promise<void> {
     setLoading(true)
@@ -206,6 +208,11 @@ export default function TrainingPage() {
   const trainingChecklist = useMemo(() => buildTrainingChecklist(trainingDetail), [trainingDetail])
   const releaseScore = clampScore(trainingChecklist.filter((item) => item.done).length / Math.max(1, trainingChecklist.length) * 100)
   const runtimeHours = trainingDetail?.started_at ? hoursSince(trainingDetail.started_at) : null
+  const timelineItems = useMemo(() => buildTrainingTimeline(trainingDetail), [trainingDetail])
+  const filteredLogs = useMemo(
+    () => filterLogLines(trainingDetail?.latest_logs ?? [], logSearchQuery),
+    [logSearchQuery, trainingDetail?.latest_logs],
+  )
 
   return (
     <div className="page-container">
@@ -477,6 +484,48 @@ export default function TrainingPage() {
                     </article>
                   </div>
 
+                  <div className="enterprise-note-card">
+                    <strong>日志检索与阶段面板</strong>
+                    <div className="enterprise-toolbar">
+                      <div className="tab-list">
+                        <button className={`tab-button${activeDetailTab === 'logs' ? ' active' : ''}`} onClick={() => setActiveDetailTab('logs')} type="button">日志</button>
+                        <button className={`tab-button${activeDetailTab === 'plan' ? ' active' : ''}`} onClick={() => setActiveDetailTab('plan')} type="button">执行计划</button>
+                        <button className={`tab-button${activeDetailTab === 'result' ? ' active' : ''}`} onClick={() => setActiveDetailTab('result')} type="button">结果摘要</button>
+                        <button className={`tab-button${activeDetailTab === 'timeline' ? ' active' : ''}`} onClick={() => setActiveDetailTab('timeline')} type="button">时间线</button>
+                      </div>
+                      {activeDetailTab === 'logs' && (
+                        <label className="workspace-field enterprise-search-field">
+                          日志检索
+                          <input
+                            value={logSearchQuery}
+                            onChange={(event) => setLogSearchQuery(event.target.value)}
+                            placeholder="按关键字过滤日志"
+                          />
+                        </label>
+                      )}
+                    </div>
+                    {activeDetailTab === 'logs' && (
+                      <pre className="workspace-code-block">{filteredLogs.join('\n') || '暂无匹配日志'}</pre>
+                    )}
+                    {activeDetailTab === 'plan' && (
+                      <pre className="workspace-code-block">{prettyJson(trainingDetail.execution_plan ?? {})}</pre>
+                    )}
+                    {activeDetailTab === 'result' && (
+                      <pre className="workspace-code-block">{prettyJson(trainingDetail.result_summary ?? {})}</pre>
+                    )}
+                    {activeDetailTab === 'timeline' && (
+                      <div className="enterprise-timeline">
+                        {timelineItems.map((item) => (
+                          <div key={item.label} className={`enterprise-timeline-item tone-${item.tone}`}>
+                            <strong>{item.label}</strong>
+                            <p>{item.detail}</p>
+                            <span>{item.done ? '已完成' : '待完成'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {trainingDetail.status === 'completed' && (
                     <div className="workspace-note-block">
                       <div className="section-header">
@@ -515,21 +564,6 @@ export default function TrainingPage() {
                         <li>当前完成时间：{formatDateTime(trainingDetail.completed_at)}</li>
                         <li>最新状态：{trainingDetail.status}</li>
                       </ul>
-                    </div>
-                    <div>
-                      <div className="section-header">
-                        <h3>最新日志</h3>
-                        <span className="badge badge-muted">{trainingDetail.latest_logs?.length ?? 0} 行</span>
-                      </div>
-                      <pre className="workspace-code-block">{(trainingDetail.latest_logs ?? []).join('\n') || '暂无日志'}</pre>
-                    </div>
-                    <div>
-                      <h3>执行计划</h3>
-                      <pre className="workspace-code-block">{prettyJson(trainingDetail.execution_plan ?? {})}</pre>
-                    </div>
-                    <div>
-                      <h3>结果摘要</h3>
-                      <pre className="workspace-code-block">{prettyJson(trainingDetail.result_summary ?? {})}</pre>
                     </div>
                     <div className="enterprise-note-card">
                       <strong>运营建议</strong>
