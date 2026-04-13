@@ -7,6 +7,7 @@ import type {
   BuildFormState,
   CatalogModelItem,
   LicenseIssueItem,
+  PlatformTargetItem,
 } from '../types'
 import { initialBuildForm } from '../types'
 import { buildWizardChecklist, clampScore, scoreTone, summarizeTargets } from '../enterprise'
@@ -21,8 +22,7 @@ export default function WizardPage() {
     license_policies: [],
     synced_at: null,
   })
-  const [platforms, setPlatforms] = useState([] as Awaited<ReturnType<typeof summarizeTargets>>)
-  const [allPlatforms, setAllPlatforms] = useState<Awaited<ReturnType<typeof request<any[]>>> | []>([])
+  const [allPlatforms, setAllPlatforms] = useState<PlatformTargetItem[]>([])
   const [buildForm, setBuildForm] = useState<BuildFormState>(() => {
     const capName = searchParams.get('capability_name') ?? ''
     const modelVer = searchParams.get('model_version') ?? ''
@@ -42,7 +42,7 @@ export default function WizardPage() {
       try {
         const [catalogData, platformData] = await Promise.all([
           request<CatalogResponse>('/api/v1/catalog'),
-          request<{ items: any[] }>('/api/v1/platform-targets'),
+          request<{ items: PlatformTargetItem[] }>('/api/v1/platform-targets'),
         ])
         if (!cancelled) {
           setCatalog(catalogData)
@@ -75,7 +75,7 @@ export default function WizardPage() {
   }, [buildForm.issue_record_id, catalog.license_issues])
 
   const requestedTargetNames = buildForm.requested_targets.split(',').map((item) => item.trim()).filter(Boolean)
-  const requestedTargets = useMemo(() => summarizeTargets(allPlatforms as any[], requestedTargetNames), [allPlatforms, requestedTargetNames])
+  const requestedTargets = useMemo(() => summarizeTargets(allPlatforms, requestedTargetNames), [allPlatforms, requestedTargetNames])
   const checklist = useMemo(() => buildWizardChecklist(catalog, buildForm, selectedModel, selectedIssue, requestedTargets), [buildForm, catalog, requestedTargets, selectedIssue, selectedModel])
   const wizardScore = clampScore((checklist.filter((item) => item.done).length / Math.max(1, checklist.length)) * 100)
 
