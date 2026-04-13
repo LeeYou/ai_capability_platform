@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { request, fetchList, statusTone } from '../api'
-import type { CustomerItem, CustomerFormState } from '../types'
+import type { CustomerItem, CustomerFormState, LicenseIssueItem, LicensePolicyItem } from '../types'
+import { buildCustomerPortfolio, clampScore, scoreTone } from '../enterprise'
 
 const initialForm: CustomerFormState = {
   customer_code: '',
@@ -11,17 +12,26 @@ const initialForm: CustomerFormState = {
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<CustomerItem[]>([])
+  const [policies, setPolicies] = useState<LicensePolicyItem[]>([])
+  const [issues, setIssues] = useState<LicenseIssueItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<CustomerFormState>(initialForm)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
-  async function loadCustomers(): Promise<void> {
+  async function loadData(): Promise<void> {
     setLoading(true)
     setError(null)
     try {
-      const items = await fetchList<CustomerItem>('/api/v1/customers')
-      setCustomers(items)
+      const [customerItems, policyItems, issueItems] = await Promise.all([
+        fetchList<CustomerItem>('/api/v1/customers'),
+        fetchList<LicensePolicyItem>('/api/v1/license-policies'),
+        fetchList<LicenseIssueItem>('/api/v1/license-issues'),
+      ])
+      setCustomers(customerItems)
+      setPolicies(policyItems)
+      setIssues(issueItems)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载失败')
     } finally {
@@ -30,7 +40,7 @@ export default function CustomersPage() {
   }
 
   useEffect(() => {
-    void loadCustomers()
+    void loadData()
   }, [])
 
   async function handleCreateCustomer(): Promise<void> {
@@ -42,103 +52,104 @@ export default function CustomersPage() {
       })
       setForm(initialForm)
       setActionMessage('客户已创建')
-      await loadCustomers()
+      await loadData()
     } catch (loadError) {
       setActionMessage(loadError instanceof Error ? loadError.message : '创建客户失败')
     }
   }
+
+  const portfolio = useMemo(() => buildCustomerPortfolio(customers, policies, issues), [customers, issues, policies])
+  const filteredPortfolio = portfolio.filter((item) => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return true
+    return item.customer.customer_code.toLowerCase().includes(normalized) || item.customer.customer_name.toLowerCase().includes(normalized)
+  })
+  const customerScore = clampScore((portfolio.filter((item) => item.issueCount > 0).length / Math.max(1, portfolio.length)) * 100)
 
   return (
     <div className="page-container">
       <section className="panel">
         <div className="section-header">
           <div>
-            <h2>客户管理</h2>
-            <p>管理授权客户信息，包括客户代码、名称和联系人。</p>
+            <h2>客户组合视图</h2>
+            <p>把客户从基础资料页升级为“客户 + 策略 + 签发 + 应用”的授权组合视图。</p>
           </div>
-          <span className="badge">CUS</span>
+          <span className="badge">L20-L24</span>
         </div>
         {loading && <p className="info-text">正在加载数据...</p>}
         {error && <p className="error-text">数据加载失败：{error}</p>}
         {actionMessage && <p className="success-text">{actionMessage}</p>}
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${scoreTone(customerScore)}`}>
+            <span>客户资产沉淀度</span>
+            <strong>{customerScore}</strong>
+            <p>根据客户是否已沉淀策略 / 签发资产计算。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>客户搜索</strong>
+            <label className="workspace-field enterprise-search-field">
+              搜索客户
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按客户代码或客户名称搜索" />
+            </label>
+          </article>
+        </div>
+      </section>
 
+      <section className="panel">
         <div className="workspace-panel-grid">
           <div className="workspace-stack">
             <article className="workspace-note-block">
               <h3>新建客户</h3>
-              <div className="workspace-field">
-                <label className="workspace-label">客户代码</label>
-                <input
-                  className="workspace-input"
-                  placeholder="客户代码，如 acme-corp"
-                  value={form.customer_code}
-                  onChange={(event) => setForm((current) => ({ ...current, customer_code: event.target.value }))}
-                />
+              <div className="workspace-form-grid">
+                <label className="workspace-field">
+                  客户代码
+                  <input value={form.customer_code} onChange={(event) => setForm((current) => ({ ...current, customer_code: event.target.value }))} />
+                </label>
+                <label className="workspace-field">
+                  客户名称
+                  <input value={form.customer_name} onChange={(event) => setForm((current) => ({ ...current, customer_name: event.target.value }))} />
+                </label>
+                <label className="workspace-field">
+                  联系人
+                  <input value={form.contact_name} onChange={(event) => setForm((current) => ({ ...current, contact_name: event.target.value }))} />
+                </label>
+                <label className="workspace-field">
+                  联系邮箱
+                  <input value={form.contact_email} onChange={(event) => setForm((current) => ({ ...current, contact_email: event.target.value }))} />
+                </label>
               </div>
-              <div className="workspace-field">
-                <label className="workspace-label">客户名称</label>
-                <input
-                  className="workspace-input"
-                  placeholder="客户名称"
-                  value={form.customer_name}
-                  onChange={(event) => setForm((current) => ({ ...current, customer_name: event.target.value }))}
-                />
-              </div>
-              <div className="workspace-field">
-                <label className="workspace-label">联系人</label>
-                <input
-                  className="workspace-input"
-                  placeholder="联系人姓名"
-                  value={form.contact_name}
-                  onChange={(event) => setForm((current) => ({ ...current, contact_name: event.target.value }))}
-                />
-              </div>
-              <div className="workspace-field">
-                <label className="workspace-label">联系邮箱</label>
-                <input
-                  className="workspace-input"
-                  placeholder="联系邮箱"
-                  value={form.contact_email}
-                  onChange={(event) => setForm((current) => ({ ...current, contact_email: event.target.value }))}
-                />
-              </div>
-              <div className="button-row">
-                <button className="action-btn" onClick={() => void handleCreateCustomer()} type="button">创建客户</button>
+              <div className="workspace-action-row">
+                <button className="action-button" onClick={() => void handleCreateCustomer()} type="button">创建客户</button>
               </div>
             </article>
           </div>
-
           <div className="workspace-stack">
             <article className="workspace-note-block">
-              <h3>客户列表</h3>
-              {customers.length === 0 && !loading ? (
-                <div className="workspace-empty">暂无客户记录。</div>
-              ) : (
-                <div className="workspace-table-wrap">
-                  <table className="workspace-table">
-                    <thead>
-                      <tr>
-                        <th>客户代码</th>
-                        <th>客户名称</th>
-                        <th>联系人</th>
-                        <th>联系邮箱</th>
-                        <th>状态</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {customers.map((item) => (
-                        <tr key={item.customer_id}>
-                          <td>{item.customer_code}</td>
-                          <td>{item.customer_name}</td>
-                          <td>{item.contact_name ?? '-'}</td>
-                          <td>{item.contact_email ?? '-'}</td>
-                          <td><span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <h3>客户资产卡片</h3>
+              <div className="capability-card-grid">
+                {filteredPortfolio.map((item) => (
+                  <article key={item.customer.customer_id} className="capability-card">
+                    <div className="section-header">
+                      <div>
+                        <h3>{item.customer.customer_name}</h3>
+                        <p>{item.customer.customer_code}</p>
+                      </div>
+                      <span className={`status-pill ${statusTone(item.customer.status)}`}>{item.customer.status}</span>
+                    </div>
+                    <div className="workspace-meta-column">
+                      <span>联系人：{item.customer.contact_name ?? '-'}</span>
+                      <span>邮箱：{item.customer.contact_email ?? '-'}</span>
+                      <span>策略数：{item.policyCount}</span>
+                      <span>签发数：{item.issueCount}</span>
+                      <span>有效签发：{item.activeIssueCount}</span>
+                    </div>
+                    <div className="enterprise-inline-card tone-neutral">
+                      <strong>应用列表</strong>
+                      <p>{item.applications.join(', ') || '尚未沉淀应用'}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
             </article>
           </div>
         </div>

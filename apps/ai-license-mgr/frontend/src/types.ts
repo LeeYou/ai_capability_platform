@@ -20,6 +20,12 @@ export type KeyPairItem = {
   status_reason?: string | null
 }
 
+export type RotateKeyPairResponse = {
+  source_key_pair: KeyPairItem
+  new_key_pair: KeyPairItem
+  migrated_policy_ids: number[]
+}
+
 export type LicensePolicyItem = {
   policy_id: number
   policy_name: string

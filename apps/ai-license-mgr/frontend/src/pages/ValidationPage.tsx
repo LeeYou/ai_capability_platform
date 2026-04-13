@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { request, fetchList, statusTone, issueExportUrl, toolExportUrl } from '../api'
 import { buildR7Workspace } from '../../../../frontend-common/src/r7Workspace.ts'
 import type {
@@ -10,6 +10,7 @@ import type {
   ValidationVectors,
   ValidationFormState,
 } from '../types'
+import { buildIssueComparison, buildValidationChecklist, clampScore, scoreTone } from '../enterprise'
 
 const workspace = buildR7Workspace(import.meta.env, 'ai-license-mgr')
 
@@ -105,34 +106,54 @@ export default function ValidationPage() {
     }
   }
 
+  const linkedPolicy = issueDetail ? null : null
+  const comparisonRows = useMemo(() => (issueDetail ? buildIssueComparison(issueDetail, linkedPolicy) : []), [issueDetail, linkedPolicy])
+  const checklist = useMemo(() => buildValidationChecklist({
+    issueDetail,
+    result: lastValidationResult,
+    contract: validationContract,
+    vectors: validationVectors,
+    tools: toolReleases,
+  }), [issueDetail, lastValidationResult, toolReleases, validationContract, validationVectors])
+  const validationScore = clampScore((checklist.filter((item) => item.done).length / Math.max(1, checklist.length)) * 100)
+
   return (
     <div className="page-container">
       <section className="panel">
         <div className="section-header">
           <div>
             <h2>校验与工具工作台</h2>
-            <p>围绕诊断校验与 tool release 组织企业级授权流程。</p>
+            <p>突出稳定 result / code / stage / details，并把 diagnostics、vectors、tool release 组合成同一契约工作台。</p>
           </div>
+          <span className="badge">L20-L24</span>
         </div>
         {loading && <p className="info-text">正在加载数据...</p>}
         {error && <p className="error-text">数据加载失败：{error}</p>}
         {actionMessage && <p className="success-text">{actionMessage}</p>}
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${scoreTone(validationScore)}`}>
+            <span>校验工作台完整度</span>
+            <strong>{validationScore}</strong>
+            <p>根据签发记录、稳定结果、契约、向量和工具版本五项门禁计算。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>工作台目标</strong>
+            <p>让授权校验不再停留在“返回一句提示文本”，而是把稳定字段、契约和导出物一起做成可交付的诊断面板。</p>
+          </article>
+        </div>
+      </section>
 
+      <section className="panel">
         <div className="workspace-panel-grid">
           <div className="workspace-stack">
             <article className="workspace-note-block">
               <div className="section-header">
                 <h3>签发记录与校验</h3>
-                <span className="badge badge-muted">L18-L19</span>
+                <span className="badge badge-muted">Validation</span>
               </div>
               <div className="workspace-list">
                 {issues.map((item) => (
-                  <button
-                    key={item.issue_record_id}
-                    className={`workspace-list-item${selectedIssueId === item.issue_record_id ? ' active' : ''}`}
-                    onClick={() => setSelectedIssueId(item.issue_record_id)}
-                    type="button"
-                  >
+                  <button key={item.issue_record_id} className={`workspace-list-item${selectedIssueId === item.issue_record_id ? ' active' : ''}`} onClick={() => setSelectedIssueId(item.issue_record_id)} type="button">
                     <strong>签发 #{item.issue_record_id}</strong>
                     <div className="workspace-meta-row">
                       <span>{item.customer_code}</span>
@@ -168,63 +189,76 @@ export default function ValidationPage() {
                   <input value={validationForm.system_architecture} onChange={(event) => setValidationForm((current) => ({ ...current, system_architecture: event.target.value }))} />
                 </label>
               </div>
-              <div className="button-row">
-                <button onClick={() => void handleValidateIssue()} type="button">执行校验</button>
+              <div className="workspace-action-row">
+                <button className="action-button" onClick={() => void handleValidateIssue()} type="button">执行校验</button>
               </div>
             </article>
 
             <article className="workspace-note-block">
-              <div className="section-header">
-                <h3>tool release 与诊断材料</h3>
-                <span className="badge badge-muted">L18</span>
-              </div>
-              <div className="button-row">
-                <button onClick={() => void handleSyncToolRelease()} type="button">同步默认工具版本</button>
-              </div>
-              <div className="workspace-list" style={{ marginTop: 16 }}>
-                {toolReleases.map((item) => (
-                  <div key={item.release_id} className="workspace-list-item">
-                    <strong>{item.tool_name} / {item.version}</strong>
-                    <div className="workspace-meta-row">
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                      <a href={toolExportUrl(item.release_id, 'archive')}>归档</a>
-                      <a href={toolExportUrl(item.release_id, 'diagnostics')}>诊断</a>
-                      <a href={toolExportUrl(item.release_id, 'vectors')}>向量</a>
+              <strong>校验门禁</strong>
+              <ul className="enterprise-checklist">
+                {checklist.map((item) => (
+                  <li key={item.label} className={item.done ? 'done' : 'pending'}>
+                    <span>{item.done ? '✓' : '•'}</span>
+                    <div>
+                      <strong>{item.label}</strong>
+                      <p>{item.detail}</p>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </article>
           </div>
 
           <div className="workspace-stack">
             <article className="workspace-note-block">
-              <h3>校验详情与下游动作</h3>
-              {lastValidationResult && (
-                <div className="workspace-kpi-grid">
-                  <article className="workspace-kpi-card">
-                    <span>结果码</span>
-                    <strong>{lastValidationResult.code}</strong>
-                  </article>
-                  <article className="workspace-kpi-card">
-                    <span>阶段</span>
-                    <strong>{lastValidationResult.stage}</strong>
-                  </article>
-                  <article className="workspace-kpi-card">
-                    <span>结论</span>
-                    <strong>{lastValidationResult.valid ? '通过' : '拒绝'}</strong>
-                  </article>
-                </div>
+              <h3>稳定结果字段</h3>
+              {lastValidationResult ? (
+                <>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>结果码</span>
+                      <strong>{lastValidationResult.code}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>阶段</span>
+                      <strong>{lastValidationResult.stage}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>结论</span>
+                      <strong>{lastValidationResult.valid ? '通过' : '拒绝'}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>契约版本</span>
+                      <strong>{lastValidationResult.diagnostics_version}</strong>
+                    </article>
+                  </div>
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>details</strong>
+                      <pre className="workspace-code-block">{JSON.stringify(lastValidationResult.details, null, 2)}</pre>
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>reason</strong>
+                      <p>{lastValidationResult.reason}</p>
+                      <p>checked_at: {lastValidationResult.checked_at_cst}</p>
+                    </article>
+                  </div>
+                </>
+              ) : (
+                <div className="workspace-empty">执行一次校验后可查看稳定字段。</div>
               )}
+            </article>
+
+            <article className="workspace-note-block">
+              <h3>签发载荷与导出</h3>
               {issueDetail ? (
                 <>
                   <div className="workspace-action-row">
                     <a className="workspace-action-chip" href={issueExportUrl(issueDetail.issue_record_id, 'bin')}>导出 license.bin</a>
                     <a className="workspace-action-chip" href={issueExportUrl(issueDetail.issue_record_id, 'pubkey')}>导出 pubkey.pem</a>
                     {workspace.nextModule && (
-                      <a className="workspace-action-chip" href={workspace.nextModule.url}>
-                        推进到 {workspace.nextModule.shortTitle}
-                      </a>
+                      <a className="workspace-action-chip" href={workspace.nextModule.url}>推进到 {workspace.nextModule.shortTitle}</a>
                     )}
                   </div>
                   <pre className="workspace-code-block">{JSON.stringify(issueDetail.payload, null, 2)}</pre>
@@ -233,25 +267,85 @@ export default function ValidationPage() {
                 <div className="workspace-empty">请选择签发记录查看详细载荷。</div>
               )}
             </article>
-
-            <article className="workspace-note-block">
-              <h3>诊断契约摘要</h3>
-              <div className="workspace-kpi-grid">
-                <article className="workspace-kpi-card">
-                  <span>字段数</span>
-                  <strong>{Object.keys(validationContract?.fields ?? {}).length}</strong>
-                </article>
-                <article className="workspace-kpi-card">
-                  <span>结果码数</span>
-                  <strong>{Object.keys(validationContract?.code_catalog ?? {}).length}</strong>
-                </article>
-                <article className="workspace-kpi-card">
-                  <span>测试向量</span>
-                  <strong>{validationVectors?.license_validation_vectors.length ?? 0}</strong>
-                </article>
-              </div>
-            </article>
           </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="enterprise-two-column">
+          <article className="enterprise-note-card">
+            <strong>契约摘要</strong>
+            <div className="workspace-kpi-grid">
+              <article className="workspace-kpi-card">
+                <span>字段数</span>
+                <strong>{Object.keys(validationContract?.fields ?? {}).length}</strong>
+              </article>
+              <article className="workspace-kpi-card">
+                <span>结果码数</span>
+                <strong>{Object.keys(validationContract?.code_catalog ?? {}).length}</strong>
+              </article>
+              <article className="workspace-kpi-card">
+                <span>测试向量</span>
+                <strong>{validationVectors?.license_validation_vectors.length ?? 0}</strong>
+              </article>
+            </div>
+            <pre className="workspace-code-block">{JSON.stringify(validationContract, null, 2)}</pre>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>签发与策略对照</strong>
+            {comparisonRows.length === 0 ? (
+              <div className="workspace-empty">当前仅展示签发载荷视角。</div>
+            ) : (
+              <div className="workspace-table-wrap">
+                <table className="workspace-table">
+                  <thead>
+                    <tr>
+                      <th>维度</th>
+                      <th>签发记录</th>
+                      <th>策略基线</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonRows.map((item) => (
+                      <tr key={item.label}>
+                        <td>{item.label}</td>
+                        <td className={item.same ? 'comparison-same' : 'comparison-diff'}>{item.current}</td>
+                        <td className={item.same ? 'comparison-same' : 'comparison-diff'}>{item.baseline}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="enterprise-two-column">
+          <article className="enterprise-note-card">
+            <div className="section-header">
+              <strong>tool release</strong>
+              <button className="action-button" onClick={() => void handleSyncToolRelease()} type="button">同步默认工具版本</button>
+            </div>
+            <div className="workspace-list">
+              {toolReleases.map((item) => (
+                <div key={item.release_id} className="workspace-list-item static-item">
+                  <strong>{item.tool_name} / {item.version}</strong>
+                  <div className="workspace-meta-row">
+                    <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                    <a href={toolExportUrl(item.release_id, 'archive')}>归档</a>
+                    <a href={toolExportUrl(item.release_id, 'diagnostics')}>诊断</a>
+                    <a href={toolExportUrl(item.release_id, 'vectors')}>向量</a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>向量快照</strong>
+            <pre className="workspace-code-block">{JSON.stringify(validationVectors, null, 2)}</pre>
+          </article>
         </div>
       </section>
     </div>

@@ -12,6 +12,7 @@ import type {
   ValidationVectors,
   DashboardState,
 } from '../types'
+import { buildOverviewInsights, pickBestToolRelease } from '../enterprise'
 
 const initialState: DashboardState = {
   customers: [],
@@ -29,8 +30,6 @@ export default function OverviewPage() {
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedKeyPairId, setSelectedKeyPairId] = useState<number | null>(null)
-  const [selectedIssueId, setSelectedIssueId] = useState<number | null>(null)
 
   async function loadDashboard(): Promise<void> {
     setLoading(true)
@@ -58,97 +57,62 @@ export default function OverviewPage() {
     void loadDashboard()
   }, [])
 
-  const overviewCards = useMemo(
-    () => [
-      { title: '客户数', value: dashboard.customers.length, description: '正在受理签发与交付服务的客户对象。' },
-      { title: '有效密钥', value: dashboard.keyPairs.filter((item) => item.status === 'active').length, description: '当前可用于策略签发的密钥对。' },
-      { title: '签发记录', value: dashboard.issues.length, description: '已完成签发并可供 builder 消费的 license 记录。' },
-      { title: '工具版本', value: dashboard.toolReleases.length, description: 'license_tool 与诊断材料的发布归档。' },
-    ],
-    [dashboard],
-  )
-
-  const isolatedKeys = useMemo(
-    () => dashboard.keyPairs.filter((item) => item.status === 'isolated'),
-    [dashboard.keyPairs],
-  )
+  const overviewInsights = useMemo(() => buildOverviewInsights(dashboard), [dashboard])
+  const bestTool = useMemo(() => pickBestToolRelease(dashboard.toolReleases), [dashboard.toolReleases])
+  const isolatedKeys = dashboard.keyPairs.filter((item) => item.status === 'isolated').slice(0, 4)
+  const latestIssues = dashboard.issues.slice(0, 5)
 
   return (
     <div className="page-container">
       <section className="panel">
         <div className="section-header">
           <div>
-            <h2>首页概览</h2>
-            <p>把客户、密钥风险、签发记录与下游动作放在同一个授权首页中统一决策。</p>
+            <h2>授权中枢首页</h2>
+            <p>先拉齐参考授权平台的“客户 / 授权生成 / 授权列表 / 到期提醒 / 密钥管理”结构，再升级为企业级授权决策首页。</p>
           </div>
-          <span className="badge">L16-L19</span>
+          <span className="badge">L20-L24</span>
         </div>
         {loading && <p className="info-text">正在加载授权工作台数据...</p>}
         {error && <p className="error-text">数据加载失败：{error}</p>}
-        <div className="card-grid">
-          {overviewCards.map((card) => (
-            <article key={card.title} className="card">
-              <h3>{card.title}</h3>
-              <strong>{card.value}</strong>
-              <p>{card.description}</p>
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${overviewInsights.stageCards[0]?.tone ?? 'neutral'}`}>
+            <span>授权体系健康度</span>
+            <strong>{overviewInsights.overallScore}</strong>
+            <p>综合客户、密钥、签发与工具契约四段链路得出。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>首页定位</strong>
+            <p>让交付工程师先看到“哪些策略快到期、哪些密钥有风险、哪些签发能推进到构建”，而不是分散到多个列表页里查找。</p>
+            <div className="workspace-action-row">
+              <button className="action-button" onClick={() => navigate('/issuance')} type="button">进入连续签发</button>
+              <button className="action-button" onClick={() => navigate('/risk')} type="button">查看风险操作</button>
+              <button className="action-button" onClick={() => navigate('/validation')} type="button">校验与导出</button>
+            </div>
+          </article>
+        </div>
+        <div className="enterprise-stage-grid">
+          {overviewInsights.stageCards.map((item) => (
+            <article key={item.title} className={`enterprise-stage-card tone-${item.tone}`}>
+              <span>{item.title}</span>
+              <strong>{item.score}</strong>
+              <p>{item.detail}</p>
+              <small>当前对象：{item.count}</small>
             </article>
           ))}
-        </div>
-        <div className="workspace-summary-grid">
-          <article className="workspace-summary-card">
-            <h3>风险密钥与影响面</h3>
-            {isolatedKeys.length === 0 ? (
-              <div className="workspace-empty">当前没有已隔离密钥。</div>
-            ) : (
-              <div className="workspace-list">
-                {isolatedKeys.map((item) => (
-                  <button
-                    key={item.key_pair_id}
-                    className={`workspace-list-item${selectedKeyPairId === item.key_pair_id ? ' active' : ''}`}
-                    onClick={() => {
-                      setSelectedKeyPairId(item.key_pair_id)
-                      navigate('/risk')
-                    }}
-                    type="button"
-                  >
-                    <strong>{item.key_name}</strong>
-                    <div className="workspace-meta-row">
-                      <span>轮转版本 {item.rotation_version}</span>
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </article>
-          <article className="workspace-summary-card">
-            <h3>当前推荐动作</h3>
-            <ul>
-              <li>先在"连续签发工作台"完成客户、密钥、策略与签发闭环。</li>
-              <li>再在"校验与工具工作台"验证平台字段、结果码与 tool bundle。</li>
-              <li>最终把签发记录推进到 ai-builder 构建交付包。</li>
-            </ul>
-          </article>
         </div>
       </section>
 
       <section className="panel">
-        <div className="workspace-panel-grid">
-          <div className="workspace-stack">
-            <article className="workspace-note-block">
-              <h3>最近签发记录</h3>
+        <div className="enterprise-two-column">
+          <article className="enterprise-note-card">
+            <strong>30 天内到期策略</strong>
+            {overviewInsights.expiringPolicies.length === 0 ? (
+              <div className="workspace-empty">当前无 30 天内到期策略。</div>
+            ) : (
               <div className="workspace-list">
-                {dashboard.issues.slice(0, 5).map((item) => (
-                  <button
-                    key={item.issue_record_id}
-                    className={`workspace-list-item${selectedIssueId === item.issue_record_id ? ' active' : ''}`}
-                    onClick={() => {
-                      setSelectedIssueId(item.issue_record_id)
-                      navigate('/validation')
-                    }}
-                    type="button"
-                  >
-                    <strong>签发 #{item.issue_record_id}</strong>
+                {overviewInsights.expiringPolicies.map((item) => (
+                  <button key={item.policy_id} className="workspace-list-item" onClick={() => navigate('/policies')} type="button">
+                    <strong>{item.policy_name}</strong>
                     <div className="workspace-meta-row">
                       <span>{item.customer_code}</span>
                       <span>{item.application_name}</span>
@@ -157,33 +121,99 @@ export default function OverviewPage() {
                   </button>
                 ))}
               </div>
-            </article>
-          </div>
-          <div className="workspace-stack">
-            <article className="workspace-note-block">
-              <h3>最近审计留痕</h3>
-              <div className="workspace-table-wrap">
-                <table className="workspace-table">
-                  <thead>
-                    <tr>
-                      <th>时间</th>
-                      <th>动作</th>
-                      <th>实体</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboard.auditLogs.map((item) => (
-                      <tr key={`${item.happened_at_cst}-${item.entity_id}`}>
-                        <td>{item.happened_at_cst}</td>
-                        <td>{item.action}</td>
-                        <td>{item.entity_type} / {item.entity_id}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            )}
+          </article>
+          <article className="enterprise-note-card">
+            <strong>高风险密钥</strong>
+            {isolatedKeys.length === 0 ? (
+              <div className="workspace-empty">当前无已隔离密钥。</div>
+            ) : (
+              <div className="workspace-list">
+                {isolatedKeys.map((item) => (
+                  <button key={item.key_pair_id} className="workspace-list-item" onClick={() => navigate('/risk')} type="button">
+                    <strong>{item.key_name}</strong>
+                    <div className="workspace-meta-row">
+                      <span>轮转版本 {item.rotation_version}</span>
+                      <span>{item.status_reason ?? '无备注'}</span>
+                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                    </div>
+                  </button>
+                ))}
               </div>
-            </article>
+            )}
+          </article>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="workspace-summary-grid">
+          <article className="workspace-summary-card">
+            <h3>最近签发记录</h3>
+            <div className="workspace-list">
+              {latestIssues.map((item) => (
+                <button key={item.issue_record_id} className="workspace-list-item" onClick={() => navigate('/validation')} type="button">
+                  <strong>签发 #{item.issue_record_id}</strong>
+                  <div className="workspace-meta-row">
+                    <span>{item.customer_code}</span>
+                    <span>{item.application_name}</span>
+                    <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </article>
+          <article className="workspace-summary-card">
+            <h3>工具与诊断契约</h3>
+            <ul>
+              <li>当前工具版本：{bestTool ? `${bestTool.tool_name} / ${bestTool.version}` : '尚无工具版本'}</li>
+              <li>稳定结果码：{Object.keys(dashboard.validationContract?.code_catalog ?? {}).length} 个</li>
+              <li>校验向量：{dashboard.validationVectors?.license_validation_vectors.length ?? 0} 条</li>
+            </ul>
+          </article>
+          <article className="workspace-summary-card">
+            <h3>当前推荐动作</h3>
+            <ul>
+              {overviewInsights.actions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="enterprise-two-column">
+          <div className="enterprise-stack">
+            {overviewInsights.risks.map((item) => (
+              <article key={item.title} className={`enterprise-note-card tone-${item.tone}`}>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+              </article>
+            ))}
           </div>
+          <article className="enterprise-note-card">
+            <strong>最近审计留痕</strong>
+            <div className="workspace-table-wrap">
+              <table className="workspace-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>动作</th>
+                    <th>实体</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboard.auditLogs.map((item) => (
+                    <tr key={`${item.happened_at_cst}-${item.entity_id}`}>
+                      <td>{item.happened_at_cst}</td>
+                      <td>{item.action}</td>
+                      <td>{item.entity_type} / {item.entity_id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </article>
         </div>
       </section>
     </div>
