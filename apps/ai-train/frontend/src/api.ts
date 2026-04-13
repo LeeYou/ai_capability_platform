@@ -1,6 +1,16 @@
 import type { ApiListResponse, AnnotationSampleItem, AnnotationDraft } from './types'
 
 export const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+export const emptyAnnotationDraft: AnnotationDraft = {
+  label: '',
+  note: '',
+  attributesJson: '{}',
+  objectsJson: '[]',
+  text: '',
+  regionsJson: '[]',
+  fieldsJson: '{}',
+  confidenceJson: '{}',
+}
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -65,11 +75,12 @@ export function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutra
 export function extractDraft(sample: AnnotationSampleItem): AnnotationDraft {
   const annotation = sample.annotation ?? {}
   return {
-    label: typeof annotation.label === 'string' ? annotation.label : '',
-    note: typeof annotation.note === 'string' ? annotation.note : '',
+    ...emptyAnnotationDraft,
+    label: typeof annotation.label === 'string' ? annotation.label : emptyAnnotationDraft.label,
+    note: typeof annotation.note === 'string' ? annotation.note : emptyAnnotationDraft.note,
     attributesJson: prettyJson(annotation.attributes ?? {}),
     objectsJson: prettyJson(annotation.objects ?? []),
-    text: typeof annotation.text === 'string' ? annotation.text : '',
+    text: typeof annotation.text === 'string' ? annotation.text : emptyAnnotationDraft.text,
     regionsJson: prettyJson(annotation.regions ?? []),
     fieldsJson: prettyJson(annotation.fields ?? {}),
     confidenceJson: prettyJson(annotation.confidence ?? {}),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -73,13 +74,13 @@ def inspect_dataset_path(dataset_path: str) -> DatasetStats:
     file_count = 0
     total_size_bytes = 0
     latest_mtime = 0.0
-    for file_path in path.rglob("*"):
-        if not file_path.is_file():
-            continue
-        stat = file_path.stat()
-        file_count += 1
-        total_size_bytes += stat.st_size
-        latest_mtime = max(latest_mtime, stat.st_mtime)
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            file_path = Path(root) / name
+            stat = file_path.stat()
+            file_count += 1
+            total_size_bytes += stat.st_size
+            latest_mtime = max(latest_mtime, stat.st_mtime)
 
     if latest_mtime <= 0:
         last_modified = None

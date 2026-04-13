@@ -58,7 +58,7 @@ export function freshnessLabel(value?: string | null): string {
 export function datasetGovernanceLabel(item: DatasetItem): string {
   if (item.dataset_status === 'missing') return '目录缺失'
   if ((item.file_count ?? 0) === 0) return '空数据集'
-  if (hoursSince(item.last_modified) != null && (hoursSince(item.last_modified) ?? 0) > 24 * 30) return '长期未更新'
+  if ((hoursSince(item.last_modified) ?? 0) > 24 * 30) return '长期未更新'
   return '正常'
 }
 

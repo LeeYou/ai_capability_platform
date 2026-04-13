@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AnnotationTaskItem, AnnotationDraft, CapabilityItem } from '../types'
-import { request, fetchList, statusTone, extractDraft, buildAnnotationPayload, prettyJson, formatDateTime } from '../api'
+import { request, fetchList, statusTone, extractDraft, buildAnnotationPayload, prettyJson, formatDateTime, emptyAnnotationDraft } from '../api'
 import { buildAnnotationChecklist, buildSampleOpsSummary, clampScore, scoreTone } from '../enterprise'
 
 const initialTaskForm = {
@@ -139,16 +139,7 @@ export default function AnnotationPage() {
     setAnnotationDrafts((current) => ({
       ...current,
       [sampleId]: {
-        ...(current[sampleId] ?? {
-          label: '',
-          note: '',
-          attributesJson: '{}',
-          objectsJson: '[]',
-          text: '',
-          regionsJson: '[]',
-          fieldsJson: '{}',
-          confidenceJson: '{}',
-        }),
+        ...(current[sampleId] ?? emptyAnnotationDraft),
         ...patch,
       },
     }))
