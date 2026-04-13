@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { DatasetItem, CapabilityItem } from '../types'
 import { fetchList, formatDateTime, formatFileSize, request, statusTone } from '../api'
+import { buildDatasetRiskItems, datasetGovernanceLabel, freshnessLabel } from '../enterprise'
 
 const initialForm = {
   capability_name: '',
@@ -49,6 +50,7 @@ export default function DatasetsPage() {
       { title: '文件总量', value: totalFiles, detail: `累计 ${formatFileSize(totalSize)}` },
     ]
   }, [datasets])
+  const datasetRiskItems = useMemo(() => buildDatasetRiskItems(datasets), [datasets])
 
   async function handleSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
@@ -72,7 +74,7 @@ export default function DatasetsPage() {
         <div className="section-header">
           <div>
             <h2>数据集管理</h2>
-            <p>统一维护训练集绑定关系、目录健康度与容量信息。</p>
+            <p>统一维护训练集绑定关系、目录健康度与容量信息，并增加企业级数据治理视角。</p>
           </div>
           <div className="workspace-action-row">
             <button className="action-button" type="button" onClick={() => void load()}>刷新数据</button>
@@ -84,6 +86,15 @@ export default function DatasetsPage() {
               <span>{item.title}</span>
               <strong>{item.value}</strong>
               <span>{item.detail}</span>
+            </article>
+          ))}
+        </div>
+        <div className="enterprise-stage-grid">
+          {datasetRiskItems.map((item) => (
+            <article key={item.title} className={`enterprise-stage-card tone-${item.tone}`}>
+              <span>{item.title}</span>
+              <strong>{item.detail.split(' ')[0]}</strong>
+              <p>{item.detail}</p>
             </article>
           ))}
         </div>
@@ -145,6 +156,13 @@ export default function DatasetsPage() {
                 <h3>数据集资产视图</h3>
                 <span className="badge badge-muted">{datasets.length} 项</span>
               </div>
+              <div className="enterprise-note-card">
+                <strong>治理说明</strong>
+                <ul className="enterprise-list">
+                  <li>目录 missing、空数据集、长期未更新都应阻断企业级训练闭环。</li>
+                  <li>建议在数据接入完成后，立即同步能力目录与标注任务创建策略。</li>
+                </ul>
+              </div>
               {loading && <div className="workspace-empty">正在加载数据集数据...</div>}
               {error && <p className="error-text">数据加载失败：{error}</p>}
               {!loading && !error && datasets.length === 0 && (
@@ -160,6 +178,8 @@ export default function DatasetsPage() {
                         <th>状态</th>
                         <th>文件数</th>
                         <th>大小</th>
+                        <th>治理标签</th>
+                        <th>新鲜度</th>
                         <th>最后更新</th>
                         <th>来源</th>
                       </tr>
@@ -172,6 +192,8 @@ export default function DatasetsPage() {
                           <td><span className={`status-pill ${statusTone(item.dataset_status)}`}>{item.dataset_status}</span></td>
                           <td>{item.file_count ?? 0}</td>
                           <td>{formatFileSize(item.total_size_bytes)}</td>
+                          <td>{datasetGovernanceLabel(item)}</td>
+                          <td>{freshnessLabel(item.last_modified)}</td>
                           <td>{formatDateTime(item.last_modified)}</td>
                           <td>{item.source}</td>
                         </tr>

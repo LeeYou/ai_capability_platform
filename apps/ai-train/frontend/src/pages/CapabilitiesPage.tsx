@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CapabilityItem } from '../types'
 import { fetchList, formatDateTime, prettyJson, request, statusTone } from '../api'
+import { buildCapabilityChecklist, clampScore, scoreTone } from '../enterprise'
 
 const initialForm = {
   capability_name: '',
@@ -49,6 +50,8 @@ export default function CapabilitiesPage() {
       { title: '已绑定数据集', value: boundCount, detail: '具备可直接发起任务的数据能力' },
     ]
   }, [capabilities])
+  const capabilityChecklist = useMemo(() => buildCapabilityChecklist(selectedCapability), [selectedCapability])
+  const capabilityMaturityScore = clampScore(capabilityChecklist.filter((item) => item.done).length / Math.max(1, capabilityChecklist.length) * 100)
 
   async function handleSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
@@ -98,7 +101,7 @@ export default function CapabilitiesPage() {
         <div className="section-header">
           <div>
             <h2>能力目录管理</h2>
-            <p>统一管理能力注册、任务类型、数据集绑定状态与契约预览。</p>
+            <p>统一管理能力注册、任务类型、数据集绑定状态与契约预览，并纳入企业级能力准入治理。</p>
           </div>
           <div className="workspace-action-row">
             <button
@@ -121,6 +124,17 @@ export default function CapabilitiesPage() {
               <span>{item.detail}</span>
             </article>
           ))}
+        </div>
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${scoreTone(capabilityMaturityScore)}`}>
+            <span>能力接入成熟度</span>
+            <strong>{capabilityMaturityScore}</strong>
+            <p>根据数据集、schema 和模板契约三类准入条件自动评估。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>治理目标</strong>
+            <p>让能力目录成为训练平台的“准入清单”，而不是仅保存 capability_name 的注册表。</p>
+          </article>
         </div>
       </section>
 
@@ -242,6 +256,20 @@ export default function CapabilitiesPage() {
                     </table>
                   </div>
                   <div className="workspace-stack">
+                    <div className="enterprise-note-card">
+                      <strong>接入清单</strong>
+                      <ul className="enterprise-checklist">
+                        {capabilityChecklist.map((item) => (
+                          <li key={item.label} className={item.done ? 'done' : 'pending'}>
+                            <span>{item.done ? '✓' : '•'}</span>
+                            <div>
+                              <strong>{item.label}</strong>
+                              <p>{item.detail}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                     <div>
                       <h4>标注 Schema</h4>
                       <pre className="workspace-code-block">{prettyJson(selectedCapability.annotation_schema)}</pre>
@@ -249,6 +277,13 @@ export default function CapabilitiesPage() {
                     <div>
                       <h4>模板契约</h4>
                       <pre className="workspace-code-block">{prettyJson(selectedCapability.template_bundle)}</pre>
+                    </div>
+                    <div className="enterprise-note-card">
+                      <strong>企业级说明</strong>
+                      <ul className="enterprise-list">
+                        <li>能力只有在数据、标注契约、训练模板同时齐备后，才应对业务开放。</li>
+                        <li>建议将能力更新与数据集变更一起纳入发布批次，减少前后约束漂移。</li>
+                      </ul>
                     </div>
                   </div>
                 </>

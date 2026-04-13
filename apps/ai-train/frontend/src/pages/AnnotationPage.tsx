@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AnnotationTaskItem, AnnotationDraft, CapabilityItem } from '../types'
 import { request, fetchList, statusTone, extractDraft, buildAnnotationPayload, prettyJson, formatDateTime } from '../api'
+import { buildAnnotationChecklist, buildSampleOpsSummary, clampScore, scoreTone } from '../enterprise'
 
 const initialTaskForm = {
   capability_name: '',
@@ -87,6 +88,17 @@ export default function AnnotationPage() {
 
   const currentSample = currentSampleIndex >= 0 ? filteredSamples[currentSampleIndex] : null
   const currentDraft = currentSample ? annotationDrafts[currentSample.sample_id] : null
+  const submissionScore = annotationDetail
+    ? clampScore(
+        (annotationDetail.sample_total === 0 ? 0 : (annotationDetail.labeled_count / annotationDetail.sample_total) * 70) +
+        ((annotationDetail.sample_items ?? []).filter((item) => item.status === 'submitted').length / Math.max(1, annotationDetail.sample_total)) * 30,
+      )
+    : 0
+  const annotationChecklist = useMemo(() => buildAnnotationChecklist(annotationDetail), [annotationDetail])
+  const sampleOpsSummary = useMemo(
+    () => buildSampleOpsSummary(annotationDetail?.sample_items ?? []),
+    [annotationDetail?.sample_items],
+  )
 
   useEffect(() => {
     if (filteredSamples.length === 0) {
@@ -230,11 +242,25 @@ export default function AnnotationPage() {
         <div className="section-header">
           <div>
             <h2>标注任务中心</h2>
-            <p>补齐标注任务创建、单样本工作台、批量保存/提交与结果导出。</p>
+            <p>补齐标注任务创建、单样本工作台、批量保存/提交与结果导出，并加入企业级质量门禁。</p>
           </div>
           <div className="workspace-action-row">
             <button className="action-button" type="button" onClick={() => void loadAnnotationTasks()}>刷新任务</button>
           </div>
+        </div>
+        <div className="enterprise-stage-grid">
+          <article className={`enterprise-stage-card tone-${scoreTone(submissionScore)}`}>
+            <span>提交流程成熟度</span>
+            <strong>{submissionScore}</strong>
+            <p>根据样本覆盖率和 submitted 覆盖率自动计算。</p>
+          </article>
+          {sampleOpsSummary.slice(0, 3).map((item) => (
+            <article key={item.title} className={`enterprise-stage-card tone-${item.tone}`}>
+              <span>{item.title}</span>
+              <strong>{item.detail.split(' ')[0]}</strong>
+              <p>{item.detail}</p>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -391,6 +417,34 @@ export default function AnnotationPage() {
                     <button className="action-button danger-button" type="button" onClick={() => void handleDeleteTask(annotationDetail.task_id)}>删除任务</button>
                   </div>
 
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>质量门禁</strong>
+                      <ul className="enterprise-checklist">
+                        {annotationChecklist.map((item) => (
+                          <li key={item.label} className={item.done ? 'done' : 'pending'}>
+                            <span>{item.done ? '✓' : '•'}</span>
+                            <div>
+                              <strong>{item.label}</strong>
+                              <p>{item.detail}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>样本作业态势</strong>
+                      <div className="enterprise-stack">
+                        {sampleOpsSummary.map((item) => (
+                          <div key={item.title} className={`enterprise-inline-card tone-${item.tone}`}>
+                            <strong>{item.title}</strong>
+                            <p>{item.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  </div>
+
                   <div className="workspace-form-grid">
                     <label className="workspace-field">
                       样本状态筛选
@@ -544,6 +598,14 @@ export default function AnnotationPage() {
                   <div>
                     <h3>标注契约</h3>
                     <pre className="workspace-code-block">{prettyJson(annotationDetail.annotation_schema ?? {})}</pre>
+                  </div>
+                  <div className="enterprise-note-card">
+                    <strong>提交治理说明</strong>
+                    <ul className="enterprise-list">
+                      <li>建议先完成 labeled 全量保存，再执行 submitted 提交流程，便于质检抽查。</li>
+                      <li>对于 detection / OCR / structured_extraction，优先保证 JSON 结构合法，再追求高覆盖率。</li>
+                      <li>若样本超过 3 天未更新，应在班次交接前明确责任人与处理策略。</li>
+                    </ul>
                   </div>
                 </>
               )}

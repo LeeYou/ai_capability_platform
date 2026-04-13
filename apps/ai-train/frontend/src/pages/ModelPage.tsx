@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CapabilityItem, ModelArtifactItem } from '../types'
 import { fetchList, formatDateTime, request, statusTone } from '../api'
 import { buildR7Workspace } from '../../../../frontend-common/src/r7Workspace.ts'
+import { buildModelChecklist, clampScore, scoreTone } from '../enterprise'
 
 const workspace = buildR7Workspace(import.meta.env, 'ai-train')
 
@@ -66,6 +67,9 @@ export default function ModelPage() {
       { title: '覆盖能力', value: capabilityCount, detail: '已沉淀模型的能力数' },
     ]
   }, [modelArtifacts])
+  const modelChecklist = useMemo(() => buildModelChecklist(modelDetail), [modelDetail])
+  const modelReadinessScore = clampScore(modelChecklist.filter((item) => item.done).length / Math.max(1, modelChecklist.length) * 100)
+  const downstreamTargets = Object.keys(modelDetail?.delivery_metadata ?? {})
 
   return (
     <div className="page-container">
@@ -73,7 +77,7 @@ export default function ModelPage() {
         <div className="section-header">
           <div>
             <h2>模型资产中心</h2>
-            <p>集中查看训练导出物、运行契约、交付元数据与送测入口。</p>
+            <p>集中查看训练导出物、运行契约、交付元数据与送测入口，并强化企业级版本治理。</p>
           </div>
         </div>
         <div className="workspace-highlight-grid">
@@ -84,6 +88,17 @@ export default function ModelPage() {
               <span>{item.detail}</span>
             </article>
           ))}
+        </div>
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${scoreTone(modelReadinessScore)}`}>
+            <span>版本发布成熟度</span>
+            <strong>{modelReadinessScore}</strong>
+            <p>综合 manifest、runtime contract、delivery metadata 和 ready 状态计算。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>治理目标</strong>
+            <p>让模型页不仅是“文件查看器”，而是训练产物进入验收/打包链路前的发布控制面板。</p>
+          </article>
         </div>
       </section>
 
@@ -187,6 +202,34 @@ export default function ModelPage() {
                       </a>
                     )}
                   </div>
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>发布清单</strong>
+                      <ul className="enterprise-checklist">
+                        {modelChecklist.map((item) => (
+                          <li key={item.label} className={item.done ? 'done' : 'pending'}>
+                            <span>{item.done ? '✓' : '•'}</span>
+                            <div>
+                              <strong>{item.label}</strong>
+                              <p>{item.detail}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>下游投递矩阵</strong>
+                      <div className="enterprise-stack">
+                        {downstreamTargets.length === 0 && <div className="workspace-empty">当前未声明下游投递目标。</div>}
+                        {downstreamTargets.map((item) => (
+                          <div key={item} className="enterprise-inline-card tone-good">
+                            <strong>{item}</strong>
+                            <p>已在 delivery_metadata 中声明。</p>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  </div>
                   <div className="workspace-stack">
                     <div>
                       <h3>Manifest 预览</h3>
@@ -199,6 +242,14 @@ export default function ModelPage() {
                     <div>
                       <h3>交付元数据</h3>
                       <pre className="workspace-code-block">{JSON.stringify(modelDetail.delivery_metadata ?? {}, null, 2)}</pre>
+                    </div>
+                    <div className="enterprise-note-card">
+                      <strong>版本治理建议</strong>
+                      <ul className="enterprise-list">
+                        <li>优先保证 model_version 与训练任务、交付批次之间一一对应，避免手工覆盖。</li>
+                        <li>模型 ready 后应尽快进入 ai-test，减少训练产物滞留。</li>
+                        <li>如 runtime_contract 或 delivery_metadata 为空，应视为不可发布版本。</li>
+                      </ul>
                     </div>
                   </div>
                 </>

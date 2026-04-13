@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AnnotationTaskItem, CapabilityItem, TrainingTaskItem } from '../types'
 import { fetchList, formatDateTime, prettyJson, request, statusTone } from '../api'
+import { buildTrainingChecklist, clampScore, scoreTone, hoursSince } from '../enterprise'
 
 const initialTrainingForm = {
   capability_name: '',
@@ -202,6 +203,9 @@ export default function TrainingPage() {
       ? (trainingDetail.execution_plan.train_params as Record<string, unknown> | undefined)
       : undefined
   const epochs = trainingDetail?.result_summary?.epochs ?? executionPlanTrainParams?.epochs
+  const trainingChecklist = useMemo(() => buildTrainingChecklist(trainingDetail), [trainingDetail])
+  const releaseScore = clampScore(trainingChecklist.filter((item) => item.done).length / Math.max(1, trainingChecklist.length) * 100)
+  const runtimeHours = trainingDetail?.started_at ? hoursSince(trainingDetail.started_at) : null
 
   return (
     <div className="page-container">
@@ -209,7 +213,7 @@ export default function TrainingPage() {
         <div className="section-header">
           <div>
             <h2>训练任务中心</h2>
-            <p>覆盖任务创建、执行监控、日志快照与模型登记的完整训练闭环。</p>
+            <p>覆盖任务创建、执行监控、日志快照与模型登记的完整训练闭环，并强化发布运营视角。</p>
           </div>
           <div className="workspace-action-row">
             <button className="action-button" type="button" onClick={() => void loadTrainingWorkspace()}>刷新任务</button>
@@ -223,6 +227,17 @@ export default function TrainingPage() {
               <span>{item.detail}</span>
             </article>
           ))}
+        </div>
+        <div className="enterprise-hero-grid">
+          <article className={`enterprise-score-card tone-${scoreTone(releaseScore)}`}>
+            <span>发布门禁就绪度</span>
+            <strong>{releaseScore}</strong>
+            <p>综合工作区、训练输入、模板、日志和模型导出五个门禁状态。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>值守建议</strong>
+            <p>训练台第二阶段重点强调“训练可执行”之外的“训练可发布、可追踪、可复盘”。</p>
+          </article>
         </div>
       </section>
 
@@ -424,6 +439,44 @@ export default function TrainingPage() {
                     <button className="action-button" onClick={() => void refreshLogs()} type="button">刷新日志</button>
                   </div>
 
+                  <div className="enterprise-two-column">
+                    <article className="enterprise-note-card">
+                      <strong>发布门禁</strong>
+                      <ul className="enterprise-checklist">
+                        {trainingChecklist.map((item) => (
+                          <li key={item.label} className={item.done ? 'done' : 'pending'}>
+                            <span>{item.done ? '✓' : '•'}</span>
+                            <div>
+                              <strong>{item.label}</strong>
+                              <p>{item.detail}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                    <article className="enterprise-note-card">
+                      <strong>资源与执行画像</strong>
+                      <div className="enterprise-stack">
+                        <div className={`enterprise-inline-card tone-${trainingDetail.backend_type === 'gpu' ? 'good' : 'warn'}`}>
+                          <strong>资源画像</strong>
+                          <p>{trainingDetail.backend_type.toUpperCase()} / {trainingDetail.framework}</p>
+                        </div>
+                        <div className={`enterprise-inline-card tone-${trainingDetail.status === 'failed' ? 'danger' : 'good'}`}>
+                          <strong>执行状态</strong>
+                          <p>{trainingDetail.status}</p>
+                        </div>
+                        <div className="enterprise-inline-card tone-neutral">
+                          <strong>运行时长</strong>
+                          <p>{runtimeHours == null ? '-' : `${runtimeHours.toFixed(1)} 小时（距首次启动）`}</p>
+                        </div>
+                        <div className="enterprise-inline-card tone-neutral">
+                          <strong>重试计数</strong>
+                          <p>{trainingDetail.retry_count} 次</p>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
+
                   {trainingDetail.status === 'completed' && (
                     <div className="workspace-note-block">
                       <div className="section-header">
@@ -454,6 +507,15 @@ export default function TrainingPage() {
                   )}
 
                   <div className="workspace-stack">
+                    <div className="enterprise-note-card">
+                      <strong>执行时间线</strong>
+                      <ul className="enterprise-list">
+                        <li>任务创建：{formatDateTime(trainingDetail.created_at)}</li>
+                        <li>首次启动：{formatDateTime(trainingDetail.started_at)}</li>
+                        <li>当前完成时间：{formatDateTime(trainingDetail.completed_at)}</li>
+                        <li>最新状态：{trainingDetail.status}</li>
+                      </ul>
+                    </div>
                     <div>
                       <div className="section-header">
                         <h3>最新日志</h3>
@@ -468,6 +530,14 @@ export default function TrainingPage() {
                     <div>
                       <h3>结果摘要</h3>
                       <pre className="workspace-code-block">{prettyJson(trainingDetail.result_summary ?? {})}</pre>
+                    </div>
+                    <div className="enterprise-note-card">
+                      <strong>运营建议</strong>
+                      <ul className="enterprise-list">
+                        <li>训练失败时，优先检查训练输入适配、日志链路和导出目录准备情况。</li>
+                        <li>训练完成后立即登记模型版本，避免结果产物与交付版本脱节。</li>
+                        <li>若重试次数持续上升，应补充失败根因而不是仅修改状态。</li>
+                      </ul>
                     </div>
                   </div>
                 </>

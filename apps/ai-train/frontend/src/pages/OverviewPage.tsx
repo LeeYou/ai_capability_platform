@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { CapabilityItem, AnnotationTaskItem, TrainingTaskItem, ModelArtifactItem, DashboardData } from '../types'
 import { fetchList, statusTone, formatDateTime } from '../api'
+import { buildOverviewInsights } from '../enterprise'
 
 const initialData: DashboardData = {
   capabilities: [],
@@ -50,6 +51,7 @@ export default function OverviewPage() {
   const pendingAnnotationTasks = data.annotationTasks.filter((item) => item.status !== 'completed').slice(0, 5)
   const latestTrainingTasks = data.trainingTasks.slice(0, 6)
   const latestModelArtifacts = data.modelArtifacts.slice(0, 4)
+  const overviewInsights = useMemo(() => buildOverviewInsights(data), [data])
 
   return (
     <div className="page-container">
@@ -57,12 +59,23 @@ export default function OverviewPage() {
         <div className="section-header">
           <div>
             <h2>首页概览</h2>
-            <p>按“待标注 → 待训练 → 待送测”的企业级研发流转组织训练台首页。</p>
+            <p>按“待标注 → 待训练 → 待送测”的企业级研发流转组织训练台首页，并补齐经营驾驶舱视角。</p>
           </div>
           <span className="badge">T17-T20</span>
         </div>
         {loading && <p className="info-text">正在加载研发工作台数据...</p>}
         {error && <p className="error-text">数据加载失败：{error}</p>}
+        <div className="enterprise-hero-grid">
+          <article className="enterprise-score-card">
+            <span>整体交付就绪度</span>
+            <strong>{overviewInsights.overallScore}</strong>
+            <p>综合数据准入、标注交付、训练产出与模型就绪四个阶段门禁评分。</p>
+          </article>
+          <article className="enterprise-note-card">
+            <strong>平台定位</strong>
+            <p>当前训练台已经从“功能页面集合”升级为“企业级研发运营台”，重点强调闭环、准入、可交付和风险透明。</p>
+          </article>
+        </div>
         <div className="card-grid">
           {overviewCards.map((card) => (
             <article key={card.title} className="card">
@@ -77,6 +90,16 @@ export default function OverviewPage() {
           <button className="action-button" onClick={() => navigate('/training')} type="button">新建训练任务</button>
           <button className="action-button" onClick={() => navigate('/model')} type="button">查看模型资产</button>
           <button className="action-button" onClick={() => navigate('/capabilities')} type="button">管理能力目录</button>
+        </div>
+        <div className="enterprise-stage-grid">
+          {overviewInsights.stageCards.map((item) => (
+            <article key={item.title} className={`enterprise-stage-card tone-${item.tone}`}>
+              <span>{item.title}</span>
+              <strong>{item.score}</strong>
+              <p>{item.detail}</p>
+              <small>当前就绪对象：{item.count}</small>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -121,6 +144,33 @@ export default function OverviewPage() {
                 </button>
               ))}
             </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-header">
+          <div>
+            <h3>风险与推荐动作</h3>
+            <p>让训练台具备面向负责人/运营值守的状态总结能力。</p>
+          </div>
+        </div>
+        <div className="enterprise-two-column">
+          <div className="enterprise-stack">
+            {overviewInsights.risks.map((item) => (
+              <article key={item.title} className={`enterprise-note-card tone-${item.tone}`}>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+          <article className="enterprise-note-card">
+            <strong>建议动作</strong>
+            <ul className="enterprise-list">
+              {overviewInsights.actions.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
           </article>
         </div>
       </section>
