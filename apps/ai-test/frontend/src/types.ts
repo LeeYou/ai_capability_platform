@@ -1,6 +1,7 @@
 export type RemoteCapabilityItem = {
   capability_name: string
   display_name: string
+  task_type?: string | null
   dataset_path: string
   dataset_status: string
   source: string
@@ -8,9 +9,13 @@ export type RemoteCapabilityItem = {
 
 export type RemoteModelItem = {
   capability_name: string
+  task_type?: string | null
   model_version: string
+  source_training_task_id: number
   artifact_path: string
+  manifest_path: string
   backend_type: string
+  checksum: string
   status: string
 }
 
@@ -25,6 +30,7 @@ export type TestCaseResultItem = {
   duration_ms: number
   score: number
   provider: string | null
+  raw_output?: Record<string, unknown> | null
 }
 
 export type TestTaskItem = {
@@ -47,6 +53,7 @@ export type TestTaskItem = {
 
 export type TestTaskDetail = TestTaskItem & {
   cases: TestCaseResultItem[]
+  evidence_chain?: Record<string, unknown> | null
 }
 
 export type AcceptanceScriptResultItem = {

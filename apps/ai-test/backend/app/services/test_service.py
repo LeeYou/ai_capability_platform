@@ -371,6 +371,7 @@ def _task_detail(task: TestTaskModel) -> dict[str, object]:
             "duration_ms": case_result_map[case.id].duration_ms if case.id in case_result_map else 0,
             "score": case_result_map[case.id].score if case.id in case_result_map else 0.0,
             "provider": case_result_map[case.id].provider if case.id in case_result_map else None,
+            "raw_output": json.loads(case_result_map[case.id].raw_output_json) if case.id in case_result_map and case_result_map[case.id].raw_output_json else None,
         }
         for case in task.cases
     ]
