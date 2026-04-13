@@ -76,6 +76,16 @@ export function stringifyComparableValue(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
+/** Returns the first valid timestamp from the fallback list, or Number.NEGATIVE_INFINITY when none are valid. */
+function getRecordTimestamp(...values: Array<string | null | undefined>): number {
+  for (const value of values) {
+    if (!value) continue
+    const timestamp = new Date(value).getTime()
+    if (!Number.isNaN(timestamp)) return timestamp
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
 export function datasetGovernanceLabel(item: DatasetItem): string {
   if (item.dataset_status === 'missing') return '目录缺失'
   if ((item.file_count ?? 0) === 0) return '空数据集'
@@ -389,8 +399,8 @@ export function pickBestModelArtifact(items: ModelArtifactItem[]): ModelArtifact
     const leftReady = left.status === 'ready' ? 1 : 0
     const rightReady = right.status === 'ready' ? 1 : 0
     if (leftReady !== rightReady) return rightReady - leftReady
-    const leftTime = new Date(left.updated_at ?? left.created_at ?? 0).getTime()
-    const rightTime = new Date(right.updated_at ?? right.created_at ?? 0).getTime()
+    const leftTime = getRecordTimestamp(left.updated_at, left.created_at)
+    const rightTime = getRecordTimestamp(right.updated_at, right.created_at)
     return rightTime - leftTime
   })
   return ranked[0]

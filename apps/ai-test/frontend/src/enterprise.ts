@@ -73,6 +73,16 @@ export function stringifyComparableValue(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
+/** Returns the first valid timestamp from the fallback list, or Number.NEGATIVE_INFINITY when none are valid. */
+function getRecordTimestamp(...values: Array<string | null | undefined>): number {
+  for (const value of values) {
+    if (!value) continue
+    const timestamp = new Date(value).getTime()
+    if (!Number.isNaN(timestamp)) return timestamp
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
 export function buildOverviewInsights(params: {
   models: RemoteModelItem[]
   capabilities: RemoteCapabilityItem[]
@@ -344,7 +354,7 @@ export function pickBestReport(reports: TestReportItem[]): TestReportItem | null
     const leftScore = left.failed_cases === 0 ? 1 : 0
     const rightScore = right.failed_cases === 0 ? 1 : 0
     if (leftScore !== rightScore) return rightScore - leftScore
-    return new Date(right.exported_at ?? 0).getTime() - new Date(left.exported_at ?? 0).getTime()
+    return getRecordTimestamp(right.exported_at) - getRecordTimestamp(left.exported_at)
   })[0]
 }
 
@@ -363,4 +373,3 @@ export function buildReportActions(report: TestReportDetail | null): string[] {
     '补做版本对比后再决定是复测还是终止推进。',
   ]
 }
-
