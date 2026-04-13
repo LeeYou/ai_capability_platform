@@ -5,6 +5,8 @@ export type CapabilityItem = {
   dataset_path: string
   dataset_status: string
   source: string
+  created_at?: string | null
+  updated_at?: string | null
   annotation_schema: Record<string, unknown>
   template_bundle: Record<string, unknown>
 }
@@ -29,6 +31,8 @@ export type AnnotationTaskItem = {
   completion_ratio?: number
   sample_items?: AnnotationSampleItem[]
   annotation_schema?: Record<string, unknown>
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export type TrainingTaskItem = {
@@ -52,6 +56,8 @@ export type TrainingTaskItem = {
   training_input_path?: string | null
   template_bundle_path?: string | null
   export_dir?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export type ModelArtifactItem = {
@@ -68,6 +74,8 @@ export type ModelArtifactItem = {
   manifest_preview?: Record<string, unknown> | null
   delivery_metadata?: Record<string, unknown> | null
   runtime_contract?: Record<string, unknown> | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export type ApiListResponse<T> = { items: T[] }
@@ -95,4 +103,9 @@ export type DatasetItem = {
   dataset_path: string
   dataset_status: string
   source: string
+  file_count?: number
+  total_size_bytes?: number
+  last_modified?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }

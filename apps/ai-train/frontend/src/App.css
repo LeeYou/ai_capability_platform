@@ -64,15 +64,18 @@
 }
 
 .tab-button,
+.action-button,
 .primary-button,
 .button-row button,
 .list-item-button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
 .tab-button,
+.action-button,
 .primary-button,
 .button-row button,
 .list-item-button {
@@ -88,6 +91,10 @@ textarea {
   padding: 8px 14px;
 }
 
+.action-button {
+  padding: 10px 14px;
+}
+
 .primary-button {
   padding: 10px 16px;
   background: var(--accent);
@@ -99,6 +106,12 @@ textarea {
 .list-item-button.active {
   border-color: var(--accent);
   background: var(--accent-bg);
+}
+
+.danger-button {
+  color: #b93d2f;
+  border-color: rgba(185, 61, 47, 0.28);
+  background: rgba(185, 61, 47, 0.08);
 }
 
 .panel,
@@ -265,13 +278,41 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: white;
+}
+
+code {
+  word-break: break-all;
+}
+
+.inline-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.annotation-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sample-scroll-list {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.kpi-date {
+  font-size: 14px !important;
+  line-height: 1.4;
 }
 
 .data-grid {
@@ -314,6 +355,10 @@ th {
   }
 
   .split-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-workspace-grid {
     grid-template-columns: 1fr;
   }
 }

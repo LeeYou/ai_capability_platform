@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ class CapabilityItem(BaseModel):
     dataset_path: str = Field(description="数据集路径")
     dataset_status: str = Field(description="数据集状态")
     source: str = Field(description="能力来源")
+    created_at: datetime | None = Field(default=None, description="创建时间")
+    updated_at: datetime | None = Field(default=None, description="最近更新时间")
     annotation_schema: dict[str, Any] = Field(default_factory=dict, description="标注 schema")
     template_bundle: dict[str, Any] = Field(default_factory=dict, description="训练/测试/推理/构建模板")
 
@@ -29,6 +32,11 @@ class DatasetItem(BaseModel):
     dataset_path: str = Field(description="数据集路径")
     dataset_status: str = Field(description="数据集状态")
     source: str = Field(description="绑定来源")
+    file_count: int = Field(default=0, description="文件数量")
+    total_size_bytes: int = Field(default=0, description="总大小（字节）")
+    last_modified: str | None = Field(default=None, description="最后更新时间")
+    created_at: datetime | None = Field(default=None, description="创建时间")
+    updated_at: datetime | None = Field(default=None, description="最近更新时间")
 
 
 class CapabilityListResponse(BaseModel):
@@ -64,6 +72,8 @@ class AnnotationTaskItem(BaseModel):
     completion_ratio: float = Field(default=0.0, description="标注完成比例")
     sample_items: list["AnnotationSampleItem"] = Field(default_factory=list, description="样本级标注详情")
     annotation_schema: dict[str, Any] = Field(default_factory=dict, description="当前任务标注 schema")
+    created_at: datetime | None = Field(default=None, description="创建时间")
+    updated_at: datetime | None = Field(default=None, description="最近更新时间")
 
 
 class AnnotationTaskListResponse(BaseModel):
@@ -113,6 +123,8 @@ class TrainingTaskItem(BaseModel):
     training_input_path: str | None = Field(default=None, description="训练输入适配文件路径")
     template_bundle_path: str | None = Field(default=None, description="模板脚手架路径")
     export_dir: str | None = Field(default=None, description="训练导出目录")
+    created_at: datetime | None = Field(default=None, description="创建时间")
+    updated_at: datetime | None = Field(default=None, description="最近更新时间")
 
 
 class TrainingTaskListResponse(BaseModel):
@@ -163,6 +175,8 @@ class ModelArtifactItem(BaseModel):
     manifest_preview: dict[str, Any] | None = Field(default=None, description="manifest 预览")
     delivery_metadata: dict[str, Any] | None = Field(default=None, description="面向 ai-test / ai-builder 的交付元数据")
     runtime_contract: dict[str, Any] | None = Field(default=None, description="运行时消费契约")
+    created_at: datetime | None = Field(default=None, description="创建时间")
+    updated_at: datetime | None = Field(default=None, description="最近更新时间")
 
 
 class ModelArtifactListResponse(BaseModel):

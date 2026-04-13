@@ -12,9 +12,23 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const message = await response.text()
-    throw new Error(message || `请求失败：${path}`)
+    let detail = ''
+    try {
+      const parsed = JSON.parse(message) as { detail?: string }
+      detail = parsed.detail ?? ''
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail || message || `请求失败：${path}`)
   }
-  return (await response.json()) as T
+  if (response.status === 204) {
+    return undefined as T
+  }
+  const payload = await response.text()
+  if (!payload.trim()) {
+    return undefined as T
+  }
+  return JSON.parse(payload) as T
 }
 
 export async function fetchList<T>(path: string): Promise<T[]> {
@@ -24,6 +38,21 @@ export async function fetchList<T>(path: string): Promise<T[]> {
 
 export function prettyJson(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
+}
+
+export function formatDateTime(value?: string | null): string {
+  if (!value) return '-'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('zh-CN')
+}
+
+export function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} B`
 }
 
 export function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { CapabilityItem, AnnotationTaskItem, TrainingTaskItem, ModelArtifactItem, DashboardData } from '../types'
-import { fetchList, statusTone } from '../api'
+import { fetchList, statusTone, formatDateTime } from '../api'
 
 const initialData: DashboardData = {
   capabilities: [],
@@ -40,12 +40,16 @@ export default function OverviewPage() {
   const overviewCards = useMemo(
     () => [
       { title: '能力目录', value: data.capabilities.length, description: '已接入的任务类型能力与数据集绑定。' },
-      { title: '标注任务', value: data.annotationTasks.length, description: '样本级编辑、批量保存与提交的入口。' },
-      { title: '训练任务', value: data.trainingTasks.length, description: '训练执行、日志与结果摘要的统一视图。' },
-      { title: '模型资产', value: data.modelArtifacts.length, description: '可直接送测的模型卡片与 manifest 契约。' },
+      { title: '标注任务', value: data.annotationTasks.length, description: '支持任务创建、单样本编辑与结果导出。' },
+      { title: '训练任务', value: data.trainingTasks.length, description: '支持任务创建、执行、监控与模型登记。' },
+      { title: '模型资产', value: data.modelArtifacts.length, description: '支持 manifest/runtime contract/delivery metadata。' },
     ],
     [data],
   )
+
+  const pendingAnnotationTasks = data.annotationTasks.filter((item) => item.status !== 'completed').slice(0, 5)
+  const latestTrainingTasks = data.trainingTasks.slice(0, 6)
+  const latestModelArtifacts = data.modelArtifacts.slice(0, 4)
 
   return (
     <div className="page-container">
@@ -53,7 +57,7 @@ export default function OverviewPage() {
         <div className="section-header">
           <div>
             <h2>首页概览</h2>
-            <p>围绕待标注、待训练、待送测对象组织研发首页。</p>
+            <p>按“待标注 → 待训练 → 待送测”的企业级研发流转组织训练台首页。</p>
           </div>
           <span className="badge">T17-T20</span>
         </div>
@@ -68,17 +72,24 @@ export default function OverviewPage() {
             </article>
           ))}
         </div>
+        <div className="workspace-action-row">
+          <button className="action-button" onClick={() => navigate('/annotation')} type="button">新建标注任务</button>
+          <button className="action-button" onClick={() => navigate('/training')} type="button">新建训练任务</button>
+          <button className="action-button" onClick={() => navigate('/model')} type="button">查看模型资产</button>
+          <button className="action-button" onClick={() => navigate('/capabilities')} type="button">管理能力目录</button>
+        </div>
+      </section>
+
+      <section className="panel">
         <div className="workspace-summary-grid">
           <article className="workspace-summary-card">
             <h3>待处理标注任务</h3>
             <div className="workspace-list">
-              {data.annotationTasks.slice(0, 4).map((item) => (
+              {pendingAnnotationTasks.map((item) => (
                 <button
                   key={item.task_id}
                   className="workspace-list-item"
-                  onClick={() => {
-                    navigate('/annotation')
-                  }}
+                  onClick={() => navigate('/annotation')}
                   type="button"
                 >
                   <strong>{item.task_name}</strong>
@@ -94,13 +105,11 @@ export default function OverviewPage() {
           <article className="workspace-summary-card">
             <h3>待送测模型</h3>
             <div className="workspace-list">
-              {data.modelArtifacts.slice(0, 4).map((item) => (
+              {latestModelArtifacts.map((item) => (
                 <button
                   key={item.artifact_id}
                   className="workspace-list-item"
-                  onClick={() => {
-                    navigate('/model')
-                  }}
+                  onClick={() => navigate('/model')}
                   type="button"
                 >
                   <strong>{item.capability_name}</strong>
@@ -127,7 +136,8 @@ export default function OverviewPage() {
                     <tr>
                       <th>能力</th>
                       <th>任务类型</th>
-                      <th>数据集</th>
+                      <th>数据集状态</th>
+                      <th>最近更新时间</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -135,7 +145,8 @@ export default function OverviewPage() {
                       <tr key={item.capability_name}>
                         <td>{item.display_name}</td>
                         <td>{item.task_type}</td>
-                        <td>{item.dataset_status}</td>
+                        <td><span className={`status-pill ${statusTone(item.dataset_status)}`}>{item.dataset_status}</span></td>
+                        <td>{formatDateTime(item.updated_at)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -146,24 +157,27 @@ export default function OverviewPage() {
           <div className="workspace-stack">
             <article className="workspace-note-block">
               <h3>最近训练任务</h3>
-              <div className="workspace-list">
-                {data.trainingTasks.slice(0, 5).map((item) => (
-                  <button
-                    key={item.task_id}
-                    className="workspace-list-item"
-                    onClick={() => {
-                      navigate('/training')
-                    }}
-                    type="button"
-                  >
-                    <strong>{item.task_name}</strong>
-                    <div className="workspace-meta-row">
-                      <span>{item.capability_name}</span>
-                      <span>{item.framework}</span>
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                    </div>
-                  </button>
-                ))}
+              <div className="workspace-table-wrap">
+                <table className="workspace-table">
+                  <thead>
+                    <tr>
+                      <th>任务</th>
+                      <th>能力</th>
+                      <th>状态</th>
+                      <th>创建时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {latestTrainingTasks.map((item) => (
+                      <tr key={item.task_id}>
+                        <td>{item.task_name}</td>
+                        <td>{item.capability_name}</td>
+                        <td><span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span></td>
+                        <td>{formatDateTime(item.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </article>
           </div>

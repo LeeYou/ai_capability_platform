@@ -35,6 +35,8 @@ class ModelArtifactSummary:
     manifest_preview: dict[str, object] | None
     delivery_metadata: dict[str, object] | None
     runtime_contract: dict[str, object] | None
+    created_at: str | None
+    updated_at: str | None
 
 
 def _validate_model_version(model_version: str) -> str:
@@ -84,6 +86,8 @@ def _to_summary(item: ModelArtifactModel) -> ModelArtifactSummary:
         manifest_preview=manifest_preview,
         delivery_metadata=delivery_metadata,
         runtime_contract=runtime_contract,
+        created_at=item.created_at.isoformat() if item.created_at else None,
+        updated_at=item.updated_at.isoformat() if item.updated_at else None,
     )
 
 
