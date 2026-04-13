@@ -32,6 +32,8 @@ class AnnotationTaskSummary:
     result_path: str | None
     sample_items: list[dict[str, object]]
     annotation_schema: dict[str, object]
+    created_at: str | None
+    updated_at: str | None
 
 
 def _default_sample_items(task: AnnotationTaskModel) -> list[dict[str, object]]:
@@ -119,6 +121,8 @@ def _to_summary(task: AnnotationTaskModel) -> AnnotationTaskSummary:
         result_path=task.result_path,
         sample_items=[],
         annotation_schema=build_annotation_schema(task_type),
+        created_at=task.created_at.isoformat() if task.created_at else None,
+        updated_at=task.updated_at.isoformat() if task.updated_at else None,
     )
 
 
@@ -191,6 +195,8 @@ def get_annotation_task_detail(
         result_path=summary.result_path,
         sample_items=[item for item in payload["sample_items"] if isinstance(item, dict)],
         annotation_schema=summary.annotation_schema,
+        created_at=summary.created_at,
+        updated_at=summary.updated_at,
     )
 
 
@@ -289,3 +295,11 @@ def submit_annotation_task_result(
         annotations=annotations,
         mark_submitted=True,
     )
+
+
+def delete_annotation_task(session: Session, task_id: int) -> None:
+    task = session.get(AnnotationTaskModel, task_id)
+    if task is None:
+        raise AnnotationTaskNotFoundError("标注任务不存在。")
+    session.delete(task)
+    session.commit()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -33,11 +33,13 @@ from app.models import (
 from app.services.annotation_service import (
     AnnotationTaskNotFoundError,
     create_annotation_task,
+    delete_annotation_task,
     get_annotation_task_detail,
     list_annotation_tasks,
     submit_annotation_task_result,
     update_annotation_task_samples,
 )
+from app.services.dataset_service import inspect_dataset_path
 from app.services.model_service import (
     ModelArtifactNotFoundError,
     create_model_artifact,
@@ -46,6 +48,7 @@ from app.services.model_service import (
 )
 from app.services.registry_service import (
     bind_dataset_to_capability,
+    delete_capability,
     list_capabilities,
     list_dataset_bindings,
     register_capability,
@@ -92,6 +95,8 @@ def _annotation_item(item) -> AnnotationTaskItem:
             if isinstance(sample, dict)
         ],
         annotation_schema=item.annotation_schema,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -117,6 +122,8 @@ def _training_item(item) -> TrainingTaskItem:
         training_input_path=item.training_input_path,
         template_bundle_path=item.template_bundle_path,
         export_dir=item.export_dir,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -135,6 +142,23 @@ def _model_item(item) -> ModelArtifactItem:
         manifest_preview=item.manifest_preview,
         delivery_metadata=item.delivery_metadata,
         runtime_contract=item.runtime_contract,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def _dataset_item(item) -> DatasetItem:
+    stats = inspect_dataset_path(item.dataset_path)
+    return DatasetItem(
+        capability_name=item.capability_name,
+        dataset_path=item.dataset_path,
+        dataset_status=item.dataset_status,
+        source=item.source,
+        file_count=stats.file_count,
+        total_size_bytes=stats.total_size_bytes,
+        last_modified=stats.last_modified,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -158,15 +182,17 @@ def get_capabilities(session: Session = Depends(get_db_session)) -> CapabilityLi
     return CapabilityListResponse(
         items=[
             CapabilityItem(
-            capability_name=item.capability_name,
-            display_name=item.display_name,
-            task_type=item.task_type,
-            dataset_path=item.dataset_path,
-            dataset_status=item.dataset_status,
-            source=item.source,
-            annotation_schema=item.annotation_schema,
-            template_bundle=item.template_bundle,
-        )
+                capability_name=item.capability_name,
+                display_name=item.display_name,
+                task_type=item.task_type,
+                dataset_path=item.dataset_path,
+                dataset_status=item.dataset_status,
+                source=item.source,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+                annotation_schema=item.annotation_schema,
+                template_bundle=item.template_bundle,
+            )
             for item in bindings
         ]
     )
@@ -199,9 +225,27 @@ def create_capability(
         dataset_path=item.dataset_path,
         dataset_status=item.dataset_status,
         source=item.source,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
         annotation_schema=item.annotation_schema,
         template_bundle=item.template_bundle,
     )
+
+
+@router.delete(
+    "/capabilities/{capability_name}",
+    status_code=status.HTTP_200_OK,
+    response_class=Response,
+    tags=["capability"],
+)
+def delete_capability_route(
+    capability_name: str,
+    session: Session = Depends(get_db_session),
+) -> None:
+    try:
+        delete_capability(session, capability_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/datasets", response_model=DatasetListResponse, tags=["dataset"])
@@ -209,17 +253,7 @@ def get_datasets(session: Session = Depends(get_db_session)) -> DatasetListRespo
     settings = get_settings()
     sync_dataset_bindings_from_filesystem(session, settings.datasets_root)
     bindings = list_dataset_bindings(session)
-    return DatasetListResponse(
-        items=[
-            DatasetItem(
-                capability_name=item.capability_name,
-                dataset_path=item.dataset_path,
-                dataset_status=item.dataset_status,
-                source=item.source,
-            )
-            for item in bindings
-        ]
-    )
+    return DatasetListResponse(items=[_dataset_item(item) for item in bindings])
 
 
 @router.post(
@@ -249,6 +283,11 @@ def create_dataset_binding(
         dataset_path=item.dataset_path,
         dataset_status=item.dataset_status,
         source=item.source,
+        file_count=item.file_count,
+        total_size_bytes=item.total_size_bytes,
+        last_modified=item.last_modified,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -346,6 +385,22 @@ def submit_annotation_task(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return _annotation_item(item)
+
+
+@router.delete(
+    "/annotation-tasks/{task_id}",
+    status_code=status.HTTP_200_OK,
+    response_class=Response,
+    tags=["annotation"],
+)
+def delete_annotation_task_route(
+    task_id: int,
+    session: Session = Depends(get_db_session),
+) -> None:
+    try:
+        delete_annotation_task(session, task_id)
+    except AnnotationTaskNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/training-tasks", response_model=TrainingTaskListResponse, tags=["training"])

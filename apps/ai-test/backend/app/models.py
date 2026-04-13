@@ -19,6 +19,7 @@ class HealthResponse(BaseModel):
 class RemoteCapabilityItem(BaseModel):
     capability_name: str = Field(description="能力标识")
     display_name: str = Field(description="能力名称")
+    task_type: str | None = Field(default=None, description="任务类型")
     dataset_path: str = Field(description="数据集路径")
     dataset_status: str = Field(description="数据集状态")
     source: str = Field(description="来源")
@@ -31,6 +32,7 @@ class RemoteCapabilityListResponse(BaseModel):
 
 class RemoteModelItem(BaseModel):
     capability_name: str = Field(description="能力标识")
+    task_type: str | None = Field(default=None, description="任务类型")
     model_version: str = Field(description="模型版本")
     source_training_task_id: int = Field(description="来源训练任务 ID")
     artifact_path: str = Field(description="模型目录")
@@ -111,6 +113,7 @@ class TestCaseResultItem(BaseModel):
     duration_ms: int = Field(description="执行时长")
     score: float = Field(description="得分")
     provider: str | None = Field(default=None, description="推理 provider")
+    raw_output: dict[str, Any] | None = Field(default=None, description="结构化推理输出")
 
 
 class TestTaskItem(BaseModel):
@@ -133,6 +136,7 @@ class TestTaskItem(BaseModel):
 
 class TestTaskDetailResponse(TestTaskItem):
     cases: list[TestCaseResultItem] = Field(default_factory=list)
+    evidence_chain: dict[str, Any] | None = Field(default=None, description="模型/插件/license/revision 证据链")
 
 
 class TestTaskListResponse(BaseModel):

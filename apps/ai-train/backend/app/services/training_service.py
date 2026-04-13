@@ -47,6 +47,8 @@ class TrainingTaskSummary:
     training_input_path: str | None
     template_bundle_path: str | None
     export_dir: str | None
+    created_at: str | None
+    updated_at: str | None
 
 
 def _result_summary_path(training_jobs_root: Path, task_id: int) -> Path:
@@ -138,6 +140,8 @@ def _to_summary(
         training_input_path=training_input_path,
         template_bundle_path=template_bundle_path,
         export_dir=export_dir,
+        created_at=task.created_at.isoformat() if task.created_at else None,
+        updated_at=task.updated_at.isoformat() if task.updated_at else None,
     )
 
 

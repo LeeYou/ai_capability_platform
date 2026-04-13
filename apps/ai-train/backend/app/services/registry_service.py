@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 
@@ -29,6 +30,8 @@ class CapabilitySummary:
     dataset_path: str
     dataset_status: str
     source: str
+    created_at: datetime | None
+    updated_at: datetime | None
     annotation_schema: dict[str, object]
     template_bundle: dict[str, object]
 
@@ -39,6 +42,11 @@ class DatasetSummary:
     dataset_path: str
     dataset_status: str
     source: str
+    file_count: int
+    total_size_bytes: int
+    last_modified: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
 
 
 def initialize_database() -> None:
@@ -119,6 +127,8 @@ def register_capability(
         dataset_path=binding.dataset_path if binding is not None else "",
         dataset_status=binding.dataset_status if binding is not None else "unbound",
         source=binding.source if binding is not None else capability.source,
+        created_at=capability.created_at,
+        updated_at=capability.updated_at,
         annotation_schema=build_annotation_schema(capability.task_type or normalized_task_type),
         template_bundle=build_template_bundle(capability.capability_name, capability.task_type or normalized_task_type),
     )
@@ -173,7 +183,23 @@ def bind_dataset_to_capability(
         dataset_path=binding.dataset_path,
         dataset_status=binding.dataset_status,
         source=binding.source,
+        file_count=0,
+        total_size_bytes=0,
+        last_modified=None,
+        created_at=binding.created_at,
+        updated_at=binding.updated_at,
     )
+
+
+def delete_capability(session: Session, capability_name: str) -> None:
+    normalized_name = normalize_capability_name(capability_name)
+    capability = session.scalar(
+        select(CapabilityRegistryModel).where(CapabilityRegistryModel.capability_name == normalized_name)
+    )
+    if capability is None:
+        raise ValueError("能力不存在。")
+    session.delete(capability)
+    session.commit()
 
 
 def sync_dataset_bindings_from_filesystem(session: Session, datasets_root: Path) -> None:
@@ -242,6 +268,8 @@ def list_capabilities(session: Session) -> list[CapabilitySummary]:
             dataset_path=item.dataset_binding.dataset_path if item.dataset_binding is not None else "",
             dataset_status=item.dataset_binding.dataset_status if item.dataset_binding is not None else "unbound",
             source=item.dataset_binding.source if item.dataset_binding is not None else item.source,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
             annotation_schema=build_annotation_schema(item.task_type or "classification"),
             template_bundle=build_template_bundle(item.capability_name, item.task_type or "classification"),
         )
@@ -259,6 +287,11 @@ def list_dataset_bindings(session: Session) -> list[DatasetSummary]:
             dataset_path=item.dataset_path,
             dataset_status=item.dataset_status,
             source=item.source,
+            file_count=0,
+            total_size_bytes=0,
+            last_modified=None,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
         )
         for item in bindings
     ]

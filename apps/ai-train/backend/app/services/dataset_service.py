@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import os
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -12,6 +14,13 @@ class DatasetBinding:
     dataset_path: str
     dataset_status: str
     source: str
+
+
+@dataclass(frozen=True)
+class DatasetStats:
+    file_count: int
+    total_size_bytes: int
+    last_modified: str | None
 
 
 def _to_display_name(capability_name: str) -> str:
@@ -55,3 +64,31 @@ def normalize_dataset_path(datasets_root: Path, dataset_path: str) -> Path:
     if not (candidate == datasets_root or datasets_root in candidate.parents):
         raise ValueError("dataset_path 必须位于 datasets 根目录内。")
     return candidate
+
+
+def inspect_dataset_path(dataset_path: str) -> DatasetStats:
+    path = Path(dataset_path)
+    if not path.exists() or not path.is_dir():
+        return DatasetStats(file_count=0, total_size_bytes=0, last_modified=None)
+
+    file_count = 0
+    total_size_bytes = 0
+    latest_mtime = 0.0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            file_path = Path(root) / name
+            stat = file_path.stat()
+            file_count += 1
+            total_size_bytes += stat.st_size
+            latest_mtime = max(latest_mtime, stat.st_mtime)
+
+    if latest_mtime <= 0:
+        last_modified = None
+    else:
+        last_modified = datetime.fromtimestamp(latest_mtime, tz=timezone.utc).isoformat()
+
+    return DatasetStats(
+        file_count=file_count,
+        total_size_bytes=total_size_bytes,
+        last_modified=last_modified,
+    )
