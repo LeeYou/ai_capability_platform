@@ -85,7 +85,7 @@ export default function AnnotationPage() {
     [filteredSamples, selectedSampleId],
   )
 
-  const currentSample = currentSampleIndex >= 0 ? filteredSamples[currentSampleIndex] : filteredSamples[0] ?? null
+  const currentSample = currentSampleIndex >= 0 ? filteredSamples[currentSampleIndex] : null
   const currentDraft = currentSample ? annotationDrafts[currentSample.sample_id] : null
 
   useEffect(() => {

@@ -48,7 +48,7 @@ export function formatDateTime(value?: string | null): string {
 }
 
 export function formatFileSize(bytes?: number): string {
-  if (!bytes || bytes <= 0) return '0 B'
+  if (bytes == null || bytes <= 0) return '0 B'
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`

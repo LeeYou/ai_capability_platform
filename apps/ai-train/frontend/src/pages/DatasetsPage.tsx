@@ -46,7 +46,7 @@ export default function DatasetsPage() {
       { title: '数据集绑定', value: datasets.length, detail: '能力到目录的绑定关系' },
       { title: '可用数据集', value: readyCount, detail: '当前状态 ready 的数据集' },
       { title: '缺失数据集', value: missingCount, detail: '目录不存在或不可用的数据集' },
-      { title: '文件总量', value: `${totalFiles}`, detail: `累计 ${formatFileSize(totalSize)}` },
+      { title: '文件总量', value: totalFiles, detail: `累计 ${formatFileSize(totalSize)}` },
     ]
   }, [datasets])
 
