@@ -75,18 +75,22 @@
 1. 已建立签发侧统一金标准测试向量源，覆盖硬件指纹、版本约束与 license 校验场景。
 2. 已将授权失败原因、失败细节收敛为稳定字段：`result` / `code` / `stage` / `details`，避免调用方依赖错误文本解析。
 3. 已建立 ai-license-mgr 对 ai-prod Python 校验语义的一致性回归基线，并将诊断契约与测试向量纳入 `license_tool` source bundle 发布物。
+4. 已开始拆分授权核心、文件导出、工具发布、策略 / 签发 / 校验服务：`license_tool` 发布/导出与签发记录导出能力已从 `license_service.py` 拆出独立子服务，主服务开始收敛为薄编排层。
+5. 已开始接入 shared contract validator：shared 已新增 `license_tool` bundle 校验入口，并在工具发布链路中执行运行时校验，确保交付物契约稳定。
 
 ### 10.2 与其他模块的关键契约
 
 1. 与 ai-prod 保持 canonical JSON、版本约束、硬件指纹、时间窗口和能力范围规则一致。
 2. 与 ai-sdk / `license_tool` 保持统一授权诊断字段与统一校验语义。
 3. 与 ai-builder 保持授权记录、交付材料、校验工具、导出清单的一致追溯关系。
+4. 必须与 shared / ai-prod / ai-sdk 共享统一 diagnostics、vectors、license payload validator 与平台字段解析规则。
 
 ### 10.3 对应整改编号
 
 1. RL-01
 2. RL-02
 3. RL-03
+4. RL-04
 
 ### 10.4 平台字段增量设计
 

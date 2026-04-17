@@ -7,6 +7,8 @@ from typing import Any
 
 ALLOWED_EXECUTION_MODES = {"real", "simulated"}
 ALLOWED_REPORT_TEMPLATE_TYPES = {"research", "delivery"}
+ALLOWED_LICENSE_TOOL_BUNDLE_FORMATS = {"source_bundle"}
+ALLOWED_LICENSE_TOOL_BUILD_SYSTEMS = {"cmake"}
 
 
 def _require_non_empty_string(payload: Mapping[str, Any], field_name: str) -> str:
@@ -22,6 +24,80 @@ def _require_existing_path(payload: Mapping[str, Any], field_name: str) -> str:
     if not path.exists():
         raise ValueError(f"{field_name} 指向的路径不存在。")
     return str(path.resolve())
+
+
+def validate_license_tool_release_bundle(bundle_dir: Path) -> dict[str, object]:
+    base_dir = Path(bundle_dir).resolve()
+    if not base_dir.exists() or not base_dir.is_dir():
+        raise ValueError("bundle_dir 必须为存在的目录。")
+
+    manifest_path = (base_dir / "manifest.json").resolve()
+    if not (manifest_path == base_dir or base_dir in manifest_path.parents):
+        raise ValueError("manifest.json 路径非法。")
+    if not manifest_path.is_file():
+        raise ValueError("manifest.json 不存在。")
+
+    diagnostics_path = (base_dir / "LICENSE_DIAGNOSTICS.json").resolve()
+    vectors_path = (base_dir / "VALIDATION_VECTORS.json").resolve()
+    for path, name in ((diagnostics_path, "LICENSE_DIAGNOSTICS.json"), (vectors_path, "VALIDATION_VECTORS.json")):
+        if not (path == base_dir or base_dir in path.parents):
+            raise ValueError(f"{name} 路径非法。")
+        if not path.is_file():
+            raise ValueError(f"{name} 不存在。")
+
+    try:
+        manifest_payload = __import__("json").loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("manifest.json 不是合法 JSON。") from exc
+    if not isinstance(manifest_payload, Mapping):
+        raise ValueError("manifest.json 顶层必须为对象。")
+
+    tool_name = _require_non_empty_string(manifest_payload, "tool_name")
+    version = _require_non_empty_string(manifest_payload, "version")
+    bundle_format = _require_non_empty_string(manifest_payload, "bundle_format")
+    if bundle_format not in ALLOWED_LICENSE_TOOL_BUNDLE_FORMATS:
+        raise ValueError("bundle_format 非法。")
+
+    entrypoint = _require_non_empty_string(manifest_payload, "entrypoint")
+    build_system = _require_non_empty_string(manifest_payload, "build_system")
+    if build_system not in ALLOWED_LICENSE_TOOL_BUILD_SYSTEMS:
+        raise ValueError("build_system 非法。")
+
+    diagnostics_version = _require_non_empty_string(manifest_payload, "diagnostics_version")
+    supported_targets = manifest_payload.get("supported_targets")
+    if not isinstance(supported_targets, list) or not supported_targets:
+        raise ValueError("supported_targets 必须为非空数组。")
+    source_files = manifest_payload.get("source_files")
+    if not isinstance(source_files, list) or not source_files:
+        raise ValueError("source_files 必须为非空数组。")
+    documents = manifest_payload.get("documents")
+    if not isinstance(documents, list) or not documents:
+        raise ValueError("documents 必须为非空数组。")
+
+    for index, item in enumerate(source_files):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"source_files[{index}] 必须为非空字符串。")
+        candidate = (base_dir / item).resolve()
+        if not (candidate == base_dir or base_dir in candidate.parents):
+            raise ValueError("source_files 包含非法路径。")
+        if not candidate.is_file():
+            raise ValueError(f"source_files 中声明的文件不存在：{item}")
+
+    required_docs = {"LICENSE_DIAGNOSTICS.json", "VALIDATION_VECTORS.json"}
+    if not required_docs.issubset({str(item) for item in documents if isinstance(item, str)}):
+        raise ValueError("documents 必须包含 LICENSE_DIAGNOSTICS.json 与 VALIDATION_VECTORS.json。")
+
+    return {
+        "tool_name": tool_name,
+        "version": version,
+        "bundle_format": bundle_format,
+        "entrypoint": entrypoint,
+        "build_system": build_system,
+        "diagnostics_version": diagnostics_version,
+        "manifest_path": str(manifest_path),
+        "diagnostics_path": str(diagnostics_path),
+        "vectors_path": str(vectors_path),
+    }
 
 
 def _normalize_exported_files(payload: Mapping[str, Any]) -> list[str]:

@@ -27,10 +27,12 @@
 | L17 | 高风险操作（轮转/隔离/失效）影响面与确认体验重构 | 已完成 |
 | L18 | 校验结果、diagnostics / vectors / tool release 工作台重构 | 已完成 |
 | L19 | 授权完成后的构建联动与首页风险概览收口 | 已完成 |
+| L20 | 授权核心 / 文件导出 / 工具发布服务拆分 | 已完成 |
+| L21 | shared contract validator 与公共底座接入 | 已完成 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RL-01 ~ RL-03。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RL-01 ~ RL-04。
 
 ## 4. 当前进度更新
 
@@ -46,11 +48,13 @@
 3. 当前已完成 L17：高风险操作区已补齐轮转 / 隔离的影响面统计、状态展示与显式操作入口。
 4. 当前已完成 L18：校验结果页已突出稳定 `result / code / stage / details`，并补齐 diagnostics / vectors / tool release 导出动作。
 5. 当前已完成 L19：首页已补齐风险概览、最近签发、审计留痕与“推进 ai-builder”下游联动。
+6. 当前已完成 L20：已将 customer/key_pair/policy/issue/tool_release 等职责从 `license_service.py` 拆分为独立子服务；`license_service.py` 收敛为薄编排层并保持 API 签名不变。
+7. 当前已完成 L21：shared contract validator 已新增 `validate_license_tool_release_bundle()`，并在 `license_tool` source bundle 生成过程中执行校验，确保交付物契约稳定。
 
 ### 4.3 未完成
 
-1. 暂无；L16-L19 已全部完成，后续如继续推进将进入下一轮授权体验优化。
+1. 下一阶段将继续扩展 shared contract validator 覆盖范围：纳入更多授权交付契约（如 license payload/diagnostics、导出清单等）。
 
 ### 4.4 阶段小结
 
-ai-license-mgr 已完成 L16-L19：现已形成首页风险概览、连续签发工作台、高风险操作区以及校验与工具工作台，交付工程师可以在同一页面中完成客户创建、密钥管理、策略配置、license 签发、稳定结果码校验与 tool bundle 导出，并把签发记录直接推进到 ai-builder。经前端 `npm run build && npm run lint` 验证，当前 ai-license-mgr Web 工作台重构已完成。
+ai-license-mgr 已完成 L16-L19，当前模块计划已校准到 R16：本轮已完成 L20/L21，围绕“授权核心 / 文件导出 / 工具发布 / 契约校验”形成了更清晰的服务分层，`license_service.py` 收敛为薄编排层；同时 shared contract validator 已新增并落地 `license_tool` bundle 校验入口，确保交付物契约可在运行时被稳定验证。下一阶段将继续扩展 shared validator 覆盖更多授权交付契约，确保跨模块一致性。

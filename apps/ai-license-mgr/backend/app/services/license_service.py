@@ -13,6 +13,41 @@ from sqlalchemy.orm import Session
 from app.db.models import CustomerModel, KeyPairModel, LicenseIssueRecordModel, LicensePolicyModel, LicenseToolReleaseModel
 from app.services.audit_service import append_audit_log, now_cst_iso
 from app.services.crypto_service import generate_hardware_fingerprint, generate_key_pair_files, sign_payload, verify_signature
+from app.services.license_errors import (
+    CustomerNotFoundError,
+    KeyPairNotFoundError,
+    LicenseIssueNotFoundError,
+    LicensePolicyNotFoundError,
+    LicenseToolReleaseNotFoundError,
+)
+from app.services.license_tool_release_service import (
+    export_license_tool_release as _export_license_tool_release,
+    get_license_tool_release as _get_license_tool_release,
+    list_license_tool_releases as _list_license_tool_releases,
+    sync_default_license_tool_release as _sync_default_license_tool_release,
+)
+from app.services.license_export_service import export_license_issue as _export_license_issue
+from app.services.license_issue_service import (
+    issue_license as _issue_license,
+    validate_license_issue as _validate_license_issue,
+)
+from app.services.customer_service import (
+    create_customer as _create_customer,
+    get_customer as _get_customer,
+    list_customers as _list_customers,
+)
+from app.services.key_pair_service import (
+    create_key_pair as _create_key_pair,
+    get_key_pair as _get_key_pair,
+    isolate_key_pair as _isolate_key_pair,
+    list_key_pairs as _list_key_pairs,
+    rotate_key_pair as _rotate_key_pair,
+)
+from app.services.policy_service import (
+    create_license_policy as _create_license_policy,
+    get_license_policy as _get_license_policy,
+    list_license_policies as _list_license_policies,
+)
 from app.services.validation_contracts import (
     DIAGNOSTICS_VERSION,
     build_validation_contract,
@@ -34,26 +69,6 @@ LICENSE_TOOL_SOURCE_FILES = {
 }
 LICENSE_TOOL_SUPPORTED_TARGETS = ["linux_x86_64", "linux_aarch64", "windows_x86", "windows_x86_64"]
 ALLOWED_OPERATING_SYSTEMS = {"windows", "linux", "android", "ios"}
-
-
-class CustomerNotFoundError(ValueError):
-    """客户不存在。"""
-
-
-class KeyPairNotFoundError(ValueError):
-    """密钥对不存在。"""
-
-
-class LicensePolicyNotFoundError(ValueError):
-    """授权策略不存在。"""
-
-
-class LicenseIssueNotFoundError(ValueError):
-    """签发记录不存在。"""
-
-
-class LicenseToolReleaseNotFoundError(ValueError):
-    """工具发布记录不存在。"""
 
 
 def initialize_database() -> None:
@@ -448,14 +463,11 @@ def _build_license_tool_release_materials(license_tools_root: Path, *, version: 
 
 
 def list_customers(session: Session) -> list[dict[str, object]]:
-    return [_customer_item(item) for item in session.query(CustomerModel).order_by(CustomerModel.id.asc()).all()]
+    return _list_customers(session)
 
 
 def get_customer(session: Session, customer_id: int) -> dict[str, object]:
-    customer = session.get(CustomerModel, customer_id)
-    if customer is None:
-        raise CustomerNotFoundError("客户不存在。")
-    return _customer_item(customer)
+    return _get_customer(session, customer_id)
 
 
 def create_customer(
@@ -467,41 +479,22 @@ def create_customer(
     contact_name: str | None,
     contact_email: str | None,
 ) -> dict[str, object]:
-    normalized_code = customer_code.strip()
-    if not normalized_code:
-        raise ValueError("客户编码不能为空。")
-    if session.query(CustomerModel).filter(CustomerModel.customer_code == normalized_code).first() is not None:
-        raise ValueError("客户编码已存在。")
-
-    customer = CustomerModel(
-        customer_code=normalized_code,
-        customer_name=customer_name.strip(),
-        contact_name=contact_name.strip() if contact_name else None,
-        contact_email=contact_email.strip() if contact_email else None,
-        status="active",
-    )
-    session.add(customer)
-    session.commit()
-    session.refresh(customer)
-    append_audit_log(
+    return _create_customer(
+        session,
         audit_log_path,
-        action="create",
-        entity_type="customer",
-        entity_id=str(customer.id),
-        detail={"customer_code": customer.customer_code},
+        customer_code=customer_code,
+        customer_name=customer_name,
+        contact_name=contact_name,
+        contact_email=contact_email,
     )
-    return _customer_item(customer)
 
 
 def list_key_pairs(session: Session) -> list[dict[str, object]]:
-    return [_key_pair_item(item) for item in session.query(KeyPairModel).order_by(KeyPairModel.id.asc()).all()]
+    return _list_key_pairs(session)
 
 
 def get_key_pair(session: Session, key_pair_id: int) -> dict[str, object]:
-    key_pair = session.get(KeyPairModel, key_pair_id)
-    if key_pair is None:
-        raise KeyPairNotFoundError("密钥对不存在。")
-    return _key_pair_item(key_pair)
+    return _get_key_pair(session, key_pair_id)
 
 
 def create_key_pair(
@@ -511,27 +504,12 @@ def create_key_pair(
     *,
     key_name: str,
 ) -> dict[str, object]:
-    normalized_name = _normalize_key_name(key_name)
-    if session.query(KeyPairModel).filter(KeyPairModel.key_name == normalized_name).first() is not None:
-        raise ValueError("密钥名称已存在。")
-
-    private_key_path, public_key_path = generate_key_pair_files(key_pairs_root, normalized_name)
-    key_pair = _build_key_pair_record(
-        key_name=normalized_name,
-        private_key_path=private_key_path,
-        public_key_path=public_key_path,
-    )
-    session.add(key_pair)
-    session.commit()
-    session.refresh(key_pair)
-    append_audit_log(
+    return _create_key_pair(
+        session,
+        key_pairs_root,
         audit_log_path,
-        action="create",
-        entity_type="key_pair",
-        entity_id=str(key_pair.id),
-        detail={"key_name": key_pair.key_name},
+        key_name=key_name,
     )
-    return _key_pair_item(key_pair)
 
 
 def rotate_key_pair(
@@ -543,65 +521,14 @@ def rotate_key_pair(
     new_key_name: str | None,
     reason: str | None,
 ) -> dict[str, object]:
-    source_key_pair = session.get(KeyPairModel, key_pair_id)
-    if source_key_pair is None:
-        raise KeyPairNotFoundError("密钥对不存在。")
-    _ensure_key_pair_is_active(source_key_pair, action_name="轮转")
-
-    next_version = int(source_key_pair.rotation_version) + 1
-    normalized_new_name = (
-        _normalize_key_name(new_key_name, field_name="新密钥名称")
-        if new_key_name is not None
-        else _build_rotated_key_name(session, source_key_pair.key_name, next_version)
-    )
-    if session.query(KeyPairModel).filter(KeyPairModel.key_name == normalized_new_name).first() is not None:
-        raise ValueError("新密钥名称已存在。")
-
-    private_key_path, public_key_path = generate_key_pair_files(key_pairs_root, normalized_new_name)
-    target_key_pair = _build_key_pair_record(
-        key_name=normalized_new_name,
-        private_key_path=private_key_path,
-        public_key_path=public_key_path,
-        rotation_version=next_version,
-        predecessor_key_pair_id=source_key_pair.id,
-    )
-    session.add(target_key_pair)
-    session.flush()
-
-    migrated_policy_ids: list[int] = []
-    active_policies = (
-        session.query(LicensePolicyModel)
-        .filter(LicensePolicyModel.key_pair_id == source_key_pair.id, LicensePolicyModel.status == "active")
-        .all()
-    )
-    for policy in active_policies:
-        policy.key_pair_id = target_key_pair.id
-        migrated_policy_ids.append(policy.id)
-
-    source_key_pair.status = "rotated"
-    source_key_pair.status_changed_at_cst = now_cst_iso()
-    source_key_pair.status_reason = reason.strip() if reason and reason.strip() else f"已轮转至 `{target_key_pair.key_name}`"
-    session.commit()
-    session.refresh(source_key_pair)
-    session.refresh(target_key_pair)
-
-    append_audit_log(
+    return _rotate_key_pair(
+        session,
+        key_pairs_root,
         audit_log_path,
-        action="rotate",
-        entity_type="key_pair",
-        entity_id=str(source_key_pair.id),
-        detail={
-            "source_key_name": source_key_pair.key_name,
-            "target_key_pair_id": target_key_pair.id,
-            "target_key_name": target_key_pair.key_name,
-            "migrated_policy_ids": migrated_policy_ids,
-        },
+        key_pair_id=key_pair_id,
+        new_key_name=new_key_name,
+        reason=reason,
     )
-    return {
-        "source_key_pair": _key_pair_item(source_key_pair),
-        "new_key_pair": _key_pair_item(target_key_pair),
-        "migrated_policy_ids": migrated_policy_ids,
-    }
 
 
 def isolate_key_pair(
@@ -611,40 +538,20 @@ def isolate_key_pair(
     key_pair_id: int,
     reason: str,
 ) -> dict[str, object]:
-    key_pair = session.get(KeyPairModel, key_pair_id)
-    if key_pair is None:
-        raise KeyPairNotFoundError("密钥对不存在。")
-    _ensure_key_pair_is_active(key_pair, action_name="隔离")
-
-    normalized_reason = reason.strip()
-    if not normalized_reason:
-        raise ValueError("隔离原因不能为空。")
-
-    key_pair.status = "isolated"
-    key_pair.status_changed_at_cst = now_cst_iso()
-    key_pair.status_reason = normalized_reason
-    session.commit()
-    session.refresh(key_pair)
-
-    append_audit_log(
+    return _isolate_key_pair(
+        session,
         audit_log_path,
-        action="isolate",
-        entity_type="key_pair",
-        entity_id=str(key_pair.id),
-        detail={"key_name": key_pair.key_name, "reason": normalized_reason},
+        key_pair_id=key_pair_id,
+        reason=reason,
     )
-    return _key_pair_item(key_pair)
 
 
 def list_license_policies(session: Session) -> list[dict[str, object]]:
-    return [_policy_item(item) for item in session.query(LicensePolicyModel).order_by(LicensePolicyModel.id.asc()).all()]
+    return _list_license_policies(session)
 
 
 def get_license_policy(session: Session, policy_id: int) -> dict[str, object]:
-    policy = session.get(LicensePolicyModel, policy_id)
-    if policy is None:
-        raise LicensePolicyNotFoundError("授权策略不存在。")
-    return _policy_item(policy)
+    return _get_license_policy(session, policy_id)
 
 
 def create_license_policy(
@@ -665,66 +572,23 @@ def create_license_policy(
     expire_at_cst: str,
     notes: str | None,
 ) -> dict[str, object]:
-    customer = session.get(CustomerModel, customer_id)
-    if customer is None:
-        raise CustomerNotFoundError("客户不存在。")
-    key_pair = session.get(KeyPairModel, key_pair_id)
-    if key_pair is None:
-        raise KeyPairNotFoundError("密钥对不存在。")
-    _ensure_key_pair_is_active(key_pair, action_name="创建授权策略")
-    normalized_name = policy_name.strip()
-    if not normalized_name:
-        raise ValueError("策略名称不能为空。")
-    if session.query(LicensePolicyModel).filter(LicensePolicyModel.policy_name == normalized_name).first() is not None:
-        raise ValueError("策略名称已存在。")
-
-    start_at_iso, expire_at_iso = _normalize_policy_times(start_at_cst, expire_at_cst)
-    clean_scope = sorted({item.strip() for item in capability_scope if item.strip()})
-    normalized_operating_system = _normalize_operating_system(operating_system)
-    normalized_min_operating_system_version = _normalize_optional_text(
-        min_operating_system_version,
-        field_name="最低操作系统版本",
-        max_length=64,
-    )
-    normalized_system_architecture = _normalize_optional_text(
-        system_architecture,
-        field_name="系统架构",
-        max_length=64,
-    )
-    normalized_application_name = _normalize_optional_text(
-        application_name,
-        field_name="应用名称",
-        max_length=255,
-    )
-    if normalized_application_name is None:
-        raise ValueError("应用名称不能为空。")
-    policy = LicensePolicyModel(
-        policy_name=normalized_name,
-        customer_id=customer.id,
-        key_pair_id=key_pair.id,
-        capability_scope_json=json.dumps(clean_scope, ensure_ascii=False, sort_keys=True),
-        version_constraints_json=json.dumps(version_constraints, ensure_ascii=False, sort_keys=True),
-        hardware_fingerprint=hardware_fingerprint.strip() if hardware_fingerprint else None,
-        operating_system=normalized_operating_system,
-        min_operating_system_version=normalized_min_operating_system_version,
-        system_architecture=normalized_system_architecture,
-        application_name=normalized_application_name,
-        start_at_cst=start_at_iso,
-        expire_at_cst=expire_at_iso,
-        status="active",
-        notes=notes.strip() if notes else None,
-    )
-    session.add(policy)
-    session.commit()
-    session.refresh(policy)
-    append_audit_log(
+    return _create_license_policy(
+        session,
         audit_log_path,
-        action="create",
-        entity_type="license_policy",
-        entity_id=str(policy.id),
-        detail={"policy_name": policy.policy_name, "customer_code": customer.customer_code},
+        policy_name=policy_name,
+        customer_id=customer_id,
+        key_pair_id=key_pair_id,
+        capability_scope=capability_scope,
+        version_constraints=version_constraints,
+        hardware_fingerprint=hardware_fingerprint,
+        operating_system=operating_system,
+        min_operating_system_version=min_operating_system_version,
+        system_architecture=system_architecture,
+        application_name=application_name,
+        start_at_cst=start_at_cst,
+        expire_at_cst=expire_at_cst,
+        notes=notes,
     )
-    return _policy_item(policy)
 
 
 def issue_license(
@@ -735,88 +599,13 @@ def issue_license(
     *,
     policy_id: int,
 ) -> dict[str, object]:
-    policy = session.get(LicensePolicyModel, policy_id)
-    if policy is None:
-        raise LicensePolicyNotFoundError("授权策略不存在。")
-    if policy.status != "active":
-        raise ValueError("仅可签发 active 状态策略。")
-    _ensure_key_pair_is_active(policy.key_pair, action_name="签发 license")
-
-    issued_at_cst = now_cst_iso()
-    payload = {
-        "customer_id": policy.customer.id,
-        "customer_code": policy.customer.customer_code,
-        "customer_name": policy.customer.customer_name,
-        "application_name": policy.application_name,
-        "operating_system": policy.operating_system,
-        "min_operating_system_version": policy.min_operating_system_version,
-        "system_architecture": policy.system_architecture,
-        "capability_scope": json.loads(policy.capability_scope_json),
-        "hardware_fingerprint": policy.hardware_fingerprint,
-        "start_at_cst": policy.start_at_cst,
-        "expire_at_cst": policy.expire_at_cst,
-        "version_constraints": json.loads(policy.version_constraints_json),
-        "issued_at_cst": issued_at_cst,
-        "issuer_key_name": policy.key_pair.key_name,
-        "policy_id": policy.id,
-    }
-    signature_base64 = sign_payload(Path(policy.key_pair.private_key_path), payload)
-
-    issue = LicenseIssueRecordModel(
-        policy_id=policy.id,
-        customer_id=policy.customer_id,
-        key_pair_id=policy.key_pair_id,
-        status="issued",
-        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
-        signature_base64=signature_base64,
-        license_path="",
-        public_key_export_path="",
-        hardware_fingerprint=policy.hardware_fingerprint,
-        capability_scope_json=policy.capability_scope_json,
-        version_constraints_json=policy.version_constraints_json,
-        operating_system=policy.operating_system,
-        min_operating_system_version=policy.min_operating_system_version,
-        system_architecture=policy.system_architecture,
-        application_name=policy.application_name,
-        issued_at_cst=issued_at_cst,
-    )
-    session.add(issue)
-    session.commit()
-    session.refresh(issue)
-
-    issue_dir = (issue_records_root / f"issue_{issue.id}").resolve()
-    if not (issue_dir == issue_records_root or issue_records_root in issue_dir.parents):
-        raise ValueError("签发目录非法。")
-    issue_dir.mkdir(parents=True, exist_ok=True)
-
-    issue_license_path = issue_dir / "license.bin"
-    issue_public_key_path = issue_dir / "pubkey.pem"
-    license_payload = {
-        "algorithm": policy.key_pair.algorithm,
-        "payload": payload,
-        "signature": signature_base64,
-    }
-    issue_license_path.write_bytes(json.dumps(license_payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
-    issue_public_key_path.write_bytes(Path(policy.key_pair.public_key_path).read_bytes())
-
-    standard_license_path = (license_root / "license.bin").resolve()
-    standard_public_key_path = (license_root / "pubkey.pem").resolve()
-    shutil.copyfile(issue_license_path, standard_license_path)
-    shutil.copyfile(issue_public_key_path, standard_public_key_path)
-
-    issue.license_path = str(issue_license_path.resolve())
-    issue.public_key_export_path = str(issue_public_key_path.resolve())
-    session.commit()
-    session.refresh(issue)
-
-    append_audit_log(
+    return _issue_license(
+        session,
+        license_root,
+        issue_records_root,
         audit_log_path,
-        action="issue",
-        entity_type="license_issue_record",
-        entity_id=str(issue.id),
-        detail={"policy_id": policy.id, "customer_code": policy.customer.customer_code},
+        policy_id=policy_id,
     )
-    return _issue_item(issue)
 
 
 def list_license_issues(session: Session) -> list[dict[str, object]]:
@@ -845,17 +634,10 @@ def validate_license_issue(
     operating_system_version: str | None,
     system_architecture: str | None,
 ) -> dict[str, object]:
-    issue = session.get(LicenseIssueRecordModel, issue_record_id)
-    if issue is None:
-        raise LicenseIssueNotFoundError("签发记录不存在。")
-
-    payload = json.loads(issue.payload_json)
-    signature_valid = verify_signature(Path(issue.public_key_export_path), payload, issue.signature_base64)
-    checked_at_cst = now_cst_iso()
-    evaluation = evaluate_license_payload(
-        payload=payload,
-        signature_valid=signature_valid,
-        checked_at_cst=checked_at_cst,
+    return _validate_license_issue(
+        session,
+        audit_log_path,
+        issue_record_id=issue_record_id,
         hardware_fingerprint=hardware_fingerprint,
         capability_name=capability_name,
         product_version=product_version,
@@ -864,30 +646,6 @@ def validate_license_issue(
         system_architecture=system_architecture,
         version_checker=_is_version_allowed,
     )
-
-    issue.last_validation_at = checked_at_cst
-    issue.last_validation_result = evaluation.result
-    issue.last_validation_code = evaluation.code
-    issue.last_validation_details_json = json.dumps(evaluation.details, ensure_ascii=False, sort_keys=True)
-    session.commit()
-    append_audit_log(
-        audit_log_path,
-        action="validate",
-        entity_type="license_issue_record",
-        entity_id=str(issue.id),
-        detail={"valid": evaluation.valid, "code": evaluation.code, "stage": evaluation.stage, "details": evaluation.details},
-    )
-    return {
-        "valid": evaluation.valid,
-        "reason": evaluation.reason,
-        "result": evaluation.result,
-        "code": evaluation.code,
-        "stage": evaluation.stage,
-        "details": evaluation.details,
-        "diagnostics_version": DIAGNOSTICS_VERSION,
-        "issue_record_id": issue.id,
-        "checked_at_cst": checked_at_cst,
-    }
 
 
 def export_license_issue(
@@ -898,46 +656,21 @@ def export_license_issue(
     issue_record_id: int,
     export_format: str,
 ) -> Path:
-    issue = session.get(LicenseIssueRecordModel, issue_record_id)
-    if issue is None:
-        raise LicenseIssueNotFoundError("签发记录不存在。")
-    source_map = {
-        "bin": Path(issue.license_path),
-        "pubkey": Path(issue.public_key_export_path),
-    }
-    if export_format not in source_map:
-        raise ValueError("仅支持导出 bin/pubkey。")
-
-    export_dir = (exports_root / "ai-license-mgr").resolve()
-    if not (export_dir == exports_root or exports_root in export_dir.parents):
-        raise ValueError("导出目录非法。")
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    suffix = "license.bin" if export_format == "bin" else "pubkey.pem"
-    destination = export_dir / f"issue_{issue.id}_{suffix}"
-    shutil.copyfile(source_map[export_format], destination)
-    append_audit_log(
+    return _export_license_issue(
+        session,
+        exports_root,
         audit_log_path,
-        action="export",
-        entity_type="license_issue_record",
-        entity_id=str(issue.id),
-        detail={"export_format": export_format, "exported_path": str(destination.resolve())},
+        issue_record_id=issue_record_id,
+        export_format=export_format,
     )
-    return destination.resolve()
 
 
 def list_license_tool_releases(session: Session) -> list[dict[str, object]]:
-    return [
-        _tool_release_item(item)
-        for item in session.query(LicenseToolReleaseModel).order_by(LicenseToolReleaseModel.id.asc()).all()
-    ]
+    return _list_license_tool_releases(session)
 
 
 def get_license_tool_release(session: Session, release_id: int) -> dict[str, object]:
-    release = session.get(LicenseToolReleaseModel, release_id)
-    if release is None:
-        raise LicenseToolReleaseNotFoundError("工具发布记录不存在。")
-    return _tool_release_item(release)
+    return _get_license_tool_release(session, release_id)
 
 
 def sync_default_license_tool_release(
@@ -945,46 +678,7 @@ def sync_default_license_tool_release(
     license_tools_root: Path,
     audit_log_path: Path,
 ) -> dict[str, object]:
-    archive_path, manifest_path, readme_path = _build_license_tool_release_materials(
-        license_tools_root,
-        version=LICENSE_TOOL_VERSION,
-    )
-    checksum_sha256 = _sha256_file(archive_path)
-    release = (
-        session.query(LicenseToolReleaseModel)
-        .filter(
-            LicenseToolReleaseModel.tool_name == LICENSE_TOOL_NAME,
-            LicenseToolReleaseModel.version == LICENSE_TOOL_VERSION,
-        )
-        .first()
-    )
-    if release is None:
-        release = LicenseToolReleaseModel(
-            tool_name=LICENSE_TOOL_NAME,
-            version=LICENSE_TOOL_VERSION,
-            status="active",
-            archive_path=str(archive_path),
-            manifest_path=str(manifest_path),
-            readme_path=str(readme_path),
-            checksum_sha256=checksum_sha256,
-        )
-        session.add(release)
-    else:
-        release.status = "active"
-        release.archive_path = str(archive_path)
-        release.manifest_path = str(manifest_path)
-        release.readme_path = str(readme_path)
-        release.checksum_sha256 = checksum_sha256
-    session.commit()
-    session.refresh(release)
-    append_audit_log(
-        audit_log_path,
-        action="sync",
-        entity_type="license_tool_release",
-        entity_id=str(release.id),
-        detail={"tool_name": release.tool_name, "version": release.version},
-    )
-    return _tool_release_item(release)
+    return _sync_default_license_tool_release(session, license_tools_root, audit_log_path)
 
 
 def export_license_tool_release(
@@ -995,40 +689,13 @@ def export_license_tool_release(
     release_id: int,
     export_format: str,
 ) -> Path:
-    release = session.get(LicenseToolReleaseModel, release_id)
-    if release is None:
-        raise LicenseToolReleaseNotFoundError("工具发布记录不存在。")
-    source_map = {
-        "archive": Path(release.archive_path),
-        "manifest": Path(release.manifest_path),
-        "readme": Path(release.readme_path),
-        "diagnostics": Path(release.manifest_path).with_name("LICENSE_DIAGNOSTICS.json"),
-        "vectors": Path(release.manifest_path).with_name("VALIDATION_VECTORS.json"),
-    }
-    if export_format not in source_map:
-        raise ValueError("仅支持导出 archive/manifest/readme/diagnostics/vectors。")
-
-    export_dir = (exports_root / "ai-license-mgr").resolve()
-    if not (export_dir == exports_root or exports_root in export_dir.parents):
-        raise ValueError("导出目录非法。")
-    export_dir.mkdir(parents=True, exist_ok=True)
-
-    source_path = source_map[export_format]
-    suffix = (
-        f"license_tool_v{release.version}.tar.gz"
-        if export_format == "archive"
-        else f"license_tool_v{release.version}_{source_path.name}"
-    )
-    destination = export_dir / suffix
-    shutil.copyfile(source_path, destination)
-    append_audit_log(
+    return _export_license_tool_release(
+        session,
+        exports_root,
         audit_log_path,
-        action="export",
-        entity_type="license_tool_release",
-        entity_id=str(release.id),
-        detail={"export_format": export_format, "exported_path": str(destination.resolve())},
+        release_id=release_id,
+        export_format=export_format,
     )
-    return destination.resolve()
 
 
 def build_hardware_fingerprint(features: dict[str, str]) -> str:
