@@ -70,7 +70,7 @@
 
 ### 4.2 进行中
 
-1. RP-04：将 Python 控制面的全局可变运行态收敛为显式状态存储抽象。
+1. RP-04：将 Python 控制面的全局可变运行态收敛为显式状态存储抽象。（已完成）
 
 ### 4.3 未完成
 
@@ -78,4 +78,4 @@
 
 ### 4.4 阶段小结
 
-ai-prod 已完成 P41-P44：现已把现有内部验收外壳重构为真正的运行控制台，研发、QA、交付、运维可以在同一页面中查看 revision / license 状态、执行在线验证、触发 reload / rollback，并通过 metrics、source_summary 与审计日志定位问题。经前端 `npm run build && npm run lint` 验证，当前 ai-prod 控制台重构已完成。
+ai-prod 已完成 P41-P44：现已把现有内部验收外壳重构为真正的运行控制台，研发、QA、交付、运维可以在同一页面中查看 revision / license 状态、执行在线验证、触发 reload / rollback，并通过 metrics、source_summary 与审计日志定位问题。经前端 `npm run build && npm run lint` 验证，当前 ai-prod 控制台重构已完成。同时本轮已完成 RP-04：Python 控制面已将 revision、能力集、实例池等全局可变运行态收敛为显式状态存储抽象（`RuntimeControlPlaneState`），并统一通过锁保护访问，避免散落的全局变量导致状态漂移。

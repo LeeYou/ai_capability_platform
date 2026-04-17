@@ -473,12 +473,6 @@ def _build_admission_checklist(payload: dict[str, Any], *, license_valid: bool) 
     )
     return _finalize_checklist(checklist)
 
-
-def _ensure_instance_pool(capabilities: dict[str, dict[str, Any]], *, pool_size: int, gpu_available: bool) -> None:
-    _STATE.active_capabilities = capabilities
-    _STATE.ensure_instance_pools(pool_size=pool_size, gpu_available=gpu_available)
-
-
 def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     return _STATE.serialize_capability(capability_name, payload)
 
