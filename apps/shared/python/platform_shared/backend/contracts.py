@@ -26,6 +26,39 @@ def _require_existing_path(payload: Mapping[str, Any], field_name: str) -> str:
     return str(path.resolve())
 
 
+def _require_mapping(payload: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} 必须为对象。")
+    return value
+
+
+def _require_list(payload: Mapping[str, Any], field_name: str) -> list[Any]:
+    value = payload.get(field_name)
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} 必须为数组。")
+    return value
+
+
+def _require_non_negative_int(payload: Mapping[str, Any], field_name: str) -> int:
+    value = payload.get(field_name)
+    if not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} 必须为非负整数。")
+    return value
+
+
+def _require_non_empty_string_list(payload: Mapping[str, Any], field_name: str) -> list[str]:
+    items = _require_list(payload, field_name)
+    if not items:
+        raise ValueError(f"{field_name} 必须为非空数组。")
+    normalized: list[str] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{field_name}[{index}] 必须为非空字符串。")
+        normalized.append(item.strip())
+    return normalized
+
+
 def validate_license_tool_release_bundle(bundle_dir: Path) -> dict[str, object]:
     base_dir = Path(bundle_dir).resolve()
     if not base_dir.exists() or not base_dir.is_dir():
@@ -132,6 +165,207 @@ def validate_sdk_target_bundle(target_dir: Path) -> dict[str, object]:
     }
 
 
+def validate_acceptance_checklist(payload: Mapping[str, Any]) -> dict[str, object]:
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    model_version = _require_non_empty_string(payload, "model_version")
+    source_document = _require_non_empty_string(payload, "source_document")
+
+    sections = _require_list(payload, "sections")
+    if not sections:
+        raise ValueError("sections 必须为非空数组。")
+    normalized_sections: list[dict[str, object]] = []
+    for section_index, section in enumerate(sections):
+        if not isinstance(section, Mapping):
+            raise ValueError(f"sections[{section_index}] 必须为对象。")
+        section_name = _require_non_empty_string(section, "section_name")
+        items = section.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError(f"sections[{section_index}].items 必须为非空数组。")
+        normalized_items: list[dict[str, str]] = []
+        for item_index, item in enumerate(items):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"sections[{section_index}].items[{item_index}] 必须为对象。")
+            item_id = _require_non_empty_string(item, "item_id")
+            description = _require_non_empty_string(item, "description")
+            status = _require_non_empty_string(item, "status")
+            normalized_items.append({"item_id": item_id, "description": description, "status": status})
+        normalized_sections.append({"section_name": section_name, "items": normalized_items})
+
+    normalized: dict[str, object] = {
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "source_document": source_document,
+        "sections": normalized_sections,
+    }
+
+    if "task_id" in payload:
+        normalized["task_id"] = _require_non_negative_int(payload, "task_id")
+    if "package_id" in payload:
+        normalized["package_id"] = _require_non_negative_int(payload, "package_id")
+    if "package_name" in payload and payload.get("package_name") is not None:
+        normalized["package_name"] = _require_non_empty_string(payload, "package_name")
+    if "requested_targets" in payload and payload.get("requested_targets") is not None:
+        normalized["requested_targets"] = _require_non_empty_string_list(payload, "requested_targets")
+    return normalized
+
+
+def validate_version_manifest(payload: Mapping[str, Any]) -> dict[str, object]:
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    model_version = _require_non_empty_string(payload, "model_version")
+    delivery_targets = _require_non_empty_string_list(payload, "delivery_targets")
+
+    sdk_items = _require_list(payload, "sdk_items")
+    if not sdk_items:
+        raise ValueError("sdk_items 必须为非空数组。")
+    for index, item in enumerate(sdk_items):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"sdk_items[{index}] 必须为对象。")
+
+    delivery_checksums = _require_list(payload, "delivery_checksums")
+    if not delivery_checksums:
+        raise ValueError("delivery_checksums 必须为非空数组。")
+    normalized_checksums: list[dict[str, object]] = []
+    for index, item in enumerate(delivery_checksums):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"delivery_checksums[{index}] 必须为对象。")
+        path_value = _require_non_empty_string(item, "path")
+        checksum_value = _require_non_empty_string(item, "checksum")
+        size_bytes = _require_non_negative_int(item, "size_bytes")
+        normalized_checksums.append({"path": path_value, "checksum": checksum_value, "size_bytes": size_bytes})
+
+    normalized: dict[str, object] = {
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "delivery_targets": delivery_targets,
+        "sdk_items": [dict(item) for item in sdk_items],
+        "delivery_checksums": normalized_checksums,
+    }
+
+    optional_int_fields = ("task_id", "package_id", "issue_record_id")
+    for field_name in optional_int_fields:
+        if field_name in payload and payload.get(field_name) is not None:
+            normalized[field_name] = _require_non_negative_int(payload, field_name)
+
+    optional_string_fields = ("package_name", "customer_code")
+    for field_name in optional_string_fields:
+        if field_name in payload and payload.get(field_name) is not None:
+            normalized[field_name] = _require_non_empty_string(payload, field_name)
+
+    optional_string_list_fields = ("capability_scope", "requested_targets")
+    for field_name in optional_string_list_fields:
+        if field_name in payload and payload.get(field_name) is not None:
+            normalized[field_name] = _require_non_empty_string_list(payload, field_name)
+
+    if "version_constraints" in payload and payload.get("version_constraints") is not None:
+        normalized["version_constraints"] = dict(_require_mapping(payload, "version_constraints"))
+
+    for field_name in ("jni_enabled",):
+        if field_name in payload and payload.get(field_name) is not None:
+            value = payload.get(field_name)
+            if not isinstance(value, bool):
+                raise ValueError(f"{field_name} 必须为布尔值。")
+            normalized[field_name] = value
+
+    for field_name in ("docker_bundle", "docs_bundle", "tools_bundle"):
+        if field_name in payload and payload.get(field_name) is not None:
+            normalized[field_name] = dict(_require_mapping(payload, field_name))
+
+    return normalized
+
+
+def validate_delivery_summary(payload: Mapping[str, Any]) -> dict[str, object]:
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    model_version = _require_non_empty_string(payload, "model_version")
+    delivery_files = _require_non_empty_string_list(payload, "delivery_files")
+    delivery_directories = _require_non_empty_string_list(payload, "delivery_directories")
+    recommended_steps = _require_non_empty_string_list(payload, "recommended_steps")
+    version_manifest_path = _require_non_empty_string(payload, "version_manifest_path")
+
+    normalized: dict[str, object] = {
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "delivery_files": delivery_files,
+        "delivery_directories": delivery_directories,
+        "recommended_steps": recommended_steps,
+        "version_manifest_path": version_manifest_path,
+    }
+
+    optional_int_fields = (
+        "task_id",
+        "package_id",
+        "issue_record_id",
+        "sdk_count",
+        "target_count",
+        "acceptance_section_count",
+        "checksum_entry_count",
+    )
+    for field_name in optional_int_fields:
+        if field_name in payload and payload.get(field_name) is not None:
+            normalized[field_name] = _require_non_negative_int(payload, field_name)
+
+    if "package_name" in payload and payload.get("package_name") is not None:
+        normalized["package_name"] = _require_non_empty_string(payload, "package_name")
+    if "requested_targets" in payload and payload.get("requested_targets") is not None:
+        normalized["requested_targets"] = _require_non_empty_string_list(payload, "requested_targets")
+    if "jni_enabled" in payload and payload.get("jni_enabled") is not None:
+        value = payload.get("jni_enabled")
+        if not isinstance(value, bool):
+            raise ValueError("jni_enabled 必须为布尔值。")
+        normalized["jni_enabled"] = value
+    return normalized
+
+
+def validate_delivery_package_dir(package_dir: Path) -> dict[str, object]:
+    base_dir = Path(package_dir).resolve()
+    if not base_dir.exists() or not base_dir.is_dir():
+        raise ValueError("package_dir 必须为存在的目录。")
+
+    acceptance_checklist_path = (base_dir / "acceptance_checklist.json").resolve()
+    version_manifest_path = (base_dir / "version_manifest.json").resolve()
+    delivery_summary_path = (base_dir / "delivery_summary.json").resolve()
+    for path, name in (
+        (acceptance_checklist_path, "acceptance_checklist.json"),
+        (version_manifest_path, "version_manifest.json"),
+        (delivery_summary_path, "delivery_summary.json"),
+    ):
+        if not (path == base_dir or base_dir in path.parents):
+            raise ValueError(f"{name} 路径非法。")
+        if not path.is_file():
+            raise ValueError(f"{name} 不存在。")
+
+    try:
+        acceptance_payload = __import__("json").loads(acceptance_checklist_path.read_text(encoding="utf-8"))
+        version_payload = __import__("json").loads(version_manifest_path.read_text(encoding="utf-8"))
+        summary_payload = __import__("json").loads(delivery_summary_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError("delivery_package 中 JSON 文件解析失败。") from exc
+
+    if not isinstance(acceptance_payload, Mapping):
+        raise ValueError("acceptance_checklist.json 顶层必须为对象。")
+    if not isinstance(version_payload, Mapping):
+        raise ValueError("version_manifest.json 顶层必须为对象。")
+    if not isinstance(summary_payload, Mapping):
+        raise ValueError("delivery_summary.json 顶层必须为对象。")
+
+    normalized_acceptance = validate_acceptance_checklist(acceptance_payload)
+    normalized_version = validate_version_manifest(version_payload)
+    normalized_summary = validate_delivery_summary(summary_payload)
+
+    capability_name = str(normalized_acceptance["capability_name"])
+    model_version = str(normalized_acceptance["model_version"])
+    if normalized_version.get("capability_name") != capability_name or normalized_version.get("model_version") != model_version:
+        raise ValueError("version_manifest capability/model 与 acceptance_checklist 不一致。")
+    if normalized_summary.get("capability_name") != capability_name or normalized_summary.get("model_version") != model_version:
+        raise ValueError("delivery_summary capability/model 与 acceptance_checklist 不一致。")
+
+    return {
+        "package_root": str(base_dir),
+        "acceptance_checklist": normalized_acceptance,
+        "version_manifest": normalized_version,
+        "delivery_summary": normalized_summary,
+    }
+
+
 def _normalize_exported_files(payload: Mapping[str, Any]) -> list[str]:
     exported_files = payload.get("exported_files")
     if not isinstance(exported_files, list) or not exported_files:
@@ -232,13 +466,6 @@ def _validate_exported_files_exist(export_dir: Path, exported_files: list[str]) 
             raise ValueError("exported_files 包含非法路径。")
         if not candidate.exists() or not candidate.is_file():
             raise ValueError(f"exported_files 中声明的文件不存在：{file_name}")
-
-
-def _require_non_negative_int(payload: Mapping[str, Any], field_name: str) -> int:
-    value = payload.get(field_name)
-    if not isinstance(value, int) or value < 0:
-        raise ValueError(f"{field_name} 必须为非负整数。")
-    return value
 
 
 def validate_training_result_summary(

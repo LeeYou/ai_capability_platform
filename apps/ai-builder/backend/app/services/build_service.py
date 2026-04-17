@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.db.models import BuildArtifactModel, BuildManifestModel, BuildTargetModel, BuildTaskModel
 from app.services.audit_service import append_audit_log
 from app.services.catalog_service import get_builder_catalog
-
+from app.services.build_contracts import build_delivery_summary, build_validation_vectors
+from platform_shared.backend import validate_delivery_package_dir
 
 SUPPORTED_TARGETS: dict[str, dict[str, object]] = {
     "linux_x86_64": {
@@ -1848,6 +1849,7 @@ def create_build_task(
         provenance=provenance,
         pre_delivery_results=pre_delivery_results,
     )
+
     task_manifest["delivery_package"] = {
         "directory": str(delivery_package_dir),
         "archive_path": str(delivery_package_archive_path),
@@ -1856,6 +1858,12 @@ def create_build_task(
         "delivery_summary_json_path": str((delivery_package_dir / "delivery_summary.json").resolve()),
         "delivery_summary_md_path": str((delivery_package_dir / "delivery_summary.md").resolve()),
     }
+
+    validated_delivery_package = validate_delivery_package_dir(delivery_package_dir)
+    validated_summary = validated_delivery_package.get("delivery_summary")
+    if isinstance(validated_summary, dict):
+        task_manifest["delivery_package"].setdefault("contract_validation", {})
+        task_manifest["delivery_package"]["contract_validation"]["delivery_summary"] = validated_summary
     _write_text(task_manifest_path, json.dumps(task_manifest, ensure_ascii=False, indent=2, sort_keys=True))
     manifest_row.manifest_json = json.dumps(task_manifest, ensure_ascii=False, sort_keys=True)
     build_task.manifest_path = str(task_manifest_path)

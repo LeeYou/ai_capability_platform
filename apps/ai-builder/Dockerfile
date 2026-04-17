@@ -62,6 +62,7 @@ RUN python3 -m pip install \
     sqlalchemy==2.0.41
 COPY apps/ai-builder/backend/ /workspace/apps/ai-builder/backend/
 COPY apps/ai-prod/ /workspace/apps/ai-prod/
+COPY apps/shared/python/ /workspace/apps/shared/python/
 COPY apps/shared/license_tool_src/ /workspace/apps/shared/license_tool_src/
 COPY scripts/docker/ /workspace/scripts/docker/
 COPY docs/07_部署运维/ /workspace/docs/07_部署运维/
