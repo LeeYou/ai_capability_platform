@@ -8,6 +8,7 @@ import unittest
 from app.config import get_settings, reset_settings_cache
 from app.db.database import get_session_factory, reset_database_cache
 from app.services.annotation_service import create_annotation_task, submit_annotation_task_result
+from app.services.capability_adapters import register_training_adapter
 from app.services.registry_service import bind_dataset_to_capability, initialize_database, register_capability
 from app.services.training_service import (
     append_training_task_log,
@@ -187,6 +188,7 @@ class TrainingServiceTestCase(unittest.TestCase):
             )
 
         self.assertTrue(prepared.workspace_path)
+        self.assertEqual(prepared.execution_mode, "simulated")
         workspace = Path(prepared.workspace_path)
         self.assertTrue((workspace / "train_config.json").is_file())
         self.assertTrue((workspace / "run_training.sh").is_file())
@@ -194,6 +196,7 @@ class TrainingServiceTestCase(unittest.TestCase):
         self.assertTrue((workspace / "training_input.json").is_file())
         self.assertTrue((workspace / "template_bundle.json").is_file())
         self.assertTrue((workspace / "model_export_spec.json").is_file())
+        self.assertEqual(prepared.execution_plan["execution_mode"], "simulated")
 
     def test_training_task_log_snapshot_and_result_summary(self) -> None:
         datasets_root = get_settings().datasets_root
@@ -222,6 +225,9 @@ class TrainingServiceTestCase(unittest.TestCase):
                 training_jobs_root=get_settings().training_jobs_root,
                 task_id=created.task_id,
             )
+            workspace = Path(get_settings().training_jobs_root) / str(created.task_id)
+            export_dir = workspace / "exported_model"
+            (export_dir / "weights.bin").write_text("ok", encoding="utf-8")
             update_training_task_status(session, created.task_id, "running")
             append_training_task_log(
                 session=session,
@@ -233,7 +239,17 @@ class TrainingServiceTestCase(unittest.TestCase):
                 session=session,
                 training_jobs_root=get_settings().training_jobs_root,
                 task_id=created.task_id,
-                result_summary={"best_metric": 0.91, "exported_files": ["weights.bin"]},
+                result_summary={
+                    "best_metric": 0.91,
+                    "task_id": created.task_id,
+                    "capability_name": "invoice_extract",
+                    "task_type": "classification",
+                    "execution_mode": "simulated",
+                    "training_input_path": str((workspace / "training_input.json").resolve()),
+                    "template_bundle_path": str((workspace / "template_bundle.json").resolve()),
+                    "export_dir": str(export_dir.resolve()),
+                    "exported_files": ["weights.bin"],
+                },
             )
             detail = get_training_task_detail(
                 session=session,
@@ -248,7 +264,11 @@ class TrainingServiceTestCase(unittest.TestCase):
 
         self.assertTrue(detail.execution_plan)
         self.assertEqual(detail.execution_plan["resource_profile"], "gpu")
+        self.assertEqual(detail.execution_plan["execution_mode"], "simulated")
+        self.assertEqual(detail.execution_mode, "simulated")
         self.assertEqual(detail.result_summary["best_metric"], 0.91)
+        self.assertEqual(detail.result_summary["execution_mode"], "simulated")
+        self.assertEqual(snapshot.execution_mode, "simulated")
         self.assertTrue(snapshot.latest_logs)
         self.assertIn("epoch=1 acc=0.91", "\n".join(snapshot.latest_logs))
 
@@ -300,11 +320,114 @@ class TrainingServiceTestCase(unittest.TestCase):
 
         self.assertEqual(executed.status, "completed")
         self.assertEqual(executed.task_type, "structured_extraction")
+        self.assertEqual(executed.execution_mode, "simulated")
         self.assertTrue(executed.training_input_path)
         self.assertTrue(executed.template_bundle_path)
         self.assertTrue(executed.export_dir)
         self.assertIn("best_metric", executed.result_summary)
+        self.assertEqual(executed.result_summary["execution_mode"], "simulated")
         self.assertTrue((Path(executed.export_dir) / "weights.bin").is_file())
+
+    def test_record_training_task_result_rejects_missing_export_artifact(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "risk_review").mkdir()
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="risk_review", display_name="Risk Review")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="risk_review",
+                dataset_path="risk_review",
+            )
+            created = create_training_task(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                capability_name="risk_review",
+                task_name="风险训练",
+                framework="pytorch",
+                backend_type="cpu",
+                annotation_task_id=None,
+                train_params={"epochs": 1},
+            )
+            prepare_training_workspace(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                task_id=created.task_id,
+            )
+            workspace = Path(get_settings().training_jobs_root) / str(created.task_id)
+
+            with self.assertRaises(ValueError):
+                record_training_task_result(
+                    session=session,
+                    training_jobs_root=get_settings().training_jobs_root,
+                    task_id=created.task_id,
+                    result_summary={
+                        "task_id": created.task_id,
+                        "capability_name": "risk_review",
+                        "task_type": "classification",
+                        "execution_mode": "simulated",
+                        "training_input_path": str((workspace / "training_input.json").resolve()),
+                        "template_bundle_path": str((workspace / "template_bundle.json").resolve()),
+                        "export_dir": str((workspace / "exported_model").resolve()),
+                        "exported_files": ["missing.bin"],
+                    },
+                )
+
+    def test_execute_training_task_with_real_adapter_marks_execution_mode_real(self) -> None:
+        datasets_root = get_settings().datasets_root
+        (datasets_root / "adapter_demo").mkdir()
+
+        class DemoTrainingAdapter:
+            def execute(self, **kwargs):
+                export_dir = kwargs["export_dir"]
+                (export_dir / "weights.bin").write_text("real-weights", encoding="utf-8")
+                (export_dir / "metrics.json").write_text("{}", encoding="utf-8")
+                (export_dir / "training_manifest.json").write_text("{}", encoding="utf-8")
+                return {
+                    "status": "completed",
+                    "capability_name": kwargs["capability_name"],
+                    "task_type": kwargs["task_type"],
+                    "execution_mode": "real",
+                    "export_dir": str(export_dir.resolve()),
+                    "training_input_path": str((kwargs["workspace_dir"] / "training_input.json").resolve()),
+                    "template_bundle_path": str((kwargs["workspace_dir"] / "template_bundle.json").resolve()),
+                    "exported_files": ["weights.bin", "metrics.json", "training_manifest.json"],
+                    "metrics": {"score": 0.99},
+                }
+
+        register_training_adapter("adapter_demo", DemoTrainingAdapter())
+
+        with get_session_factory()() as session:
+            register_capability(session, capability_name="adapter_demo", display_name="Adapter Demo")
+            bind_dataset_to_capability(
+                session=session,
+                datasets_root=datasets_root,
+                capability_name="adapter_demo",
+                dataset_path="adapter_demo",
+            )
+            created = create_training_task(
+                session=session,
+                training_logs_root=get_settings().training_logs_root,
+                capability_name="adapter_demo",
+                task_name="真实训练",
+                framework="pytorch",
+                backend_type="gpu",
+                annotation_task_id=None,
+                train_params={"epochs": 1},
+            )
+            executed = execute_training_task(
+                session=session,
+                training_jobs_root=get_settings().training_jobs_root,
+                training_logs_root=get_settings().training_logs_root,
+                task_id=created.task_id,
+            )
+
+        self.assertEqual(executed.status, "completed")
+        self.assertEqual(executed.execution_mode, "real")
+        self.assertEqual(executed.execution_plan["execution_mode"], "real")
+        self.assertEqual(executed.result_summary["execution_mode"], "real")
+        self.assertEqual(executed.result_summary["metrics"]["score"], 0.99)
 
 
 if __name__ == "__main__":

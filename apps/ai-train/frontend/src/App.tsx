@@ -43,6 +43,7 @@ type TrainingTaskItem = {
   task_name: string
   dataset_path: string
   status: string
+  execution_mode: string
   framework: string
   backend_type: string
   annotation_task_id?: number | null
@@ -502,6 +503,7 @@ function App() {
                         <div className="workspace-meta-row">
                           <span>{item.capability_name}</span>
                           <span>{item.framework}</span>
+                          <span>{item.execution_mode}</span>
                           <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
                         </div>
                       </button>
@@ -712,6 +714,7 @@ function App() {
                         <div className="workspace-meta-row">
                           <span>{item.capability_name}</span>
                           <span>{item.framework}</span>
+                          <span>{item.execution_mode}</span>
                           <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
                         </div>
                       </button>
@@ -737,6 +740,10 @@ function App() {
                         <article className="workspace-kpi-card">
                           <span>后端</span>
                           <strong>{trainingDetail.backend_type}</strong>
+                        </article>
+                        <article className="workspace-kpi-card">
+                          <span>执行模式</span>
+                          <strong>{trainingDetail.execution_mode}</strong>
                         </article>
                         <article className="workspace-kpi-card">
                           <span>任务类型</span>

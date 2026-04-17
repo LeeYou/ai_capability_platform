@@ -28,10 +28,12 @@
 | T18 | 训练工作台日志 / 指标 / 阶段状态专业化重构 | 已完成 |
 | T19 | 模型资产页与“送测”主流程收口 | 已完成 |
 | T20 | 跨模块对象跳转与首页待办视图收口 | 已完成 |
+| T21 | 训练任务 `execution_mode` 显式化与真实 / 仿真执行路径区分 | 已完成 |
+| T22 | 训练服务分层、事务边界与 shared contract validator 接入 | 已完成 |
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RT-01 ~ RT-05。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RT-01 ~ RT-07。
 
 ## 4. 当前进度更新
 
@@ -48,11 +50,14 @@
 3. 当前已完成 T18：训练工作台已补齐任务阶段态、日志、执行计划、结果摘要与 prepare / execute 主动作。
 4. 当前已完成 T19：模型资产页已突出模型卡片、manifest / runtime contract / delivery metadata 与“送测”动作。
 5. 当前已完成 T20：首页已补齐待处理标注、待送测模型与跨模块导航，使 ai-train 成为全流程起点工作台。
+6. 当前已完成 T21：训练任务 summary、日志快照、execution_plan、result_summary 与训练工作台界面已统一显式输出 `execution_mode`，真实训练适配器路径与仿真回退路径已具备一致的模式标识。
+7. 当前已完成 T22：训练工作区产物生成、训练执行、训练结果写入已拆分为独立子服务，`training_service.py` 收敛为任务编排与状态迁移层；同时 shared contract validator 已新增训练结果摘要校验入口，训练结果落盘前会统一校验 execution_mode、任务标识、关键路径与导出物存在性。
 
 ### 4.3 未完成
 
-1. 暂无；T17-T20 已全部完成，后续如继续推进将进入下一轮研发体验优化。
+1. ai-train 当前模块计划项已全部完成，后续若继续推进，将转入跨模块 shared validator 扩展与前端公共层抽象，不再属于本模块既定 T1-T22 范围。
+2. shared contract validator 当前仅先覆盖训练结果摘要入口，后续仍需在更多模块与更多 contract 类型上继续扩展。
 
 ### 4.4 阶段小结
 
-ai-train 已完成 T17-T20：现已把现有真实标注、训练执行与模型产物能力收口为统一研发工作台，研发人员可以从首页进入标注任务，批量保存 / 提交样本，再进入训练工作台执行 prepare / execute，并最终在模型资产页查看 manifest / runtime contract 后直接送测到 ai-test。经前端 `npm run build && npm run lint` 验证，当前 ai-train Web 工作台重构已完成。
+ai-train 已完成 T17-T22，当前模块计划已经全部收口。本轮实现不只是把 `execution_mode` 做到前后端可见，更进一步把训练后端收敛为任务编排、工作区准备、执行调度、结果校验与结果持久化的清晰分层，并以 shared contract validator 建立训练结果摘要的统一校验入口，确保真实 / 仿真训练路径、导出目录与结果文件的语义更加稳定，也为后续按相同模式推进 ai-test、ai-builder、ai-license-mgr、ai-prod、ai-sdk 提供了第一份可复用范式。

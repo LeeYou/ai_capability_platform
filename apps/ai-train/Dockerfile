@@ -69,6 +69,7 @@ RUN python3 -m pip install \
     Pillow==10.4.0 \
     numpy==1.26.4
 COPY apps/ai-train/backend/ /workspace/backend/
+COPY apps/shared/python/ /workspace/shared/python/
 
 COPY --from=frontend-builder /workspace/apps/ai-train/frontend/dist /workspace/frontend-dist
 

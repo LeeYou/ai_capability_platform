@@ -103,6 +103,7 @@ def _training_item(item) -> TrainingTaskItem:
         task_name=item.task_name,
         dataset_path=item.dataset_path,
         status=item.status,
+        execution_mode=item.execution_mode,
         framework=item.framework,
         backend_type=item.backend_type,
         annotation_task_id=item.annotation_task_id,
@@ -442,6 +443,7 @@ def get_training_task_logs_route(task_id: int, session: Session = Depends(get_db
     return TrainingTaskLogSnapshot(
         task_id=item.task_id,
         status=item.status,
+        execution_mode=item.execution_mode,
         log_path=item.log_path,
         latest_logs=item.latest_logs,
         execution_plan=item.execution_plan,

@@ -75,12 +75,15 @@
 2. 已建立“标注结果 → 训练输入 → 模型导出 → 模型包 manifest”的统一适配器链路，并在训练工作区中输出 `training_input.json`、`template_bundle.json` 与 `model_export_spec.json`。
 3. 已将训练流程从工作区脚手架收敛为可执行的训练运行器与导出链路，支持生成日志、结果摘要与导出目录。
 4. 已建立新增能力模板，统一输出训练模板、测试模板、推理模板、构建模板与 manifest 模板。
+5. 已显式区分真实训练与模板 / 仿真训练路径，在任务、日志、结果摘要、执行计划与前端界面中统一输出 `execution_mode`。
+6. 已将训练领域拆分为任务编排、工作区准备、执行调度、结果写入与契约校验子服务，并开始通过 shared contract validator 收敛结果契约校验与关键事务边界。
 
 ### 9.2 与其他模块的关键契约
 
 1. 向 ai-test 输出稳定的测试样本映射、模型包 manifest 与能力元数据。
 2. 向 ai-builder 输出可直接用于真实插件构建的模型包、manifest、labels、preprocess、validation 产物。
 3. 向 ai-prod / ai-sdk 输出可被 runtime 强消费的模型包字段，而不是只提供展示型元数据。
+4. 已优先复用 shared contract validator 校验训练结果摘要，避免在训练服务内继续散落手写关键字段校验逻辑，并为后续模块复用保留统一入口。
 
 ### 9.3 对应整改编号
 
@@ -89,6 +92,8 @@
 3. RT-03
 4. RT-04
 5. RT-05
+6. RT-06
+7. RT-07
 
 ## 10. Web 产品化设计补充
 

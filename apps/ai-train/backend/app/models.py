@@ -99,6 +99,7 @@ class TrainingTaskItem(BaseModel):
     task_name: str = Field(description="任务名称")
     dataset_path: str = Field(description="数据集路径")
     status: str = Field(description="任务状态")
+    execution_mode: str = Field(description="执行模式，real 表示真实训练，simulated 表示仿真训练")
     framework: str = Field(description="训练框架")
     backend_type: str = Field(description="执行后端")
     annotation_task_id: int | None = Field(default=None, description="来源标注任务 ID")
@@ -143,6 +144,7 @@ class RecordTrainingTaskResultRequest(BaseModel):
 class TrainingTaskLogSnapshot(BaseModel):
     task_id: int = Field(description="训练任务 ID")
     status: str = Field(description="训练任务状态")
+    execution_mode: str = Field(description="执行模式")
     log_path: str | None = Field(default=None, description="日志文件路径")
     latest_logs: list[str] = Field(default_factory=list, description="最近日志片段")
     execution_plan: dict[str, Any] | None = Field(default=None, description="训练执行计划")
