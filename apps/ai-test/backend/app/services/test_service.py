@@ -1,42 +1,26 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
-import time
 
 from sqlalchemy.orm import Session
 
 from app.db.models import TestCaseModel, TestResultModel, TestTaskModel
 from app.services.model_sync_service import get_model_catalog
 from app.services.report_service import generate_test_report
+from app.services.test_execution_service import (
+    TASK_TYPE_OUTPUT_SCHEMAS,
+    build_execution_evidence,
+    execute_case_with_timeout,
+    resolve_execution_backend,
+    resolve_test_execution_mode,
+    simulate_case_execution,
+    validate_expected_output,
+)
 
-
-ALLOWED_BACKENDS = {"auto", "gpu", "cpu"}
-
-# TT12：各任务类型的期望输出 schema 模板（与 ai-train task_contracts 保持一致）
-TASK_TYPE_OUTPUT_SCHEMAS: dict[str, dict[str, object]] = {
-    "classification": {
-        "required_keys": ["label", "score"],
-        "sample_output": {"label": "positive", "score": 0.95},
-    },
-    "detection": {
-        "required_keys": ["objects"],
-        "sample_output": {"objects": [{"label": "face", "bbox": [0, 0, 100, 100], "score": 0.9}]},
-    },
-    "ocr": {
-        "required_keys": ["text"],
-        "sample_output": {"text": "sample text", "regions": [{"text": "sample", "bbox": [0, 0, 50, 20]}]},
-    },
-    "structured_extraction": {
-        "required_keys": ["fields"],
-        "sample_output": {"fields": {"key": "value"}, "confidence": {"key": 0.9}},
-    },
-}
 
 # TT14：各任务类型的模板化回归测试用例定义
 TASK_TYPE_REGRESSION_TEMPLATES: dict[str, list[dict[str, object]]] = {
@@ -92,26 +76,6 @@ def _infer_input_type(input_path: str) -> str:
     return "file"
 
 
-def _list_execution_providers() -> list[str]:
-    if importlib.util.find_spec("onnxruntime") is None:
-        return ["CPUExecutionProvider"]
-
-    import onnxruntime  # type: ignore
-
-    return list(onnxruntime.get_available_providers())
-
-
-def _resolve_execution_backend(requested_backend: str) -> tuple[str, str]:
-    normalized_backend = requested_backend.strip().lower()
-    if normalized_backend not in ALLOWED_BACKENDS:
-        raise ValueError("requested_backend 仅支持 auto/gpu/cpu。")
-
-    providers = _list_execution_providers()
-    if normalized_backend in {"auto", "gpu"} and "CUDAExecutionProvider" in providers:
-        return ("gpu", "CUDAExecutionProvider")
-    return ("cpu", "CPUExecutionProvider")
-
-
 def _safe_input_path(datasets_root: Path, input_path: str) -> str:
     raw_path = Path(input_path).expanduser()
     resolved_path = raw_path.resolve() if raw_path.is_absolute() else (datasets_root / raw_path).resolve()
@@ -161,6 +125,7 @@ def _build_evidence_chain(
     model: dict[str, object],
     model_manifest: dict[str, object] | None,
     task_type: str,
+    execution_metadata: dict[str, object],
 ) -> dict[str, object]:
     """TT13：构建模型 / 插件 / license / revision 统一验收证据链。"""
     source_train_task_id: int | None = None
@@ -195,39 +160,12 @@ def _build_evidence_chain(
         "revision": {
             "note": "如需运行时版本追溯，请参考 ai-prod /api/v1/status revision 字段。"
         },
+        "execution": execution_metadata,
     }
 
 
 def _validate_expected_output(expected_output: str | None, task_type: str) -> dict[str, object]:
-    """TT12：校验测试用例期望输出与任务类型 schema 的兼容性。"""
-    if expected_output is None or expected_output.strip() == "":
-        return {"status": "no_expected_output", "task_type": task_type}
-    schema = TASK_TYPE_OUTPUT_SCHEMAS.get(task_type, {})
-    required_keys = list(schema.get("required_keys", []))
-
-    # 尝试将 expected_output 解析为 JSON 做 schema 对齐校验
-    try:
-        parsed = json.loads(expected_output)
-        if isinstance(parsed, dict) and required_keys:
-            missing = [k for k in required_keys if k not in parsed]
-            if missing:
-                return {
-                    "status": "schema_mismatch",
-                    "task_type": task_type,
-                    "missing_keys": missing,
-                    "hint": f"{task_type} 类型期望输出应包含 {required_keys}",
-                }
-            return {"status": "schema_match", "task_type": task_type}
-    except (ValueError, TypeError):
-        # 非 JSON 格式：视为标签字符串，仅对 classification 类型有效
-        if task_type == "classification":
-            return {"status": "label_string", "task_type": task_type}
-        return {
-            "status": "schema_warning",
-            "task_type": task_type,
-            "hint": f"{task_type} 类型建议使用 JSON 格式期望输出",
-        }
-    return {"status": "ok", "task_type": task_type}
+    return validate_expected_output(expected_output, task_type)
 
 
 def _simulate_case_execution(
@@ -239,74 +177,14 @@ def _simulate_case_execution(
     task_type: str = "classification",
     model_artifact_path: str = "",
 ) -> dict[str, object]:
-    """TT12：任务类型感知的推理执行。
-
-    优先尝试调用真实能力适配器执行推理；无适配器时回退到仿真推理。
-    根据 task_type 生成与训练标注 schema 对齐的输出，确保测试样本输入与
-    训练标注 schema 保持一致性，便于后续期望输出校验。
-    """
-    # ── 尝试真实推理适配器 ──
-    try:
-        from app.services.capability_adapters import get_test_adapter
-
-        adapter = get_test_adapter(capability_name)
-        if adapter is not None and model_artifact_path:
-            return adapter.infer(
-                capability_name=capability_name,
-                model_version=model_version,
-                model_artifact_path=model_artifact_path,
-                input_path=input_path,
-                task_type=task_type,
-            )
-    except Exception:
-        pass  # 适配器不可用时静默回退到仿真推理
-
-    # ── 回退：仿真推理 ──
-    started = time.perf_counter()
-    digest = hashlib.sha256(f"{capability_name}:{model_version}:{case_name}:{input_path}".encode("utf-8")).hexdigest()
-    score = round(0.5 + (int(digest[2:6], 16) / 65535) * 0.49, 4)
-    duration_ms = max(1, int((time.perf_counter() - started) * 1000))
-
-    if task_type == "detection":
-        label = "person" if int(digest[:2], 16) % 2 == 0 else "face"
-        x1 = int(digest[6:8], 16)
-        y1 = int(digest[8:10], 16)
-        x2 = x1 + int(digest[10:12], 16) + 20
-        y2 = y1 + int(digest[12:14], 16) + 20
-        raw_output = {
-            "objects": [{"label": label, "bbox": [x1, y1, x2, y2], "score": score}],
-        }
-        actual_output = label
-    elif task_type == "ocr":
-        sample_texts = ["invoice", "contract", "report", "form"]
-        text_idx = int(digest[:2], 16) % len(sample_texts)
-        raw_output = {
-            "text": sample_texts[text_idx],
-            "regions": [{"text": sample_texts[text_idx], "bbox": [0, 0, 100, 20]}],
-        }
-        actual_output = sample_texts[text_idx]
-    elif task_type == "structured_extraction":
-        raw_output = {
-            "fields": {"field_0": f"value_{digest[:4]}", "field_1": f"value_{digest[4:8]}"},
-            "confidence": {"field_0": score, "field_1": round(score - 0.05, 4)},
-        }
-        actual_output = json.dumps(raw_output["fields"], ensure_ascii=False, sort_keys=True)
-    else:
-        # classification（默认）
-        label = "positive" if int(digest[:2], 16) % 2 == 0 else "negative"
-        raw_output = {"label": label, "score": score}
-        actual_output = label
-
-    raw_output["provider"] = provider
-    raw_output["task_type"] = task_type
-    return {
-        "actual_output": actual_output,
-        "score": score,
-        "provider": provider,
-        "duration_ms": duration_ms,
-        "raw_output": raw_output,
-        "task_type": task_type,
-    }
+    return simulate_case_execution(
+        capability_name=capability_name,
+        model_version=model_version,
+        provider=provider,
+        case_name=case_name,
+        input_path=input_path,
+        task_type=task_type,
+    )
 
 
 def _run_case_with_timeout(
@@ -319,24 +197,41 @@ def _run_case_with_timeout(
     task_type: str = "classification",
     model_artifact_path: str = "",
 ) -> dict[str, object]:
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            _simulate_case_execution,
-            capability_name,
-            model_version,
-            provider,
-            case_name,
-            input_path,
-            task_type,
-            model_artifact_path,
-        )
+    return execute_case_with_timeout(
+        capability_name=capability_name,
+        model_version=model_version,
+        provider=provider,
+        case_name=case_name,
+        input_path=input_path,
+        timeout_seconds=timeout_seconds,
+        task_type=task_type,
+        model_artifact_path=model_artifact_path,
+    )
+
+
+def _task_execution_metadata(task: TestTaskModel) -> tuple[str, str | None, dict[str, object] | None]:
+    if task.evidence_json:
         try:
-            return future.result(timeout=timeout_seconds)
-        except FutureTimeoutError as exc:
-            raise TimeoutError("测试执行超时。") from exc
+            evidence_chain = json.loads(task.evidence_json)
+            if isinstance(evidence_chain, dict):
+                execution = evidence_chain.get("execution")
+                if isinstance(execution, dict):
+                    execution_mode = execution.get("execution_mode")
+                    execution_risk = execution.get("risk_notice")
+                    if isinstance(execution_mode, str):
+                        return (
+                            execution_mode,
+                            execution_risk if isinstance(execution_risk, str) and execution_risk else None,
+                            evidence_chain,
+                        )
+                return ("simulated", None, evidence_chain)
+        except (ValueError, TypeError):
+            pass
+    return ("simulated", None, None)
 
 
 def _task_item(task: TestTaskModel) -> dict[str, object]:
+    execution_mode, execution_risk, _ = _task_execution_metadata(task)
     return {
         "task_id": task.id,
         "task_type": task.task_type,
@@ -350,6 +245,8 @@ def _task_item(task: TestTaskModel) -> dict[str, object]:
         "passed_cases": task.passed_cases,
         "failed_cases": task.failed_cases,
         "error_message": task.error_message,
+        "execution_mode": execution_mode,
+        "execution_risk": execution_risk,
         "report_id": task.report.id if task.report is not None else None,
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
@@ -374,12 +271,8 @@ def _task_detail(task: TestTaskModel) -> dict[str, object]:
         }
         for case in task.cases
     ]
-    # TT13：附加 evidence_chain 到任务详情（从 evidence_json 字段恢复）
-    if hasattr(task, "evidence_json") and task.evidence_json:
-        try:
-            detail["evidence_chain"] = json.loads(task.evidence_json)
-        except (ValueError, TypeError):
-            detail["evidence_chain"] = None
+    _, _, evidence_chain = _task_execution_metadata(task)
+    detail["evidence_chain"] = evidence_chain
     return detail
 
 
@@ -405,11 +298,22 @@ def create_test_task(
     catalog = get_model_catalog(model_catalog_snapshot_path, ai_train_api_base_url)
     model = _resolve_model(catalog, capability_name, model_version)
     execution_backend, provider = _resolve_execution_backend(requested_backend)
+    execution_mode, execution_risk = resolve_test_execution_mode(capability_name)
 
-    # TT12/TT13：加载模型 manifest，提取任务类型与证据链
     model_manifest = _load_model_manifest(model)
     capability_task_type = _extract_task_type(model, model_manifest)
-    evidence_chain = _build_evidence_chain(model, model_manifest, capability_task_type)
+    evidence_chain = _build_evidence_chain(
+        model,
+        model_manifest,
+        capability_task_type,
+        build_execution_evidence(
+            execution_mode=execution_mode,
+            execution_backend=execution_backend,
+            provider=provider,
+            requested_backend=requested_backend,
+            execution_risk=execution_risk,
+        ),
+    )
 
     task = TestTaskModel(
         task_type=task_type,
@@ -425,13 +329,12 @@ def create_test_task(
         failed_cases=0,
         started_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
-    # TT13：将 evidence_chain 序列化写入任务记录（如模型支持该字段）
     if hasattr(task, "evidence_json"):
         task.evidence_json = json.dumps(evidence_chain, ensure_ascii=False, sort_keys=True)
     session.add(task)
-    session.commit()
-    session.refresh(task)
+    session.flush()
 
+    persisted_cases: list[TestCaseModel] = []
     for case_payload in cases:
         test_case = TestCaseModel(
             task_id=task.id,
@@ -441,10 +344,13 @@ def create_test_task(
             expected_output=case_payload.expected_output,
         )
         session.add(test_case)
-        session.commit()
-        session.refresh(test_case)
+        persisted_cases.append(test_case)
+    session.flush()
 
-        # TT12：校验期望输出与任务类型 schema 兼容性
+    persisted_results: list[TestResultModel] = []
+    final_execution_mode = execution_mode
+    final_execution_risk = execution_risk
+    for test_case, case_payload in zip(persisted_cases, cases, strict=False):
         schema_check = _validate_expected_output(case_payload.expected_output, capability_task_type)
 
         try:
@@ -461,7 +367,15 @@ def create_test_task(
             actual_output = str(execution["actual_output"])
             passed = test_case.expected_output in {None, "", actual_output}
             raw_output = dict(execution["raw_output"])
+            case_execution_mode = str(execution.get("execution_mode") or "simulated")
+            case_execution_risk = execution.get("execution_risk")
+            if case_execution_mode == "simulated":
+                final_execution_mode = "simulated"
+            if isinstance(case_execution_risk, str) and case_execution_risk:
+                final_execution_risk = case_execution_risk
             raw_output["schema_check"] = schema_check
+            raw_output["execution_mode"] = case_execution_mode
+            raw_output["execution_risk"] = case_execution_risk
             raw_output["evidence_chain_ref"] = {
                 "task_id": task.id,
                 "source_train_task_id": evidence_chain["model"]["source_train_task_id"],
@@ -496,10 +410,20 @@ def create_test_task(
                 error_message="测试执行超时。",
             )
             task.failed_cases += 1
+            if final_execution_risk is None:
+                final_execution_risk = "测试任务发生超时，请结合真实/仿真执行模式复核结果。"
 
         session.add(result)
-        session.commit()
+        persisted_results.append(result)
 
+    evidence_chain["execution"] = build_execution_evidence(
+        execution_mode=final_execution_mode,
+        execution_backend=execution_backend,
+        provider=provider,
+        requested_backend=requested_backend,
+        execution_risk=final_execution_risk,
+    )
+    task.evidence_json = json.dumps(evidence_chain, ensure_ascii=False, sort_keys=True)
     task.status = "completed"
     task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()

@@ -6,6 +6,7 @@ from typing import Any
 
 
 ALLOWED_EXECUTION_MODES = {"real", "simulated"}
+ALLOWED_REPORT_TEMPLATE_TYPES = {"research", "delivery"}
 
 
 def _require_non_empty_string(payload: Mapping[str, Any], field_name: str) -> str:
@@ -35,6 +36,87 @@ def _normalize_exported_files(payload: Mapping[str, Any]) -> list[str]:
     return normalized
 
 
+def validate_test_report_summary(
+    payload: Mapping[str, Any],
+    *,
+    expected_task_id: int,
+    expected_capability_name: str,
+    expected_model_version: str,
+) -> dict[str, object]:
+    task_id = payload.get("task_id", expected_task_id)
+    if task_id != expected_task_id:
+        raise ValueError("task_id 与当前测试任务不匹配。")
+
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    if capability_name != expected_capability_name:
+        raise ValueError("capability_name 与当前测试任务不匹配。")
+
+    model_version = _require_non_empty_string(payload, "model_version")
+    if model_version != expected_model_version:
+        raise ValueError("model_version 与当前测试任务不匹配。")
+
+    task_type = _require_non_empty_string(payload, "task_type")
+    execution_backend = _require_non_empty_string(payload, "execution_backend")
+
+    execution_mode = payload.get("execution_mode")
+    if not isinstance(execution_mode, str) or execution_mode not in ALLOWED_EXECUTION_MODES:
+        raise ValueError("execution_mode 非法。")
+
+    total_cases = _require_non_negative_int(payload, "total_cases")
+    passed_cases = _require_non_negative_int(payload, "passed_cases")
+    failed_cases = _require_non_negative_int(payload, "failed_cases")
+    if passed_cases + failed_cases > total_cases:
+        raise ValueError("passed_cases 与 failed_cases 超出 total_cases。")
+
+    available_template_types = payload.get("available_template_types")
+    if not isinstance(available_template_types, list) or not available_template_types:
+        raise ValueError("available_template_types 必须为非空数组。")
+    normalized_template_types: list[str] = []
+    for index, item in enumerate(available_template_types):
+        if not isinstance(item, str) or item not in ALLOWED_REPORT_TEMPLATE_TYPES:
+            raise ValueError(f"available_template_types[{index}] 非法。")
+        normalized_template_types.append(item)
+
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise ValueError("results 必须为数组。")
+
+    evidence_chain = payload.get("evidence_chain")
+    if evidence_chain is not None and not isinstance(evidence_chain, Mapping):
+        raise ValueError("evidence_chain 必须为对象。")
+
+    normalized: dict[str, object] = {
+        "task_id": expected_task_id,
+        "task_type": task_type,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "execution_backend": execution_backend,
+        "execution_mode": execution_mode,
+        "total_cases": total_cases,
+        "passed_cases": passed_cases,
+        "failed_cases": failed_cases,
+        "available_template_types": normalized_template_types,
+        "results": results,
+    }
+
+    execution_risk = payload.get("execution_risk")
+    if execution_risk is not None:
+        if not isinstance(execution_risk, str) or not execution_risk.strip():
+            raise ValueError("execution_risk 必须为非空字符串。")
+        normalized["execution_risk"] = execution_risk.strip()
+
+    if evidence_chain is not None:
+        normalized["evidence_chain"] = dict(evidence_chain)
+
+    report_templates = payload.get("report_templates")
+    if report_templates is not None:
+        if not isinstance(report_templates, Mapping):
+            raise ValueError("report_templates 必须为对象。")
+        normalized["report_templates"] = dict(report_templates)
+
+    return normalized
+
+
 def _validate_exported_files_exist(export_dir: Path, exported_files: list[str]) -> None:
     for file_name in exported_files:
         candidate = (export_dir / file_name).resolve()
@@ -42,6 +124,13 @@ def _validate_exported_files_exist(export_dir: Path, exported_files: list[str]) 
             raise ValueError("exported_files 包含非法路径。")
         if not candidate.exists() or not candidate.is_file():
             raise ValueError(f"exported_files 中声明的文件不存在：{file_name}")
+
+
+def _require_non_negative_int(payload: Mapping[str, Any], field_name: str) -> int:
+    value = payload.get(field_name)
+    if not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} 必须为非负整数。")
+    return value
 
 
 def validate_training_result_summary(

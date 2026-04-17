@@ -120,6 +120,8 @@ class TestTaskItem(BaseModel):
     model_version: str = Field(description="模型版本")
     requested_backend: str = Field(description="期望后端")
     execution_backend: str | None = Field(default=None, description="实际后端")
+    execution_mode: str = Field(description="执行模式")
+    execution_risk: str | None = Field(default=None, description="执行风险提示")
     timeout_seconds: int = Field(description="超时时间")
     status: str = Field(description="任务状态")
     total_cases: int = Field(description="总用例数")
@@ -133,6 +135,7 @@ class TestTaskItem(BaseModel):
 
 class TestTaskDetailResponse(TestTaskItem):
     cases: list[TestCaseResultItem] = Field(default_factory=list)
+    evidence_chain: dict[str, Any] | None = Field(default=None, description="执行证据链")
 
 
 class TestTaskListResponse(BaseModel):
@@ -199,6 +202,8 @@ class TestReportItem(BaseModel):
     capability_name: str = Field(description="能力标识")
     model_version: str = Field(description="模型版本")
     status: str = Field(description="报告状态")
+    execution_mode: str = Field(description="执行模式")
+    execution_risk: str | None = Field(default=None, description="执行风险提示")
     passed_cases: int = Field(description="通过用例数")
     failed_cases: int = Field(description="失败用例数")
     json_report_path: str = Field(description="JSON 报告路径")

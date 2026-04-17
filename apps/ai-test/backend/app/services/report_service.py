@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import TestReportModel, TestResultModel, TestTaskModel
 from app.services.baseline_service import get_performance_baseline
+from platform_shared.backend.contracts import validate_test_report_summary
 
 
 class TestReportNotFoundError(ValueError):
@@ -60,6 +61,8 @@ def _report_item(task: TestTaskModel, report: TestReportModel) -> dict[str, obje
         "capability_name": task.capability_name,
         "model_version": task.model_version,
         "status": report.status,
+        "execution_mode": summary.get("execution_mode", "simulated"),
+        "execution_risk": summary.get("execution_risk"),
         "passed_cases": summary["passed_cases"],
         "failed_cases": summary["failed_cases"],
         "json_report_path": report.json_report_path,
@@ -200,12 +203,26 @@ def _compose_summary(session: Session, task: TestTaskModel, results: list[TestRe
         except (ValueError, TypeError):
             evidence_chain = None
 
+    execution_mode = "simulated"
+    execution_risk: str | None = None
+    if isinstance(evidence_chain, dict):
+        execution = evidence_chain.get("execution")
+        if isinstance(execution, dict):
+            raw_execution_mode = execution.get("execution_mode")
+            if isinstance(raw_execution_mode, str):
+                execution_mode = raw_execution_mode
+            raw_execution_risk = execution.get("risk_notice")
+            if isinstance(raw_execution_risk, str) and raw_execution_risk:
+                execution_risk = raw_execution_risk
+
     return {
         "task_id": task.id,
         "task_type": task.task_type,
         "capability_name": task.capability_name,
         "model_version": task.model_version,
         "execution_backend": task.execution_backend,
+        "execution_mode": execution_mode,
+        "execution_risk": execution_risk,
         "total_cases": task.total_cases,
         "passed_cases": task.passed_cases,
         "failed_cases": task.failed_cases,
@@ -253,9 +270,13 @@ def _render_html_report(summary: dict[str, object]) -> str:
         f"<p>报告视角：{escape(template_type)}</p>",
         f"<p>能力：{escape(str(summary.get('capability_name', '')))}</p>",
         f"<p>模型版本：{escape(str(summary.get('model_version', '')))}</p>",
+        f"<p>执行模式：{escape(str(summary.get('execution_mode', 'simulated')))}</p>",
         f"<p>通过：{escape(str(summary.get('passed_cases', 0)))} / 失败：{escape(str(summary.get('failed_cases', 0)))}</p>",
         f"<p>{focus}</p>",
     ]
+    execution_risk = summary.get("execution_risk")
+    if isinstance(execution_risk, str) and execution_risk:
+        body_lines.append(f"<p>风险提示：{escape(execution_risk)}</p>")
     if template_type == "delivery":
         checklist = template_summary.get("checklist", [])
         body_lines.extend(
@@ -297,7 +318,12 @@ def generate_test_report(session: Session, test_reports_root: Path, task_id: int
         .all()
     )
     report_dir = _report_dir(test_reports_root, task.id)
-    summary = _compose_summary(session, task, results)
+    summary = validate_test_report_summary(
+        _compose_summary(session, task, results),
+        expected_task_id=task.id,
+        expected_capability_name=task.capability_name,
+        expected_model_version=task.model_version,
+    )
     default_summary = _project_summary(summary, "research")
 
     json_report_path = report_dir / "report.json"

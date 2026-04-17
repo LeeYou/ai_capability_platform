@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.models import AcceptanceTaskModel, TestCaseModel, TestResultModel, TestTaskModel
 from app.services.baseline_service import get_performance_baseline
 from app.services.report_service import generate_test_report
+from app.services.test_execution_service import build_execution_evidence
 
 
 class AcceptanceTaskNotFoundError(ValueError):
@@ -279,6 +280,19 @@ def create_acceptance_task(
         passed_cases=0,
         failed_cases=0,
         started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    task.evidence_json = json.dumps(
+        {
+            "execution": build_execution_evidence(
+                execution_mode="real",
+                execution_backend="api",
+                provider="subprocess",
+                requested_backend="api",
+                execution_risk=None,
+            )
+        },
+        ensure_ascii=False,
+        sort_keys=True,
     )
     session.add(task)
     session.commit()

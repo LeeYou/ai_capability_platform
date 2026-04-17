@@ -8,6 +8,7 @@ import unittest
 
 from app.config import get_settings, reset_settings_cache
 from app.db.database import get_session_factory, reset_database_cache
+from app.services.capability_adapters import register_test_adapter
 from app.services.model_sync_service import write_model_catalog_snapshot
 from app.services.report_service import export_test_report, get_test_report
 from app.services.test_service import (
@@ -152,12 +153,16 @@ class TestServiceTestCase(unittest.TestCase):
         self.assertEqual(delivery_report["active_template_type"], "delivery")
         self.assertIn("report_templates", report["summary"])
         self.assertIn("template_summary", delivery_report["summary"])
+        self.assertEqual(payload["execution_mode"], "simulated")
+        self.assertIsNotNone(payload["execution_risk"])
+        self.assertEqual(report["execution_mode"], "simulated")
         # TT13：验证报告 summary 中包含 evidence_chain
         self.assertIn("evidence_chain", report["summary"])
         self.assertIsNotNone(report["summary"]["evidence_chain"])
         evidence = report["summary"]["evidence_chain"]
         self.assertIn("model", evidence)
         self.assertEqual(evidence["model"]["capability_name"], "ocr_review")
+        self.assertEqual(evidence["execution"]["execution_mode"], "simulated")
         # TT12：验证 task_type 从 manifest 中正确提取（ocr）
         self.assertEqual(evidence["model"]["task_type"], "ocr")
         self.assertEqual(evidence["model"]["source_train_task_id"], 5)
@@ -186,6 +191,119 @@ class TestServiceTestCase(unittest.TestCase):
         self.assertEqual(payload["execution_backend"], "cpu")
         self.assertEqual(len(items), 1)
         self.assertEqual(len(detail["cases"]), 2)
+
+    def test_real_adapter_task_marks_execution_mode_real(self) -> None:
+        adapter_model_dir = self.host_root / "models" / "adapter_demo" / "v2"
+        adapter_model_dir.mkdir(parents=True)
+        (adapter_model_dir / "manifest.json").write_text(
+            json.dumps({
+                "capability_name": "adapter_demo",
+                "model_version": "v2",
+                "task_type": "classification",
+                "source_train_task_id": 8,
+                "backend_type": "cpu",
+                "status": "ready",
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        write_model_catalog_snapshot(
+            snapshot_path=get_settings().model_catalog_snapshot_path,
+            models=[
+                {
+                    "capability_name": "ocr_review",
+                    "model_version": "v1.0.0",
+                    "source_training_task_id": 5,
+                    "artifact_path": str((self.host_root / "models" / "ocr_review" / "v1.0.0").resolve()),
+                    "manifest_path": str((self.host_root / "models" / "ocr_review" / "v1.0.0" / "manifest.json").resolve()),
+                    "backend_type": "cpu",
+                    "checksum": "abc123",
+                    "status": "ready",
+                },
+                {
+                    "capability_name": "face_detect",
+                    "model_version": "v1_0_0",
+                    "source_training_task_id": 42,
+                    "artifact_path": str((self.host_root / "models" / "face_detect" / "v1_0_0").resolve()),
+                    "manifest_path": str((self.host_root / "models" / "face_detect" / "v1_0_0" / "manifest.json").resolve()),
+                    "backend_type": "onnxruntime",
+                    "checksum": "def456",
+                    "status": "ready",
+                },
+                {
+                    "capability_name": "adapter_demo",
+                    "model_version": "v2",
+                    "source_training_task_id": 8,
+                    "artifact_path": str(adapter_model_dir.resolve()),
+                    "manifest_path": str((adapter_model_dir / "manifest.json").resolve()),
+                    "backend_type": "cpu",
+                    "checksum": "ghi789",
+                    "status": "ready",
+                },
+            ],
+            capabilities=[
+                {
+                    "capability_name": "ocr_review",
+                    "display_name": "OCR Review",
+                    "dataset_path": "ocr_review",
+                    "dataset_status": "ready",
+                    "source": "manual",
+                },
+                {
+                    "capability_name": "face_detect",
+                    "display_name": "Face Detect",
+                    "dataset_path": "face_detect",
+                    "dataset_status": "ready",
+                    "source": "manual",
+                },
+                {
+                    "capability_name": "adapter_demo",
+                    "display_name": "Adapter Demo",
+                    "dataset_path": "adapter_demo",
+                    "dataset_status": "ready",
+                    "source": "manual",
+                },
+            ],
+        )
+        (self.host_root / "datasets" / "adapter_demo").mkdir()
+        (self.host_root / "datasets" / "adapter_demo" / "sample.txt").write_text("demo", encoding="utf-8")
+
+        class DemoTestAdapter:
+            def infer(self, **kwargs):
+                return {
+                    "actual_output": "positive",
+                    "score": 0.99,
+                    "raw_output": {"label": "positive", "score": 0.99},
+                    "duration_ms": 12,
+                }
+
+        register_test_adapter("adapter_demo", DemoTestAdapter())
+
+        with get_session_factory()() as session:
+            payload = create_test_task(
+                session=session,
+                model_catalog_snapshot_path=get_settings().model_catalog_snapshot_path,
+                ai_train_api_base_url=get_settings().ai_train_api_base_url,
+                datasets_root=get_settings().datasets_root,
+                test_reports_root=get_settings().test_reports_root,
+                task_type="single",
+                capability_name="adapter_demo",
+                model_version="v2",
+                requested_backend="cpu",
+                timeout_seconds=10,
+                cases=[
+                    TestCaseInputPayload(
+                        case_name="真实推理样例",
+                        input_path="adapter_demo/sample.txt",
+                        expected_output="positive",
+                    )
+                ],
+            )
+            report = get_test_report(session, int(payload["report_id"]))
+
+        self.assertEqual(payload["execution_mode"], "real")
+        self.assertIsNone(payload["execution_risk"])
+        self.assertEqual(report["execution_mode"], "real")
+        self.assertEqual(report["summary"]["execution_mode"], "real")
 
     def test_export_report_copies_to_exports(self) -> None:
         with get_session_factory()() as session:

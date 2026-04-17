@@ -39,6 +39,8 @@ type TestTaskItem = {
   model_version: string
   requested_backend: string
   execution_backend: string | null
+  execution_mode: string
+  execution_risk: string | null
   timeout_seconds: number
   status: string
   total_cases: number
@@ -52,6 +54,7 @@ type TestTaskItem = {
 
 type TestTaskDetail = TestTaskItem & {
   cases: TestCaseResultItem[]
+  evidence_chain: Record<string, unknown> | null
 }
 
 type AcceptanceScriptResultItem = {
@@ -101,6 +104,8 @@ type TestReportItem = {
   capability_name: string
   model_version: string
   status: string
+  execution_mode: string
+  execution_risk: string | null
   passed_cases: number
   failed_cases: number
   available_template_types: Array<'research' | 'delivery'>
@@ -746,6 +751,7 @@ function App() {
                         <div className="workspace-meta-row">
                           <span>{item.capability_name}</span>
                           <span>{item.model_version}</span>
+                          <span>{item.execution_mode}</span>
                           <span>{item.passed_cases}/{item.total_cases} 通过</span>
                           <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
                         </div>
@@ -862,7 +868,12 @@ function App() {
                           <span>实际后端</span>
                           <strong>{selectedTask.execution_backend ?? '-'}</strong>
                         </article>
+                        <article className="workspace-kpi-card">
+                          <span>执行模式</span>
+                          <strong>{selectedTask.execution_mode}</strong>
+                        </article>
                       </div>
+                      {selectedTask.execution_risk && <div className="workspace-empty">风险提示：{selectedTask.execution_risk}</div>}
                       <div className="workspace-table-wrap">
                         <table className="workspace-table">
                           <thead>
@@ -1008,6 +1019,7 @@ function App() {
                         <strong>任务 #{item.task_id} / {item.task_type}</strong>
                         <div className="workspace-meta-row">
                           <span>{item.capability_name}</span>
+                          <span>{item.execution_mode}</span>
                           <span>{item.passed_cases}/{item.total_cases} 通过</span>
                           <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
                         </div>
@@ -1163,6 +1175,7 @@ function App() {
                         <strong>报告 #{item.report_id} / {item.capability_name}</strong>
                         <div className="workspace-meta-row">
                           <span>{item.model_version}</span>
+                          <span>{item.execution_mode}</span>
                           <span>{item.passed_cases}/{item.passed_cases + item.failed_cases} 通过</span>
                           <span className={`status-pill ${item.failed_cases === 0 ? 'good' : 'warn'}`}>
                             {item.failed_cases === 0 ? '可推进' : '需复核'}
@@ -1200,7 +1213,12 @@ function App() {
                           <span>当前视角</span>
                           <strong>{reportTemplateType}</strong>
                         </article>
+                        <article className="workspace-kpi-card">
+                          <span>执行模式</span>
+                          <strong>{selectedReport.execution_mode}</strong>
+                        </article>
                       </div>
+                      {selectedReport.execution_risk && <div className="workspace-empty">风险提示：{selectedReport.execution_risk}</div>}
                       <pre className="workspace-code-block">{JSON.stringify(selectedReport.summary, null, 2)}</pre>
                       <div className="workspace-action-row">
                         <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'json')}>导出 JSON</a>
