@@ -23,7 +23,7 @@
 
 ## 3. 进度维护要求
 
-每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RS-01 ~ RS-02。
+每次开发前后更新状态、风险、阶段小结，并同步对照 `docs/05_评审/代码逻辑自洽整改清单.md` 中 RS-01 ~ RS-03。
 
 ## 4. 当前进度更新
 
@@ -31,17 +31,18 @@
 
 1. 已完成 SDK 基础版工程骨架、共享 ABI 头文件、Linux/Windows/JNI 包生成、模型包/license/头文件/动态库复制、文档与示例工程生成。
 2. 已完成基础版 Docker、测试与构建校验。
+3. 已完成单机交付 SDK 标准化交付目录、工具、文档与验收一致性收口。
+4. 已完成与 ai-builder `delivery_package/` 的目录命名与验收物料对齐：SDK 包已按 `sdk_*` 标准目录输出，并附带 `tools/license_tool`、验收清单、部署说明与快速校验脚本。
+5. 已补齐 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，进一步对齐 ai-builder 摘要 schema 与交付复审入口。
+6. 已完成 package 级 `acceptance_checklist.json`、`version_manifest.json`、`delivery_summary.json` 与 shared schema 对齐，checksum 字段命名已与 ai-builder 收敛。
+7. 已完成 S10：SDK 内 `tools/license_tool` 已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json`，manifest/README/验收清单/校验脚本已同步对齐 ai-prod / ai-license-mgr 的稳定授权诊断语义。
+8. 已完成 S11：SDK 包生成已强依赖 ai-builder 交付目录（`lib/include/license` 必须存在），SDK manifest 中附带 `source_builder_manifest`，实现了与 ai-builder 真实交付链产物的一致性收敛。
+9. 已完成 S12：SDK 包内已内置 `validation/verify_sdk_package.py` 校验脚本，可验证标准目录结构、manifest、checksums、LICENSE_DIAGNOSTICS.json 与 VALIDATION_VECTORS.json 齐全；已生成 `sample_c_api.c`、`CMakeLists.txt`（Linux/Windows/JNI）和 `NativeBridge.java` 示例工程；后端单元测试已覆盖校验脚本执行通过的端到端回归。
+10. 已完成基线验证：ai-sdk 后端单元测试（全部 5 个测试用例）均已通过，stage_status 已同步更新为 S7–S12 全部 completed。
 
 ### 4.2 进行中
 
-1. 当前阶段已完成单机交付 SDK 标准化交付目录、工具、文档与验收一致性收口。
-2. 当前已完成与 ai-builder `delivery_package/` 的目录命名与验收物料对齐：SDK 包已按 `sdk_*` 标准目录输出，并附带 `tools/license_tool`、验收清单、部署说明与快速校验脚本。
-3. 当前已继续补齐 package 级 `version_manifest.json`、`delivery_summary.json`、`delivery_summary.md`，进一步对齐 ai-builder 摘要 schema 与交付复审入口。
-4. 当前已完成 package 级 `acceptance_checklist.json`、`version_manifest.json`、`delivery_summary.json` 与 shared schema 对齐，checksum 字段命名已与 ai-builder 收敛。
-5. 当前已完成 S10：SDK 内 `tools/license_tool` 已附带 `LICENSE_DIAGNOSTICS.json`、`VALIDATION_VECTORS.json`，manifest/README/验收清单/校验脚本已同步对齐 ai-prod / ai-license-mgr 的稳定授权诊断语义。
-7. 当前已完成 S11：SDK 包生成已强依赖 ai-builder 交付目录（`lib/include/license` 必须存在），SDK manifest 中附带 `source_builder_manifest`，实现了与 ai-builder 真实交付链产物的一致性收敛。
-8. 当前已完成 S12：SDK 包内已内置 `validation/verify_sdk_package.py` 校验脚本，可验证标准目录结构、manifest、checksums、LICENSE_DIAGNOSTICS.json 与 VALIDATION_VECTORS.json 齐全；已生成 `sample_c_api.c`、`CMakeLists.txt`（Linux/Windows/JNI）和 `NativeBridge.java` 示例工程；后端单元测试已覆盖校验脚本执行通过的端到端回归。
-9. 当前已完成基线验证：ai-sdk 后端单元测试（全部 5 个测试用例）均已通过，stage_status 已同步更新为 S7–S12 全部 completed。
+1. 暂无。
 
 ### 4.3 未完成
 

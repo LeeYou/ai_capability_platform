@@ -100,6 +100,38 @@ def validate_license_tool_release_bundle(bundle_dir: Path) -> dict[str, object]:
     }
 
 
+def validate_sdk_target_bundle(target_dir: Path) -> dict[str, object]:
+    base_dir = Path(target_dir).resolve()
+    if not base_dir.exists() or not base_dir.is_dir():
+        raise ValueError("target_dir 必须为存在的目录。")
+
+    required_paths = (
+        "lib",
+        "include",
+        "models",
+        "licenses",
+        "docs",
+        "examples",
+        "manifest/manifest.json",
+        "checksums.txt",
+        "validation/verify_sdk_package.py",
+        "tools/license_tool",
+    )
+    missing = [rel for rel in required_paths if not (base_dir / rel).exists()]
+    if missing:
+        raise ValueError(f"SDK 目标目录缺少必需路径：{missing}")
+
+    license_tool_dir = (base_dir / "tools" / "license_tool").resolve()
+    if not (license_tool_dir == base_dir or base_dir in license_tool_dir.parents):
+        raise ValueError("license_tool 目录路径非法。")
+
+    license_tool_payload = validate_license_tool_release_bundle(license_tool_dir)
+    return {
+        "sdk_root": str(base_dir),
+        "license_tool": license_tool_payload,
+    }
+
+
 def _normalize_exported_files(payload: Mapping[str, Any]) -> list[str]:
     exported_files = payload.get("exported_files")
     if not isinstance(exported_files, list) or not exported_files:

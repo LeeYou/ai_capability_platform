@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import SdkArtifactModel, SdkPackageModel, SdkTargetModel
 from app.services.audit_service import append_audit_log
+from app.services.sdk_validation_service import validate_sdk_target_bundle
 from app.services.validation_contracts import DIAGNOSTICS_VERSION, build_validation_contract, build_validation_vectors
 
 
@@ -1041,6 +1042,8 @@ def create_sdk_package(
             _write_text(examples_dir / "NativeBridge.java", _render_java_example(safe_capability_name))
         _copy_license_tool_bundle(tools_dir / "license_tool")
         _write_verify_sdk_package_script(validation_dir)
+
+        validate_sdk_target_bundle(output_dir)
 
         source_manifest_path = source_root / "manifest" / "manifest.json"
         source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8")) if source_manifest_path.exists() else {}
