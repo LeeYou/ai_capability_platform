@@ -18,7 +18,7 @@ from app.db.models import BuildArtifactModel, BuildManifestModel, BuildTargetMod
 from app.services.audit_service import append_audit_log
 from app.services.catalog_service import get_builder_catalog
 from app.services.build_contracts import build_delivery_summary, build_validation_vectors
-from platform_shared.backend import validate_delivery_package_dir
+from platform_shared.backend import validate_delivery_package_dir, validate_manifest_build
 
 SUPPORTED_TARGETS: dict[str, dict[str, object]] = {
     "linux_x86_64": {
@@ -1747,6 +1747,7 @@ def create_build_task(
             "model_copy_status": model_copy_report["status"],
             "pre_delivery_status": pre_delivery_result["overall_status"],
         }
+        validate_manifest_build(target_manifest)
         target_manifest_path = manifest_dir / "manifest.json"
         _write_text(target_manifest_path, json.dumps(target_manifest, ensure_ascii=False, indent=2, sort_keys=True))
         archive_path = _archive_directory(output_dir, exports_root / "ai-builder" / f"task_{build_task.id}_{target_name}")

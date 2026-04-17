@@ -18,6 +18,8 @@ from app.db.models import RuntimeOperationModel, RuntimeRevisionModel
 from app.services.audit_service import append_audit_log
 from app.services.license_service import LicenseValidationError, validate_license_bundle
 
+from platform_shared.backend import validate_manifest_build, validate_manifest_model
+
 
 class RuntimeControlPlaneState:
     def __init__(self) -> None:
@@ -199,55 +201,26 @@ def _resolve_manifest_path(base_path: Path, raw_path: str) -> Path:
 def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, manifest: Any) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ValueError("manifest 顶层必须是对象。")
-    required_keys = (
-        "capability_name",
-        "task_type",
-        "model_version",
-        "source_train_task_id",
-        "task_name",
-        "backend_type",
-        "artifact_path",
-        "status",
-        "checksum",
-        "preprocessing",
-        "thresholds",
-        "labels",
-        "validation",
-        "runtime_contract",
-        "delivery_metadata",
-    )
-    for key in required_keys:
-        if key not in manifest:
-            raise ValueError(f"模型包 manifest 缺失字段：{key}")
-    if manifest["capability_name"] != capability_dir.name:
+    normalized_manifest = validate_manifest_model(manifest)
+    if normalized_manifest.get("capability_name") != capability_dir.name:
         raise ValueError("模型包 manifest capability_name 与目录名不一致。")
-    if manifest["model_version"] != selected_version_dir.name:
+    if normalized_manifest.get("model_version") != selected_version_dir.name:
         raise ValueError("模型包 manifest model_version 与目录版本不一致。")
-    if manifest["status"] != "ready":
+    if normalized_manifest.get("status") != "ready":
         raise ValueError("模型包 manifest status 必须为 ready。")
-    if not isinstance(manifest["labels"], list) or not manifest["labels"] or any(not isinstance(item, str) or not item.strip() for item in manifest["labels"]):
-        raise ValueError("模型包 manifest labels 必须为非空字符串数组。")
-    preprocessing = manifest["preprocessing"]
-    thresholds = manifest["thresholds"]
-    validation = manifest["validation"]
-    runtime_contract = manifest["runtime_contract"]
-    if not isinstance(preprocessing, dict) or not isinstance(thresholds, dict) or not isinstance(validation, dict) or not isinstance(runtime_contract, dict):
-        raise ValueError("模型包 manifest 复合字段类型非法。")
-    if "input_type" not in preprocessing or "resize" not in preprocessing or "normalize" not in preprocessing:
-        raise ValueError("模型包 manifest preprocessing 缺失必需字段。")
-    if "score_threshold" not in thresholds or "nms_threshold" not in thresholds:
-        raise ValueError("模型包 manifest thresholds 缺失必需字段。")
-    if runtime_contract.get("task_type") != manifest["task_type"]:
-        raise ValueError("模型包 manifest runtime_contract.task_type 与 task_type 不一致。")
-    runtime_inputs = runtime_contract.get("runtime_inputs")
+
+    runtime_contract = normalized_manifest.get("runtime_contract")
+    runtime_inputs = runtime_contract.get("runtime_inputs") if isinstance(runtime_contract, dict) else None
     if not isinstance(runtime_inputs, dict):
         raise ValueError("模型包 manifest runtime_contract.runtime_inputs 缺失。")
-    _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"]))
-    if _resolve_manifest_path(selected_version_dir, str(manifest["artifact_path"])) != selected_version_dir.resolve():
+
+    _resolve_manifest_path(selected_version_dir, str(normalized_manifest["artifact_path"]))
+    if _resolve_manifest_path(selected_version_dir, str(normalized_manifest["artifact_path"])) != selected_version_dir.resolve():
         raise ValueError("模型包 manifest artifact_path 与实际模型目录不一致。")
     _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("preprocess_path", "")))
     _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("labels_path", "")))
-    artifacts = validation.get("artifacts")
+    validation = normalized_manifest.get("validation")
+    artifacts = validation.get("artifacts") if isinstance(validation, dict) else None
     if not isinstance(artifacts, list):
         raise ValueError("模型包 manifest validation.artifacts 缺失。")
     for item in artifacts:
@@ -256,10 +229,10 @@ def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, m
         _resolve_manifest_path(selected_version_dir, item)
     return {
         "model_root": str(selected_version_dir.resolve()),
-        "model_version": str(manifest["model_version"]),
-        "backend_type": str(manifest["backend_type"]),
-        "max_batch_size": max(1, int(manifest.get("max_batch_size", manifest.get("batch_size", 1)))),
-        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "model_version": str(normalized_manifest["model_version"]),
+        "backend_type": str(normalized_manifest["backend_type"]),
+        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", normalized_manifest.get("batch_size", 1)))),
+        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
         "manifest": manifest,
     }
 
@@ -267,44 +240,24 @@ def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, m
 def _validate_plugin_manifest(capability_dir: Path, target_name: str, manifest: Any, binary_path: Path | None) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ValueError("manifest 顶层必须是对象。")
-    required_keys = (
-        "capability_name",
-        "model_version",
-        "target_name",
-        "artifact_format",
-        "build_mode",
-        "toolchain_name",
-        "jni_enabled",
-        "customer_code",
-        "issue_record_id",
-        "dependency_summary",
-    )
-    for key in required_keys:
-        if key not in manifest:
-            raise ValueError(f"插件 manifest 缺失字段：{key}")
-    if manifest["capability_name"] != capability_dir.name:
+    normalized_manifest = validate_manifest_build(manifest)
+    if normalized_manifest.get("capability_name") != capability_dir.name:
         raise ValueError("插件 manifest capability_name 与目录名不一致。")
-    if manifest["target_name"] != target_name:
+    if normalized_manifest.get("target_name") != target_name:
         raise ValueError("插件 manifest target_name 与当前目标平台不一致。")
-    dependency_summary = manifest["dependency_summary"]
-    if not isinstance(dependency_summary, dict):
-        raise ValueError("插件 manifest dependency_summary 必须是对象。")
-    for key in ("runtime", "abi", "license_required", "build_params_controlled"):
-        if key not in dependency_summary:
-            raise ValueError(f"插件 manifest dependency_summary 缺失字段：{key}")
     if binary_path is None or not binary_path.exists():
         raise ValueError("插件二进制不存在。")
-    if manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
+    if normalized_manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
         raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
-    if manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
+    if normalized_manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
         raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
     return {
         "plugin_root": str(capability_dir.resolve()),
         "plugin_target": target_name,
-        "build_mode": str(manifest["build_mode"]),
+        "build_mode": str(normalized_manifest["build_mode"]),
         "binary_path": str(binary_path.resolve()),
-        "max_batch_size": max(1, int(manifest.get("max_batch_size", 1))),
-        "instance_count": max(1, int(manifest["instance_count"])) if "instance_count" in manifest else 0,
+        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", 1))),
+        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
         "manifest": manifest,
     }
 

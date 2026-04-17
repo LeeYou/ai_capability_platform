@@ -10,8 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import CapabilityRegistryModel, ModelArtifactModel, TrainingTaskModel
-from app.services.registry_service import normalize_capability_name
-from app.services.task_contracts import build_annotation_schema, build_template_bundle, normalize_task_type
+from app.services.task_contracts import normalize_task_type
+from app.services.template_service import build_annotation_schema, build_template_bundle
+
+from platform_shared.backend import validate_manifest_model
 
 _MODEL_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -251,6 +253,7 @@ def create_model_artifact(
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2)
     checksum = hashlib.sha256(manifest_text.encode("utf-8")).hexdigest()
     manifest["checksum"] = checksum
+    validate_manifest_model(manifest)
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2)
     manifest_path.write_text(manifest_text, encoding="utf-8")
 

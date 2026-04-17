@@ -15,6 +15,8 @@ from app.services.audit_service import append_audit_log
 from app.services.sdk_validation_service import validate_sdk_target_bundle
 from app.services.validation_contracts import DIAGNOSTICS_VERSION, build_validation_contract, build_validation_vectors
 
+from platform_shared.backend import validate_manifest_sdk
+
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 
@@ -1078,6 +1080,7 @@ def create_sdk_package(
             },
         }
         sdk_manifest_path = manifest_dir / "manifest.json"
+        validate_manifest_sdk(sdk_manifest)
         _write_text(sdk_manifest_path, json.dumps(sdk_manifest, ensure_ascii=False, indent=2, sort_keys=True))
         _write_checksums(output_dir)
 

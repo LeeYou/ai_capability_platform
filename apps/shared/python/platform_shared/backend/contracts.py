@@ -59,6 +59,184 @@ def _require_non_empty_string_list(payload: Mapping[str, Any], field_name: str) 
     return normalized
 
 
+def _require_bool(payload: Mapping[str, Any], field_name: str) -> bool:
+    value = payload.get(field_name)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} 必须为布尔值。")
+    return value
+
+
+def _require_string_list(payload: Mapping[str, Any], field_name: str) -> list[str]:
+    items = _require_list(payload, field_name)
+    normalized: list[str] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name}[{index}] 必须为字符串。")
+        normalized.append(item.strip())
+    return normalized
+
+
+def validate_manifest_model(payload: Mapping[str, Any]) -> dict[str, object]:
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    task_type = _require_non_empty_string(payload, "task_type")
+    model_version = _require_non_empty_string(payload, "model_version")
+    source_train_task_id = _require_non_negative_int(payload, "source_train_task_id")
+    task_name = _require_non_empty_string(payload, "task_name")
+    backend_type = _require_non_empty_string(payload, "backend_type")
+    artifact_path = _require_non_empty_string(payload, "artifact_path")
+    status = _require_non_empty_string(payload, "status")
+    checksum = _require_non_empty_string(payload, "checksum")
+
+    preprocessing = dict(_require_mapping(payload, "preprocessing"))
+    thresholds = dict(_require_mapping(payload, "thresholds"))
+    validation = dict(_require_mapping(payload, "validation"))
+    runtime_contract = dict(_require_mapping(payload, "runtime_contract"))
+    delivery_metadata = dict(_require_mapping(payload, "delivery_metadata"))
+
+    if "input_type" not in preprocessing or "resize" not in preprocessing or "normalize" not in preprocessing:
+        raise ValueError("preprocessing 缺失必需字段。")
+    resize = preprocessing.get("resize")
+    if not isinstance(resize, Mapping) or "width" not in resize or "height" not in resize:
+        raise ValueError("preprocessing.resize 缺失必需字段。")
+    normalize = preprocessing.get("normalize")
+    if not isinstance(normalize, Mapping) or "mean" not in normalize or "std" not in normalize:
+        raise ValueError("preprocessing.normalize 缺失必需字段。")
+    if "score_threshold" not in thresholds or "nms_threshold" not in thresholds:
+        raise ValueError("thresholds 缺失必需字段。")
+
+    labels = payload.get("labels")
+    if not isinstance(labels, list):
+        raise ValueError("labels 必须为数组。")
+    for index, item in enumerate(labels):
+        if not isinstance(item, str):
+            raise ValueError(f"labels[{index}] 必须为字符串。")
+
+    artifacts_value = validation.get("artifacts")
+    if not isinstance(artifacts_value, list):
+        raise ValueError("validation.artifacts 必须为数组。")
+    for index, item in enumerate(artifacts_value):
+        if not isinstance(item, str):
+            raise ValueError(f"validation.artifacts[{index}] 必须为字符串。")
+
+    if "task_type" in runtime_contract and runtime_contract.get("task_type") != task_type:
+        raise ValueError("runtime_contract.task_type 与 task_type 不一致。")
+
+    runtime_inputs = runtime_contract.get("runtime_inputs")
+    if not isinstance(runtime_inputs, Mapping):
+        raise ValueError("runtime_contract.runtime_inputs 必须为对象。")
+
+    if "ai_test" not in delivery_metadata or "ai_builder" not in delivery_metadata or "training_summary" not in delivery_metadata:
+        raise ValueError("delivery_metadata 缺失必需字段。")
+
+    normalized: dict[str, object] = {
+        "capability_name": capability_name,
+        "task_type": task_type,
+        "model_version": model_version,
+        "source_train_task_id": source_train_task_id,
+        "task_name": task_name,
+        "backend_type": backend_type,
+        "artifact_path": artifact_path,
+        "status": status,
+        "checksum": checksum,
+        "preprocessing": preprocessing,
+        "thresholds": thresholds,
+        "labels": [str(item) for item in labels],
+        "validation": validation,
+        "runtime_contract": runtime_contract,
+        "delivery_metadata": delivery_metadata,
+    }
+
+    if "max_batch_size" in payload and payload.get("max_batch_size") is not None:
+        normalized["max_batch_size"] = max(1, int(payload.get("max_batch_size") or 1))
+    if "batch_size" in payload and payload.get("batch_size") is not None:
+        normalized["batch_size"] = max(1, int(payload.get("batch_size") or 1))
+    if "instance_count" in payload and payload.get("instance_count") is not None:
+        normalized["instance_count"] = max(1, int(payload.get("instance_count") or 1))
+
+    return normalized
+
+
+def validate_manifest_build(payload: Mapping[str, Any]) -> dict[str, object]:
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    model_version = _require_non_empty_string(payload, "model_version")
+    target_name = _require_non_empty_string(payload, "target_name")
+    artifact_format = _require_non_empty_string(payload, "artifact_format")
+    build_mode = _require_non_empty_string(payload, "build_mode")
+    toolchain_name = _require_non_empty_string(payload, "toolchain_name")
+    jni_enabled = _require_bool(payload, "jni_enabled")
+    customer_code = _require_non_empty_string(payload, "customer_code")
+    issue_record_id = _require_non_negative_int(payload, "issue_record_id")
+
+    dependency_summary = dict(_require_mapping(payload, "dependency_summary"))
+    runtime = _require_non_empty_string(dependency_summary, "runtime")
+    abi = _require_non_empty_string(dependency_summary, "abi")
+    license_required = _require_bool(dependency_summary, "license_required")
+    build_params_controlled = _require_bool(dependency_summary, "build_params_controlled")
+
+    normalized: dict[str, object] = {
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "target_name": target_name,
+        "artifact_format": artifact_format,
+        "build_mode": build_mode,
+        "toolchain_name": toolchain_name,
+        "jni_enabled": jni_enabled,
+        "customer_code": customer_code,
+        "issue_record_id": issue_record_id,
+        "dependency_summary": {
+            "runtime": runtime,
+            "abi": abi,
+            "license_required": license_required,
+            "build_params_controlled": build_params_controlled,
+        },
+    }
+
+    if "task_type" in payload and payload.get("task_type") is not None:
+        normalized["task_type"] = _require_non_empty_string(payload, "task_type")
+    if "max_batch_size" in payload and payload.get("max_batch_size") is not None:
+        normalized["max_batch_size"] = max(1, int(payload.get("max_batch_size") or 1))
+    if "instance_count" in payload and payload.get("instance_count") is not None:
+        normalized["instance_count"] = max(1, int(payload.get("instance_count") or 1))
+
+    return normalized
+
+
+def validate_manifest_sdk(payload: Mapping[str, Any]) -> dict[str, object]:
+    package_id = _require_non_negative_int(payload, "package_id")
+    package_name = _require_non_empty_string(payload, "package_name")
+    capability_name = _require_non_empty_string(payload, "capability_name")
+    model_version = _require_non_empty_string(payload, "model_version")
+    target_name = _require_non_empty_string(payload, "target_name")
+    artifact_format = _require_non_empty_string(payload, "artifact_format")
+    jni_enabled = _require_bool(payload, "jni_enabled")
+    source_builder_manifest = dict(_require_mapping(payload, "source_builder_manifest"))
+
+    delivery_content = _require_string_list(payload, "delivery_content")
+    if not delivery_content:
+        raise ValueError("delivery_content 必须为非空数组。")
+
+    abi_compatibility = _require_non_empty_string(payload, "abi_compatibility")
+    thread_safe = _require_bool(payload, "thread_safe")
+    gpu_fallback = _require_bool(payload, "gpu_fallback")
+
+    normalized: dict[str, object] = {
+        "package_id": package_id,
+        "package_name": package_name,
+        "capability_name": capability_name,
+        "model_version": model_version,
+        "target_name": target_name,
+        "artifact_format": artifact_format,
+        "jni_enabled": jni_enabled,
+        "source_builder_manifest": source_builder_manifest,
+        "delivery_content": delivery_content,
+        "abi_compatibility": abi_compatibility,
+        "thread_safe": thread_safe,
+        "gpu_fallback": gpu_fallback,
+    }
+
+    return normalized
+
+
 def validate_license_tool_release_bundle(bundle_dir: Path) -> dict[str, object]:
     base_dir = Path(bundle_dir).resolve()
     if not base_dir.exists() or not base_dir.is_dir():
