@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
+import { fetchListItems, requestJson } from '../../../frontend-common/src/http.ts'
 
 type CustomerItem = {
   customer_id: number
@@ -211,23 +212,11 @@ const initialValidationForm: ValidationFormState = {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  })
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `请求失败：${path}`)
-  }
-  return (await response.json()) as T
+  return requestJson<T>(apiBaseUrl, path, init)
 }
 
 async function fetchList<T>(path: string): Promise<T[]> {
-  const payload = await request<ApiListResponse<T>>(path)
-  return payload.items
+  return fetchListItems<T>(apiBaseUrl, path)
 }
 
 function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {

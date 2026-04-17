@@ -19,10 +19,61 @@ from app.services.audit_service import append_audit_log
 from app.services.license_service import LicenseValidationError, validate_license_bundle
 
 
-_RUNTIME_LOCK = threading.RLock()
-_INSTANCE_POOLS: dict[str, deque[dict[str, Any]]] = {}
-_ACTIVE_CAPABILITIES: dict[str, dict[str, Any]] = {}
-_ACTIVE_REVISION_ID: int | None = None
+class RuntimeControlPlaneState:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.instance_pools: dict[str, deque[dict[str, Any]]] = {}
+        self.active_capabilities: dict[str, dict[str, Any]] = {}
+        self.active_revision_id: int | None = None
+
+    def apply_revision(
+        self,
+        capabilities: dict[str, dict[str, Any]],
+        revision_id: int,
+        *,
+        pool_size: int,
+        gpu_available: bool,
+    ) -> None:
+        self.active_capabilities.clear()
+        for capability_name, payload in capabilities.items():
+            active_payload = dict(payload)
+            active_payload["gpu_available"] = gpu_available
+            self.active_capabilities[capability_name] = active_payload
+        self.ensure_instance_pools(pool_size=pool_size, gpu_available=gpu_available)
+        self.active_revision_id = revision_id
+
+    def ensure_instance_pools(self, *, pool_size: int, gpu_available: bool) -> None:
+        self.instance_pools.clear()
+        for capability_name, payload in self.active_capabilities.items():
+            pool = deque()
+            configured_pool_size = max(1, int(payload.get("instance_count") or pool_size))
+            for index in range(configured_pool_size):
+                pool.append(
+                    {
+                        "instance_id": f"{capability_name}-{index + 1}",
+                        "default_device": "gpu" if gpu_available else "cpu",
+                    }
+                )
+            self.instance_pools[capability_name] = pool
+
+    def serialize_capability(self, capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "capability_name": capability_name,
+            "plugin_target": payload["plugin_target"],
+            "model_version": payload["model_version"],
+            "backend_type": payload["backend_type"],
+            "active_source": payload["active_source"],
+            "model_root": payload.get("model_root", ""),
+            "binary_path": payload.get("binary_path", ""),
+            "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
+            "pool_size": len(self.instance_pools.get(capability_name, [])),
+            "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
+            "admission_checklist": payload.get("admission_checklist", {}),
+            "revision_id": self.active_revision_id,
+        }
+
+
+_STATE = RuntimeControlPlaneState()
 
 
 def _build_license_failure_message(capability_name: str, license_status: dict[str, Any]) -> str:
@@ -471,35 +522,12 @@ def _build_admission_checklist(payload: dict[str, Any], *, license_valid: bool) 
 
 
 def _ensure_instance_pool(capabilities: dict[str, dict[str, Any]], *, pool_size: int, gpu_available: bool) -> None:
-    _INSTANCE_POOLS.clear()
-    for capability_name, payload in capabilities.items():
-        pool = deque()
-        configured_pool_size = max(1, int(payload.get("instance_count") or pool_size))
-        for index in range(configured_pool_size):
-            pool.append(
-                {
-                    "instance_id": f"{capability_name}-{index + 1}",
-                    "default_device": "gpu" if gpu_available else "cpu",
-                }
-            )
-        _INSTANCE_POOLS[capability_name] = pool
+    _STATE.active_capabilities = capabilities
+    _STATE.ensure_instance_pools(pool_size=pool_size, gpu_available=gpu_available)
 
 
 def _serialize_capability(capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "capability_name": capability_name,
-        "plugin_target": payload["plugin_target"],
-        "model_version": payload["model_version"],
-        "backend_type": payload["backend_type"],
-        "active_source": payload["active_source"],
-        "model_root": payload.get("model_root", ""),
-        "binary_path": payload.get("binary_path", ""),
-        "device_mode": "gpu/cpu" if payload.get("gpu_available", False) else "cpu",
-        "pool_size": len(_INSTANCE_POOLS.get(capability_name, [])),
-        "max_batch_size": max(1, int(payload.get("max_batch_size", 1))),
-        "admission_checklist": payload.get("admission_checklist", {}),
-        "revision_id": _ACTIVE_REVISION_ID,
-    }
+    return _STATE.serialize_capability(capability_name, payload)
 
 
 def _serialize_runtime_capability_record(capability_name: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -611,14 +639,7 @@ def _create_operation(session: Session, *, action: str, status: str, detail: dic
 
 
 def _apply_revision(capabilities: dict[str, dict[str, Any]], revision_id: int, *, pool_size: int, gpu_available: bool) -> None:
-    _ACTIVE_CAPABILITIES.clear()
-    for capability_name, payload in capabilities.items():
-        active_payload = dict(payload)
-        active_payload["gpu_available"] = gpu_available
-        _ACTIVE_CAPABILITIES[capability_name] = active_payload
-    _ensure_instance_pool(_ACTIVE_CAPABILITIES, pool_size=pool_size, gpu_available=gpu_available)
-    global _ACTIVE_REVISION_ID
-    _ACTIVE_REVISION_ID = revision_id
+    _STATE.apply_revision(capabilities, revision_id, pool_size=pool_size, gpu_available=gpu_available)
 
 
 def bootstrap_runtime(
@@ -640,7 +661,7 @@ def bootstrap_runtime(
     operating_system_version: str,
     system_architecture: str,
 ) -> dict[str, Any]:
-    with _RUNTIME_LOCK:
+    with _STATE.lock:
         target_name = _platform_target_name()
         capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
         license_status = _validate_runtime_capabilities_license(
@@ -715,8 +736,8 @@ def bootstrap_runtime(
 
 
 def list_capabilities() -> list[dict[str, Any]]:
-    with _RUNTIME_LOCK:
-        return [_serialize_capability(name, payload) for name, payload in sorted(_ACTIVE_CAPABILITIES.items())]
+    with _STATE.lock:
+        return [_serialize_capability(name, payload) for name, payload in sorted(_STATE.active_capabilities.items())]
 
 
 def list_runtime_revisions(session: Session) -> list[dict[str, Any]]:
@@ -745,7 +766,7 @@ def get_license_status(
         operating_system_version=operating_system_version,
         system_architecture=system_architecture,
     )
-    status["runtime_revision_id"] = _ACTIVE_REVISION_ID
+    status["runtime_revision_id"] = _STATE.active_revision_id
     if audit_log_path is not None:
         append_audit_log(
             audit_log_path,
@@ -757,7 +778,7 @@ def get_license_status(
                 "reason": status["reason"],
                 "code": status["code"],
                 "stage": status["stage"],
-                "runtime_revision_id": _ACTIVE_REVISION_ID,
+                "runtime_revision_id": _STATE.active_revision_id,
             },
         )
     return status
@@ -778,10 +799,10 @@ def infer(
     operating_system_version: str,
     system_architecture: str,
 ) -> dict[str, Any]:
-    with _RUNTIME_LOCK:
-        if capability_name not in _ACTIVE_CAPABILITIES:
+    with _STATE.lock:
+        if capability_name not in _STATE.active_capabilities:
             raise ValueError("能力不存在或未装载。")
-        capability = _ACTIVE_CAPABILITIES[capability_name]
+        capability = _STATE.active_capabilities[capability_name]
         license_status = validate_license_bundle(
             license_root,
             hardware_features=hardware_features,
@@ -807,7 +828,7 @@ def infer(
             )
             raise LicenseValidationError(str(license_status["reason"]))
 
-        pool = _INSTANCE_POOLS[capability_name]
+        pool = _STATE.instance_pools[capability_name]
         instance = pool.popleft()
         try:
             if prefer_device == "gpu" and capability.get("gpu_available", False):
@@ -871,7 +892,7 @@ def infer(
                     "request_id": request_id,
                     "capability_name": capability_name,
                     "device": device,
-                    "runtime_revision_id": _ACTIVE_REVISION_ID,
+                    "runtime_revision_id": _STATE.active_revision_id,
                 },
             )
             append_audit_log(
@@ -888,7 +909,7 @@ def infer(
                 "backend_type": capability["backend_type"],
                 "plugin_target": capability["plugin_target"],
                 "device": device,
-                "runtime_revision_id": int(_ACTIVE_REVISION_ID or 0),
+                "runtime_revision_id": int(_STATE.active_revision_id or 0),
                 "license_valid": True,
                 "result": result,
             }
@@ -917,7 +938,7 @@ def reload_runtime(
     operating_system_version: str,
     system_architecture: str,
 ) -> dict[str, Any]:
-    with _RUNTIME_LOCK:
+    with _STATE.lock:
         if action == "reload":
             target_name = _platform_target_name()
             capabilities, source_summary = _resolve_sources(host_root, image_resource_root, target_name)
@@ -1022,7 +1043,7 @@ def reload_runtime(
             "revision_id": revision.id,
             "revision_token": revision.revision_token,
             "capability_names": json.loads(revision.capabilities_json),
-            "capability_count": len(_ACTIVE_CAPABILITIES),
+            "capability_count": len(_STATE.active_capabilities),
             "capabilities": list_capabilities(),
             "source_summary": json.loads(revision.source_summary_json),
             "license_status": {
@@ -1036,24 +1057,28 @@ def reload_runtime(
         _write_json(runtime_snapshot_path, snapshot_payload)
         _append_runtime_log(
             runtime_log_path,
-            {"event": action, "revision_id": revision.id, "active_capability_count": len(_ACTIVE_CAPABILITIES)},
+            {
+                "event": action,
+                "revision_id": revision.id,
+                "active_capability_count": len(_STATE.active_capabilities),
+            },
         )
         append_audit_log(
             audit_log_path,
             action=action,
             entity_type="runtime_revision",
             entity_id=str(revision.id),
-            detail={"active_capability_count": len(_ACTIVE_CAPABILITIES)},
+            detail={"active_capability_count": len(_STATE.active_capabilities)},
         )
         operation = _create_operation(
             session,
             action=action,
             status="completed",
-            detail={"active_capability_count": len(_ACTIVE_CAPABILITIES)},
+            detail={"active_capability_count": len(_STATE.active_capabilities)},
             revision_id=revision.id,
         )
         return {
             "operation_id": operation.id,
             "revision": _revision_item(revision),
-            "active_capability_count": len(_ACTIVE_CAPABILITIES),
+            "active_capability_count": len(_STATE.active_capabilities),
         }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
+import { fetchListItems, requestJson } from '../../../frontend-common/src/http.ts'
 
 type CapabilityItem = {
   capability_name: string
@@ -76,8 +77,6 @@ type ModelArtifactItem = {
   runtime_contract?: Record<string, unknown> | null
 }
 
-type ApiListResponse<T> = { items: T[] }
-
 type DashboardData = {
   capabilities: CapabilityItem[]
   annotationTasks: AnnotationTaskItem[]
@@ -110,23 +109,11 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const workspace = buildR7Workspace(import.meta.env, 'ai-train')
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  })
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `请求失败：${path}`)
-  }
-  return (await response.json()) as T
+  return requestJson<T>(apiBaseUrl, path, init)
 }
 
 async function fetchList<T>(path: string): Promise<T[]> {
-  const payload = await request<ApiListResponse<T>>(path)
-  return payload.items
+  return fetchListItems<T>(apiBaseUrl, path)
 }
 
 function prettyJson(value: unknown): string {

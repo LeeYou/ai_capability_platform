@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
+import { fetchListResponse, requestJson } from '../../../frontend-common/src/http.ts'
 
 type RemoteCapabilityItem = {
   capability_name: string
@@ -236,22 +237,11 @@ const initialBaselineForm: BaselineForm = {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  })
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `请求失败：${path}`)
-  }
-  return (await response.json()) as T
+  return requestJson<T>(apiBaseUrl, path, init)
 }
 
 async function fetchList<T>(path: string): Promise<ApiListResponse<T>> {
-  return request<ApiListResponse<T>>(path)
+  return fetchListResponse<T>(apiBaseUrl, path)
 }
 
 function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {

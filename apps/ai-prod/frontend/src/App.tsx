@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
+import { requestJson } from '../../../frontend-common/src/http.ts'
 
 type CapabilityItem = {
   capability_name: string
@@ -135,18 +136,7 @@ const internalApiBaseUrl = import.meta.env.VITE_INTERNAL_API_BASE_URL ?? ''
 const workspace = buildR7Workspace(import.meta.env, 'ai-prod')
 
 async function fetchJson<T>(baseUrl: string, path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options?.headers ?? {}),
-    },
-    ...options,
-  })
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `请求失败：${path}`)
-  }
-  return (await response.json()) as T
+  return requestJson<T>(baseUrl, path, options)
 }
 
 function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
