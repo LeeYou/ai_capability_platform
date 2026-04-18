@@ -3,6 +3,7 @@ import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { requestJson } from '../../../frontend-common/src/http.ts'
+import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
 
 type CapabilityItem = {
   capability_name: string
@@ -274,9 +275,12 @@ function App() {
             </div>
             <span className="badge">P41-P44</span>
           </div>
-          {loading && <p className="info-text">正在加载运行控制台...</p>}
-          {error && <p className="error-text">数据加载失败：{error}</p>}
-          {actionMessage && <p className="success-text">{actionMessage}</p>}
+          <WorkspaceFeedback
+            loading={loading}
+            loadingMessage="正在加载运行控制台..."
+            error={error}
+            actionMessage={actionMessage}
+          />
           <div className="card-grid">
             {overviewCards.map((card) => (
               <article key={card.title} className="card">

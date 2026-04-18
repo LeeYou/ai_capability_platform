@@ -4,6 +4,7 @@ import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
 import { fetchListResponse, requestJson } from '../../../frontend-common/src/http.ts'
+import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
 
 type RemoteCapabilityItem = {
   capability_name: string
@@ -558,9 +559,12 @@ function App() {
             </div>
             <span className="badge">TT15-TT19</span>
           </div>
-          {loading && <p className="info-text">正在加载测试中枢数据...</p>}
-          {error && <p className="error-text">数据加载失败：{error}</p>}
-          {actionMessage && <p className="success-text">{actionMessage}</p>}
+          <WorkspaceFeedback
+            loading={loading}
+            loadingMessage="正在加载测试中枢数据..."
+            error={error}
+            actionMessage={actionMessage}
+          />
           <div className="card-grid">
             {overviewCards.map((card) => (
               <article key={card.title} className="card">
