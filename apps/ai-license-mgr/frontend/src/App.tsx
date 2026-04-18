@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
+import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
 import { fetchListItems, requestJson } from '../../../frontend-common/src/http.ts'
 
@@ -457,32 +458,7 @@ function App() {
   }
 
   return (
-    <div className="page">
-      <div className="workspace-topbar">
-        <div className="workspace-brand">
-          <strong>Agile Star AI Capability Platform</strong>
-          <span>统一授权工作台 / 当前模块：{workspace.currentModule.title}</span>
-        </div>
-        <nav className="workspace-nav">
-          {workspace.moduleLinks.map((item) => (
-            <a key={item.id} className={`workspace-nav-link${item.isCurrent ? ' active' : ''}`} href={item.url}>
-              <strong>{item.shortTitle}</strong>
-              <span>{item.stageLabel}</span>
-            </a>
-          ))}
-        </nav>
-      </div>
-
-      <div className="workflow-strip">
-        {workspace.workflowSteps.map((item) => (
-          <a key={item.moduleId} className={`workflow-step${item.isCurrent ? ' active' : ''}`} href={item.url}>
-            <span>步骤 {item.order}</span>
-            <strong>{item.label}</strong>
-            <span>{item.summary}</span>
-          </a>
-        ))}
-      </div>
-
+    <WorkspaceShell moduleId="ai-license-mgr" title="ai-license-mgr" subtitle="统一授权工作台">
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
@@ -969,7 +945,7 @@ function App() {
           )}
         </section>
       </main>
-    </div>
+    </WorkspaceShell>
   )
 }
 

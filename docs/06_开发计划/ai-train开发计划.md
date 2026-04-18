@@ -60,4 +60,4 @@
 
 ### 4.4 阶段小结
 
-ai-train 已完成 T17-T22，当前模块计划已经全部收口。本轮实现不只是把 `execution_mode` 做到前后端可见，更进一步把训练后端收敛为任务编排、工作区准备、执行调度、结果校验与结果持久化的清晰分层，并以 shared contract validator 建立训练结果摘要的统一校验入口，确保真实 / 仿真训练路径、导出目录与结果文件的语义更加稳定，也为后续按相同模式推进 ai-test、ai-builder、ai-license-mgr、ai-prod、ai-sdk 提供了第一份可复用范式。
+ai-train 已完成 T17-T22，当前模块计划已经全部收口。本轮实现不只是把 `execution_mode` 做到前后端可见，更进一步把训练后端收敛为任务编排、工作区准备、执行调度、结果校验与结果持久化的清晰分层，并以 shared contract validator 建立训练结果摘要的统一校验入口，确保真实 / 仿真训练路径、导出目录与结果文件的语义更加稳定，也为后续按相同模式推进 ai-test、ai-builder、ai-license-mgr、ai-prod、ai-sdk 提供了第一份可复用范式。同时本轮已开始推进 RC-03：已在 `frontend-common` 新增统一工作台壳层组件（`WorkspaceShell`），并在 ai-train 前端完成接入，以减少跨模块重复壳层代码并为后续抽象公共 hooks / 状态组件打底。

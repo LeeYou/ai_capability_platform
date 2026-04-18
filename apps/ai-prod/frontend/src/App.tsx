@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
-import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
+import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { requestJson } from '../../../frontend-common/src/http.ts'
 
 type CapabilityItem = {
@@ -133,7 +133,6 @@ const runtimeApiPrefix = '/api/v1'
 const internalApiPrefix = '/internal'
 const runtimeApiBaseUrl = import.meta.env.VITE_RUNTIME_API_BASE_URL ?? ''
 const internalApiBaseUrl = import.meta.env.VITE_INTERNAL_API_BASE_URL ?? ''
-const workspace = buildR7Workspace(import.meta.env, 'ai-prod')
 
 async function fetchJson<T>(baseUrl: string, path: string, options?: RequestInit): Promise<T> {
   return requestJson<T>(baseUrl, path, options)
@@ -249,32 +248,7 @@ function App() {
   }
 
   return (
-    <div className="page">
-      <div className="workspace-topbar">
-        <div className="workspace-brand">
-          <strong>Agile Star AI Capability Platform</strong>
-          <span>统一运行控制台 / 当前模块：{workspace.currentModule.title}</span>
-        </div>
-        <nav className="workspace-nav">
-          {workspace.moduleLinks.map((item) => (
-            <a key={item.id} className={`workspace-nav-link${item.isCurrent ? ' active' : ''}`} href={item.url}>
-              <strong>{item.shortTitle}</strong>
-              <span>{item.stageLabel}</span>
-            </a>
-          ))}
-        </nav>
-      </div>
-
-      <div className="workflow-strip">
-        {workspace.workflowSteps.map((item) => (
-          <a key={item.moduleId} className={`workflow-step${item.isCurrent ? ' active' : ''}`} href={item.url}>
-            <span>步骤 {item.order}</span>
-            <strong>{item.label}</strong>
-            <span>{item.summary}</span>
-          </a>
-        ))}
-      </div>
-
+    <WorkspaceShell moduleId="ai-prod" title="ai-prod" subtitle="统一运行控制台">
       <header className="hero">
         <div className="hero-text">
           <p className="eyebrow">北京爱知之星科技股份有限公司（Agile Star）</p>
@@ -598,7 +572,7 @@ function App() {
           )}
         </section>
       </main>
-    </div>
+    </WorkspaceShell>
   )
 }
 

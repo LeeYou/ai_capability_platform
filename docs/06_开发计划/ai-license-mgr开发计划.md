@@ -57,4 +57,4 @@
 
 ### 4.4 阶段小结
 
-ai-license-mgr 已完成 L16-L19，当前模块计划已校准到 R16：本轮已完成 L20/L21，围绕“授权核心 / 文件导出 / 工具发布 / 契约校验”形成了更清晰的服务分层，`license_service.py` 收敛为薄编排层；同时 shared contract validator 已新增并落地 `license_tool` bundle 校验入口，确保交付物契约可在运行时被稳定验证。下一阶段将继续扩展 shared validator 覆盖更多授权交付契约，确保跨模块一致性。
+ai-license-mgr 已完成 L16-L19，当前模块计划已校准到 R16：本轮已完成 L20/L21，围绕“授权核心 / 文件导出 / 工具发布 / 契约校验”形成了更清晰的服务分层，`license_service.py` 收敛为薄编排层；同时 shared contract validator 已新增并落地 `license_tool` bundle 校验入口，确保交付物契约可在运行时被稳定验证。下一阶段将继续扩展 shared validator 覆盖更多授权交付契约，确保跨模块一致性。同时本轮已开始推进 RC-03：已在 `frontend-common` 新增统一工作台壳层组件（`WorkspaceShell`），并在 ai-license-mgr 前端完成接入，以减少跨模块重复壳层代码并为后续抽象公共 hooks / 状态组件打底。

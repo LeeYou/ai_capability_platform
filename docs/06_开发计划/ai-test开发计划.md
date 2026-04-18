@@ -59,4 +59,4 @@
 
 ### 4.4 阶段小结
 
-ai-test 已完成 TT20-TT21，当前模块计划已校准到 R16：在上一轮测试工作台重构基础上，本轮已完成测试后端的结构性收敛，补齐了 `execution_mode` 与风险提示的显式语义，区分了真实 / 仿真执行路径，将测试报告摘要纳入 shared contract validator，并收敛了单测 / 批测主链路的事务边界。至此 ai-test 已形成与 ai-train 一致的模块级收口样板，下一步将按既定顺序推进 ai-license-mgr。
+ai-test 已完成 TT20-TT21，当前模块计划已校准到 R16：在上一轮测试工作台重构基础上，本轮已完成测试后端的结构性收敛，补齐了 `execution_mode` 与风险提示的显式语义，区分了真实 / 仿真执行路径，将测试报告摘要纳入 shared contract validator，并收敛了单测 / 批测主链路的事务边界。至此 ai-test 已形成与 ai-train 一致的模块级收口样板，下一步将按既定顺序推进 ai-license-mgr。同时本轮已开始推进 RC-03：已在 `frontend-common` 新增统一工作台壳层组件（`WorkspaceShell`），并在 ai-test 前端完成接入，以减少跨模块重复壳层代码并为后续抽象公共 hooks / 状状态组件打底。
