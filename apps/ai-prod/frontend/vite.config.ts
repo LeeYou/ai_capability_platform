@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    resolve: {
+      dedupe: ['react', 'react/jsx-runtime'],
+    },
     server: {
       proxy: {
         '/api/v1': runtimeOrigin,

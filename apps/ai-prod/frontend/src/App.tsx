@@ -3,7 +3,13 @@ import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { requestJson } from '../../../frontend-common/src/http.ts'
+import { useRequest } from '../../../frontend-common/src/useRequest.ts'
 import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
+import { statusTone } from '../../../frontend-common/src/statusTone.ts'
+import { RiskBanner } from '../../../frontend-common/src/riskBanner.tsx'
+import type { RiskItem } from '../../../frontend-common/src/riskBanner.tsx'
+import { ListDetailLayout } from '../../../frontend-common/src/listDetailLayout.tsx'
+import type { ListItem } from '../../../frontend-common/src/listDetailLayout.tsx'
 
 type CapabilityItem = {
   capability_name: string
@@ -76,6 +82,7 @@ type AuditLogItem = {
 
 type ListResponse<T> = { items: T[] }
 
+
 type HealthResponse = {
   status: string
   runtime_revision_id: number | null
@@ -135,54 +142,45 @@ const internalApiPrefix = '/internal'
 const runtimeApiBaseUrl = import.meta.env.VITE_RUNTIME_API_BASE_URL ?? ''
 const internalApiBaseUrl = import.meta.env.VITE_INTERNAL_API_BASE_URL ?? ''
 
-async function fetchJson<T>(baseUrl: string, path: string, options?: RequestInit): Promise<T> {
-  return requestJson<T>(baseUrl, path, options)
-}
-
-function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
-  if (['ok', 'completed', 'active', 'ready', 'success'].includes(status)) return 'good'
-  if (['failed', 'error', 'denied', 'offline'].includes(status)) return 'danger'
-  if (['running', 'pending', 'created'].includes(status)) return 'warn'
-  return 'neutral'
-}
-
 function App() {
+  const { loading, error, actionMessage, request, fetchList, setLoading, setError, setActionMessage } = useRequest(runtimeApiBaseUrl, { initialLoading: true })
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [selectedCapability, setSelectedCapability] = useState('')
   const [selectedRevisionId, setSelectedRevisionId] = useState<number | null>(null)
   const [preferDevice, setPreferDevice] = useState<'auto' | 'gpu' | 'cpu'>('auto')
   const [payload, setPayload] = useState('{"image":"demo"}')
   const [inputType, setInputType] = useState<'json' | 'image' | 'video' | 'pdf'>('json')
   const [inferResult, setInferResult] = useState<InferResponse | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   async function loadDashboard(): Promise<void> {
     try {
       setLoading(true)
       setError(null)
-      const [health, capabilities, licenseStatus, runtimeMetrics, revisions, operations, auditLogs] = await Promise.all([
-        fetchJson<HealthResponse>(runtimeApiBaseUrl, `${runtimeApiPrefix}/health`),
-        fetchJson<ListResponse<CapabilityItem>>(runtimeApiBaseUrl, `${runtimeApiPrefix}/capabilities`),
-        fetchJson<LicenseStatus>(runtimeApiBaseUrl, `${runtimeApiPrefix}/license/status`),
-        fetchJson<RuntimeMetrics>(runtimeApiBaseUrl, `${runtimeApiPrefix}/admin/metrics`),
-        fetchJson<ListResponse<RuntimeRevisionItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/revisions`),
-        fetchJson<ListResponse<RuntimeOperationItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/operations`),
-        fetchJson<ListResponse<AuditLogItem>>(internalApiBaseUrl, `${internalApiPrefix}/audit-logs?limit=8`),
+      const [health, capabilitiesRes, licenseStatus, runtimeMetrics, revisionsRes, operationsRes, auditLogsRes] = await Promise.all([
+        request<HealthResponse>(`${runtimeApiPrefix}/health`),
+        fetchList<CapabilityItem>(`${runtimeApiPrefix}/capabilities`),
+        request<LicenseStatus>(`${runtimeApiPrefix}/license/status`),
+        request<RuntimeMetrics>(`${runtimeApiPrefix}/admin/metrics`),
+        requestJson<ListResponse<RuntimeRevisionItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/revisions`),
+        requestJson<ListResponse<RuntimeOperationItem>>(internalApiBaseUrl, `${internalApiPrefix}/admin/operations`),
+        requestJson<ListResponse<AuditLogItem>>(internalApiBaseUrl, `${internalApiPrefix}/audit-logs?limit=8`),
       ])
+      const capabilities = capabilitiesRes
+      const revisions = revisionsRes.items
+      const operations = operationsRes.items
+      const auditLogs = auditLogsRes.items
       setDashboard({
         health,
-        capabilities: capabilities.items,
+        capabilities,
         licenseStatus,
         runtimeMetrics,
-        revisions: revisions.items,
-        operations: operations.items,
-        auditLogs: auditLogs.items,
+        revisions,
+        operations,
+        auditLogs,
       })
-      setSelectedCapability((current) => current || capabilities.items[0]?.capability_name || '')
-      setSelectedRevisionId((current) => current ?? revisions.items[0]?.revision_id ?? null)
+      setSelectedCapability((current: string) => current || capabilities[0]?.capability_name || '')
+      setSelectedRevisionId((current: number | null) => current ?? revisions[0]?.revision_id ?? null)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载失败')
     } finally {
@@ -194,8 +192,8 @@ function App() {
     void loadDashboard()
   }, [])
 
-  const selectedCapabilityDetail = dashboard.capabilities.find((item) => item.capability_name === selectedCapability) ?? null
-  const selectedRevision = dashboard.revisions.find((item) => item.revision_id === selectedRevisionId) ?? null
+  const selectedCapabilityDetail = dashboard.capabilities.find((item: CapabilityItem) => item.capability_name === selectedCapability) ?? null
+  const selectedRevision = dashboard.revisions.find((item: RuntimeRevisionItem) => item.revision_id === selectedRevisionId) ?? null
 
   const overviewCards = useMemo(
     () => [
@@ -214,7 +212,7 @@ function App() {
     }
     try {
       setActionMessage('正在执行在线验证...')
-      const result = await fetchJson<InferResponse>(runtimeApiBaseUrl, `${runtimeApiPrefix}/infer/${selectedCapability}`, {
+      const result = await request<InferResponse>(`${runtimeApiPrefix}/infer/${selectedCapability}`, {
         method: 'POST',
         body: JSON.stringify({
           input_type: inputType,
@@ -234,7 +232,7 @@ function App() {
   async function handleRuntimeAction(action: 'reload' | 'rollback', targetRevisionId?: number): Promise<void> {
     try {
       setActionMessage(`正在执行 ${action}...`)
-      await fetchJson(runtimeApiBaseUrl, `${runtimeApiPrefix}/admin/reload`, {
+      await request(`${runtimeApiPrefix}/admin/reload`, {
         method: 'POST',
         body: JSON.stringify({
           action,
@@ -299,25 +297,20 @@ function App() {
                 <li>繁忙拒绝：{dashboard.runtimeMetrics?.request_summary.busy_reject_count ?? 0}</li>
               </ul>
             </article>
-            <article className="workspace-summary-card">
-              <h3>最近变更</h3>
-              <div className="workspace-list">
-                {dashboard.operations.slice(0, 4).map((item) => (
-                  <button
-                    key={item.operation_id}
-                    className={`workspace-list-item${selectedRevisionId === item.revision_id ? ' active' : ''}`}
-                    onClick={() => setSelectedRevisionId(item.revision_id)}
-                    type="button"
-                  >
-                    <strong>{item.action} / #{item.operation_id}</strong>
-                    <div className="workspace-meta-row">
-                      <span>{item.created_at ?? '-'}</span>
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </article>
+            <RiskBanner
+              title="最近变更"
+              items={dashboard.operations.slice(0, 4).map((item): RiskItem => ({
+                id: item.operation_id,
+                label: `${item.action} / #${item.operation_id}`,
+                meta: [item.created_at ?? '-'],
+                status: item.status,
+              }))}
+              emptyMessage="当前暂无变更操作记录。"
+              onSelect={(id) => {
+                const op = dashboard.operations.find((o: RuntimeOperationItem) => o.operation_id === Number(id))
+                if (op?.revision_id != null) setSelectedRevisionId(op.revision_id)
+              }}
+            />
           </div>
         </section>
 
@@ -463,62 +456,40 @@ function App() {
           )}
 
           {activeTab === 'control' && (
-            <div className="workspace-panel-grid">
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>revision 列表</h3>
-                    <span className="badge badge-muted">P43</span>
+            <ListDetailLayout
+              listTitle="revision 列表"
+              listBadge="P43"
+              items={dashboard.revisions.map((item): ListItem => ({
+                id: item.revision_id,
+                label: `revision #${item.revision_id}`,
+                meta: [item.action, item.capability_names.join(', ') || '无能力'],
+                status: item.status,
+              }))}
+              selectedId={selectedRevisionId}
+              onSelect={(id) => setSelectedRevisionId(id as number)}
+              detailTitle="受控变更"
+              detailStatus={selectedRevision?.status}
+              emptyMessage="请选择 revision 查看影响范围。"
+              detail={selectedRevision ? (
+                <>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>能力数</span>
+                      <strong>{selectedRevision.capability_names.length}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>license</span>
+                      <strong>{selectedRevision.license_valid ? '有效' : '受限'}</strong>
+                    </article>
                   </div>
-                  <div className="workspace-list">
-                    {dashboard.revisions.map((item) => (
-                      <button
-                        key={item.revision_id}
-                        className={`workspace-list-item${selectedRevisionId === item.revision_id ? ' active' : ''}`}
-                        onClick={() => setSelectedRevisionId(item.revision_id)}
-                        type="button"
-                      >
-                        <strong>revision #{item.revision_id}</strong>
-                        <div className="workspace-meta-row">
-                          <span>{item.action}</span>
-                          <span>{item.capability_names.join(', ') || '无能力'}</span>
-                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="workspace-action-row">
+                    <button className="action-button" onClick={() => void handleRuntimeAction('reload')} type="button">执行 reload</button>
+                    <button className="action-button" onClick={() => void handleRuntimeAction('rollback', selectedRevision.revision_id)} type="button">回滚到该 revision</button>
                   </div>
-                </article>
-              </div>
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>受控变更</h3>
-                    {selectedRevision && <span className={`status-pill ${statusTone(selectedRevision.status)}`}>{selectedRevision.status}</span>}
-                  </div>
-                  {!selectedRevision ? (
-                    <div className="workspace-empty">请选择 revision 查看影响范围。</div>
-                  ) : (
-                    <>
-                      <div className="workspace-kpi-grid">
-                        <article className="workspace-kpi-card">
-                          <span>能力数</span>
-                          <strong>{selectedRevision.capability_names.length}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>license</span>
-                          <strong>{selectedRevision.license_valid ? '有效' : '受限'}</strong>
-                        </article>
-                      </div>
-                      <div className="workspace-action-row">
-                        <button className="action-button" onClick={() => void handleRuntimeAction('reload')} type="button">执行 reload</button>
-                        <button className="action-button" onClick={() => void handleRuntimeAction('rollback', selectedRevision.revision_id)} type="button">回滚到该 revision</button>
-                      </div>
-                      <pre className="workspace-code-block">{JSON.stringify(selectedRevision.detail, null, 2)}</pre>
-                    </>
-                  )}
-                </article>
-              </div>
-            </div>
+                  <pre className="workspace-code-block">{JSON.stringify(selectedRevision.detail, null, 2)}</pre>
+                </>
+              ) : null}
+            />
           )}
 
           {activeTab === 'diagnostics' && (

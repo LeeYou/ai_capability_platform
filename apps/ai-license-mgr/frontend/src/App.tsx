@@ -3,8 +3,13 @@ import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
-import { fetchListItems, requestJson } from '../../../frontend-common/src/http.ts'
+import { useRequest } from '../../../frontend-common/src/useRequest.ts'
 import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
+import { statusTone } from '../../../frontend-common/src/statusTone.ts'
+import { RiskBanner } from '../../../frontend-common/src/riskBanner.tsx'
+import type { RiskItem } from '../../../frontend-common/src/riskBanner.tsx'
+import { ListDetailLayout } from '../../../frontend-common/src/listDetailLayout.tsx'
+import type { ListItem } from '../../../frontend-common/src/listDetailLayout.tsx'
 
 type CustomerItem = {
   customer_id: number
@@ -120,7 +125,6 @@ type ValidationVectors = {
   license_validation_vectors: Array<Record<string, unknown>>
 }
 
-type ApiListResponse<T> = { items: T[] }
 
 type DashboardState = {
   customers: CustomerItem[]
@@ -213,27 +217,10 @@ const initialValidationForm: ValidationFormState = {
   system_architecture: '',
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(apiBaseUrl, path, init)
-}
-
-async function fetchList<T>(path: string): Promise<T[]> {
-  return fetchListItems<T>(apiBaseUrl, path)
-}
-
-function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
-  if (['active', 'issued', 'valid', 'ready', 'completed'].includes(status)) return 'good'
-  if (['isolated', 'disabled', 'failed', 'expired'].includes(status)) return 'danger'
-  if (['draft', 'pending', 'created'].includes(status)) return 'warn'
-  return 'neutral'
-}
-
 function App() {
+  const { loading, error, actionMessage, request, fetchList, setLoading, setError, setActionMessage } = useRequest(apiBaseUrl, { initialLoading: true })
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [customerForm, setCustomerForm] = useState<CustomerFormState>(initialCustomerForm)
   const [keyName, setKeyName] = useState('agile-star-key')
   const [rotateReason, setRotateReason] = useState('例行轮转')
@@ -261,10 +248,10 @@ function App() {
         request<ValidationVectors>('/api/v1/license-validation/vectors'),
       ])
       setDashboard({ customers, keyPairs, policies, issues, toolReleases, auditLogs, validationContract, validationVectors })
-      setSelectedKeyPairId((current) => current ?? keyPairs[0]?.key_pair_id ?? null)
-      setSelectedPolicyId((current) => current ?? policies[0]?.policy_id ?? null)
-      setSelectedIssueId((current) => current ?? issues[0]?.issue_record_id ?? null)
-      setPolicyForm((current) => ({
+      setSelectedKeyPairId((current: number | null) => current ?? keyPairs[0]?.key_pair_id ?? null)
+      setSelectedPolicyId((current: number | null) => current ?? policies[0]?.policy_id ?? null)
+      setSelectedIssueId((current: number | null) => current ?? issues[0]?.issue_record_id ?? null)
+      setPolicyForm((current: PolicyFormState) => ({
         ...current,
         customer_id: current.customer_id || String(customers[0]?.customer_id ?? ''),
         key_pair_id: current.key_pair_id || String(keyPairs[0]?.key_pair_id ?? ''),
@@ -508,32 +495,20 @@ function App() {
             ))}
           </div>
           <div className="workspace-summary-grid">
-            <article className="workspace-summary-card">
-              <h3>风险密钥与影响面</h3>
-              {isolatedKeys.length === 0 ? (
-                <div className="workspace-empty">当前没有已隔离密钥。</div>
-              ) : (
-                <div className="workspace-list">
-                  {isolatedKeys.map((item) => (
-                    <button
-                      key={item.key_pair_id}
-                      className={`workspace-list-item${selectedKeyPairId === item.key_pair_id ? ' active' : ''}`}
-                      onClick={() => {
-                        setSelectedKeyPairId(item.key_pair_id)
-                        setActiveTab('risk')
-                      }}
-                      type="button"
-                    >
-                      <strong>{item.key_name}</strong>
-                      <div className="workspace-meta-row">
-                        <span>轮转版本 {item.rotation_version}</span>
-                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </article>
+            <RiskBanner
+              title="风险密钥与影响面"
+              items={isolatedKeys.map((item): RiskItem => ({
+                id: item.key_pair_id,
+                label: item.key_name,
+                meta: [`轮转版本 ${item.rotation_version}`],
+                status: item.status,
+              }))}
+              emptyMessage="当前没有已隔离密钥。"
+              onSelect={(id) => {
+                setSelectedKeyPairId(Number(id))
+                setActiveTab('risk')
+              }}
+            />
             <article className="workspace-summary-card">
               <h3>当前推荐动作</h3>
               <ul>
@@ -742,72 +717,53 @@ function App() {
           )}
 
           {activeTab === 'risk' && (
-            <div className="workspace-panel-grid">
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>高风险操作工作台</h3>
-                    <span className="badge badge-muted">L17</span>
+            <ListDetailLayout
+              listTitle="高风险操作工作台"
+              listBadge="L17"
+              items={dashboard.keyPairs.map((item): ListItem => ({
+                id: item.key_pair_id,
+                label: item.key_name,
+                meta: [`版本 ${item.rotation_version}`, item.algorithm],
+                status: item.status,
+              }))}
+              selectedId={selectedKeyPairId}
+              onSelect={(id) => setSelectedKeyPairId(id as number)}
+              detailTitle="影响面与确认说明"
+              detailStatus={selectedKeyPair?.status}
+              emptyMessage="请选择密钥对查看影响范围。"
+              detail={selectedKeyPair ? (
+                <>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>关联策略</span>
+                      <strong>{dashboard.policies.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>关联签发</span>
+                      <strong>{dashboard.issues.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>当前状态</span>
+                      <strong>{selectedKeyPair.status}</strong>
+                    </article>
                   </div>
-                  <div className="workspace-list">
-                    {dashboard.keyPairs.map((item) => (
-                      <button
-                        key={item.key_pair_id}
-                        className={`workspace-list-item${selectedKeyPairId === item.key_pair_id ? ' active' : ''}`}
-                        onClick={() => setSelectedKeyPairId(item.key_pair_id)}
-                        type="button"
-                      >
-                        <strong>{item.key_name}</strong>
-                        <div className="workspace-meta-row">
-                          <span>版本 {item.rotation_version}</span>
-                          <span>{item.algorithm}</span>
-                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="workspace-form-grid" style={{ marginTop: 16 }}>
+                    <label className="workspace-field">
+                      轮转说明
+                      <input value={rotateReason} onChange={(event) => setRotateReason(event.target.value)} />
+                    </label>
+                    <label className="workspace-field">
+                      隔离说明
+                      <input value={isolateReason} onChange={(event) => setIsolateReason(event.target.value)} />
+                    </label>
                   </div>
-                </article>
-              </div>
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <h3>影响面与确认说明</h3>
-                  {!selectedKeyPair ? (
-                    <div className="workspace-empty">请选择密钥对查看影响范围。</div>
-                  ) : (
-                    <>
-                      <div className="workspace-kpi-grid">
-                        <article className="workspace-kpi-card">
-                          <span>关联策略</span>
-                          <strong>{dashboard.policies.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>关联签发</span>
-                          <strong>{dashboard.issues.filter((item) => item.key_pair_id === selectedKeyPair.key_pair_id).length}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>当前状态</span>
-                          <strong>{selectedKeyPair.status}</strong>
-                        </article>
-                      </div>
-                      <div className="workspace-form-grid" style={{ marginTop: 16 }}>
-                        <label className="workspace-field">
-                          轮转说明
-                          <input value={rotateReason} onChange={(event) => setRotateReason(event.target.value)} />
-                        </label>
-                        <label className="workspace-field">
-                          隔离说明
-                          <input value={isolateReason} onChange={(event) => setIsolateReason(event.target.value)} />
-                        </label>
-                      </div>
-                      <div className="button-row">
-                        <button onClick={() => void handleRotateKeyPair()} type="button">执行轮转</button>
-                        <button onClick={() => void handleIsolateKeyPair()} type="button">执行隔离</button>
-                      </div>
-                    </>
-                  )}
-                </article>
-              </div>
-            </div>
+                  <div className="button-row">
+                    <button onClick={() => void handleRotateKeyPair()} type="button">执行轮转</button>
+                    <button onClick={() => void handleIsolateKeyPair()} type="button">执行隔离</button>
+                  </div>
+                </>
+              ) : null}
+            />
           )}
 
           {activeTab === 'validation' && (

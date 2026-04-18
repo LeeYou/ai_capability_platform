@@ -3,8 +3,13 @@ import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
-import { fetchListItems, requestJson } from '../../../frontend-common/src/http.ts'
+import { useRequest } from '../../../frontend-common/src/useRequest.ts'
 import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
+import { statusTone } from '../../../frontend-common/src/statusTone.ts'
+import { RiskBanner } from '../../../frontend-common/src/riskBanner.tsx'
+import type { RiskItem } from '../../../frontend-common/src/riskBanner.tsx'
+import { ListDetailLayout } from '../../../frontend-common/src/listDetailLayout.tsx'
+import type { ListItem } from '../../../frontend-common/src/listDetailLayout.tsx'
 
 type CapabilityItem = {
   capability_name: string
@@ -110,14 +115,6 @@ type TabKey = (typeof tabs)[number]
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const workspace = buildR7Workspace(import.meta.env, 'ai-train')
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(apiBaseUrl, path, init)
-}
-
-async function fetchList<T>(path: string): Promise<T[]> {
-  return fetchListItems<T>(apiBaseUrl, path)
-}
-
 function prettyJson(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
 }
@@ -182,18 +179,10 @@ function buildAnnotationPayload(sampleId: string, draft: AnnotationDraft, taskTy
   }
 }
 
-function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
-  if (['completed', 'ready', 'submitted', 'success'].includes(status)) return 'good'
-  if (['failed', 'error'].includes(status)) return 'danger'
-  if (['running', 'pending', 'created', 'draft'].includes(status)) return 'warn'
-  return 'neutral'
-}
-
 function App() {
+  const { loading, error, actionMessage, request, fetchList, setLoading, setError, setActionMessage } = useRequest(apiBaseUrl, { initialLoading: true })
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
   const [data, setData] = useState<DashboardData>(initialData)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [selectedAnnotationTaskId, setSelectedAnnotationTaskId] = useState<number | null>(null)
   const [selectedTrainingTaskId, setSelectedTrainingTaskId] = useState<number | null>(null)
   const [selectedModelArtifactId, setSelectedModelArtifactId] = useState<number | null>(null)
@@ -201,7 +190,6 @@ function App() {
   const [trainingDetail, setTrainingDetail] = useState<TrainingTaskItem | null>(null)
   const [modelDetail, setModelDetail] = useState<ModelArtifactItem | null>(null)
   const [annotationDrafts, setAnnotationDrafts] = useState<Record<string, AnnotationDraft>>({})
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   async function loadDashboard(): Promise<void> {
     setLoading(true)
@@ -353,52 +341,36 @@ function App() {
             ))}
           </div>
           <div className="workspace-summary-grid">
-            <article className="workspace-summary-card">
-              <h3>待处理标注任务</h3>
-              <div className="workspace-list">
-                {data.annotationTasks.slice(0, 4).map((item) => (
-                  <button
-                    key={item.task_id}
-                    className={`workspace-list-item${selectedAnnotationTaskId === item.task_id ? ' active' : ''}`}
-                    onClick={() => {
-                      setSelectedAnnotationTaskId(item.task_id)
-                      setActiveTab('annotation')
-                    }}
-                    type="button"
-                  >
-                    <strong>{item.task_name}</strong>
-                    <div className="workspace-meta-row">
-                      <span>{item.capability_name}</span>
-                      <span>{item.labeled_count}/{item.sample_total}</span>
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </article>
-            <article className="workspace-summary-card">
-              <h3>待送测模型</h3>
-              <div className="workspace-list">
-                {data.modelArtifacts.slice(0, 4).map((item) => (
-                  <button
-                    key={item.artifact_id}
-                    className={`workspace-list-item${selectedModelArtifactId === item.artifact_id ? ' active' : ''}`}
-                    onClick={() => {
-                      setSelectedModelArtifactId(item.artifact_id)
-                      setActiveTab('model')
-                    }}
-                    type="button"
-                  >
-                    <strong>{item.capability_name}</strong>
-                    <div className="workspace-meta-row">
-                      <span>{item.model_version}</span>
-                      <span>{item.backend_type}</span>
-                      <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </article>
+            <RiskBanner
+              title="待处理标注任务"
+              items={data.annotationTasks.slice(0, 4).map((item): RiskItem => ({
+                id: item.task_id,
+                label: item.task_name,
+                meta: [item.capability_name, `${item.labeled_count}/${item.sample_total}`],
+                status: item.status,
+              }))}
+              emptyMessage="当前没有待处理标注任务。"
+              selectedId={selectedAnnotationTaskId}
+              onSelect={(id) => {
+                setSelectedAnnotationTaskId(id as number)
+                setActiveTab('annotation')
+              }}
+            />
+            <RiskBanner
+              title="待送测模型"
+              items={data.modelArtifacts.slice(0, 4).map((item): RiskItem => ({
+                id: item.artifact_id,
+                label: item.capability_name,
+                meta: [item.model_version, item.backend_type],
+                status: item.status,
+              }))}
+              emptyMessage="当前没有待送测模型。"
+              selectedId={selectedModelArtifactId}
+              onSelect={(id) => {
+                setSelectedModelArtifactId(id as number)
+                setActiveTab('model')
+              }}
+            />
           </div>
         </section>
 
@@ -662,141 +634,96 @@ function App() {
           )}
 
           {activeTab === 'training' && (
-            <div className="workspace-panel-grid">
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>训练任务列表</h3>
-                    <span className="badge badge-muted">T18</span>
+            <ListDetailLayout
+              listTitle="训练任务列表"
+              listBadge="T18"
+              items={data.trainingTasks.map((item): ListItem => ({
+                id: item.task_id,
+                label: item.task_name,
+                meta: [item.capability_name, item.framework, item.execution_mode],
+                status: item.status,
+              }))}
+              selectedId={selectedTrainingTaskId}
+              onSelect={(id) => setSelectedTrainingTaskId(id as number)}
+              detailTitle="训练执行视图"
+              detailStatus={trainingDetail?.status}
+              emptyMessage="请选择训练任务查看日志与阶段状态。"
+              detail={trainingDetail ? (
+                <>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>重试次数</span>
+                      <strong>{trainingDetail.retry_count}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>后端</span>
+                      <strong>{trainingDetail.backend_type}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>执行模式</span>
+                      <strong>{trainingDetail.execution_mode}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>任务类型</span>
+                      <strong>{trainingDetail.task_type}</strong>
+                    </article>
                   </div>
-                  <div className="workspace-list">
-                    {data.trainingTasks.map((item) => (
-                      <button
-                        key={item.task_id}
-                        className={`workspace-list-item${selectedTrainingTaskId === item.task_id ? ' active' : ''}`}
-                        onClick={() => setSelectedTrainingTaskId(item.task_id)}
-                        type="button"
-                      >
-                        <strong>{item.task_name}</strong>
-                        <div className="workspace-meta-row">
-                          <span>{item.capability_name}</span>
-                          <span>{item.framework}</span>
-                          <span>{item.execution_mode}</span>
-                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="workspace-action-row">
+                    <button className="action-button" onClick={() => void handleTrainingAction('prepare')} type="button">准备工作区</button>
+                    <button className="action-button" onClick={() => void handleTrainingAction('execute')} type="button">执行训练</button>
                   </div>
-                </article>
-              </div>
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>训练执行视图</h3>
-                    {trainingDetail && <span className={`status-pill ${statusTone(trainingDetail.status)}`}>{trainingDetail.status}</span>}
-                  </div>
-                  {!trainingDetail ? (
-                    <div className="workspace-empty">请选择训练任务查看日志与阶段状态。</div>
-                  ) : (
-                    <>
-                      <div className="workspace-kpi-grid">
-                        <article className="workspace-kpi-card">
-                          <span>重试次数</span>
-                          <strong>{trainingDetail.retry_count}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>后端</span>
-                          <strong>{trainingDetail.backend_type}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>执行模式</span>
-                          <strong>{trainingDetail.execution_mode}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>任务类型</span>
-                          <strong>{trainingDetail.task_type}</strong>
-                        </article>
-                      </div>
-                      <div className="workspace-action-row">
-                        <button className="action-button" onClick={() => void handleTrainingAction('prepare')} type="button">准备工作区</button>
-                        <button className="action-button" onClick={() => void handleTrainingAction('execute')} type="button">执行训练</button>
-                      </div>
-                      <pre className="workspace-code-block">{(trainingDetail.latest_logs ?? []).join('\n') || '暂无日志'}</pre>
-                      <pre className="workspace-code-block">{JSON.stringify(trainingDetail.execution_plan ?? {}, null, 2)}</pre>
-                      <pre className="workspace-code-block">{JSON.stringify(trainingDetail.result_summary ?? {}, null, 2)}</pre>
-                    </>
-                  )}
-                </article>
-              </div>
-            </div>
+                  <pre className="workspace-code-block">{(trainingDetail.latest_logs ?? []).join('\n') || '暂无日志'}</pre>
+                  <pre className="workspace-code-block">{JSON.stringify(trainingDetail.execution_plan ?? {}, null, 2)}</pre>
+                  <pre className="workspace-code-block">{JSON.stringify(trainingDetail.result_summary ?? {}, null, 2)}</pre>
+                </>
+              ) : null}
+            />
           )}
 
           {activeTab === 'model' && (
-            <div className="workspace-panel-grid">
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>模型资产列表</h3>
-                    <span className="badge badge-muted">T19-T20</span>
+            <ListDetailLayout
+              listTitle="模型资产列表"
+              listBadge="T19-T20"
+              items={data.modelArtifacts.map((item): ListItem => ({
+                id: item.artifact_id,
+                label: item.capability_name,
+                meta: [item.model_version, item.backend_type],
+                status: item.status,
+              }))}
+              selectedId={selectedModelArtifactId}
+              onSelect={(id) => setSelectedModelArtifactId(id as number)}
+              detailTitle="模型卡片与送测动作"
+              detailStatus={modelDetail?.status}
+              emptyMessage="请选择模型查看详情。"
+              detail={modelDetail ? (
+                <>
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>模型版本</span>
+                      <strong>{modelDetail.model_version}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>来源训练任务</span>
+                      <strong>{modelDetail.source_training_task_id}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>后端</span>
+                      <strong>{modelDetail.backend_type}</strong>
+                    </article>
                   </div>
-                  <div className="workspace-list">
-                    {data.modelArtifacts.map((item) => (
-                      <button
-                        key={item.artifact_id}
-                        className={`workspace-list-item${selectedModelArtifactId === item.artifact_id ? ' active' : ''}`}
-                        onClick={() => setSelectedModelArtifactId(item.artifact_id)}
-                        type="button"
-                      >
-                        <strong>{item.capability_name}</strong>
-                        <div className="workspace-meta-row">
-                          <span>{item.model_version}</span>
-                          <span>{item.backend_type}</span>
-                          <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="workspace-action-row">
+                    {workspace.nextModule && (
+                      <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                        送测到 {workspace.nextModule.shortTitle}
+                      </a>
+                    )}
                   </div>
-                </article>
-              </div>
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>模型卡片与送测动作</h3>
-                    {modelDetail && <span className={`status-pill ${statusTone(modelDetail.status)}`}>{modelDetail.status}</span>}
-                  </div>
-                  {!modelDetail ? (
-                    <div className="workspace-empty">请选择模型查看详情。</div>
-                  ) : (
-                    <>
-                      <div className="workspace-kpi-grid">
-                        <article className="workspace-kpi-card">
-                          <span>模型版本</span>
-                          <strong>{modelDetail.model_version}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>来源训练任务</span>
-                          <strong>{modelDetail.source_training_task_id}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>后端</span>
-                          <strong>{modelDetail.backend_type}</strong>
-                        </article>
-                      </div>
-                      <div className="workspace-action-row">
-                        {workspace.nextModule && (
-                          <a className="workspace-action-chip" href={workspace.nextModule.url}>
-                            送测到 {workspace.nextModule.shortTitle}
-                          </a>
-                        )}
-                      </div>
-                      <pre className="workspace-code-block">{JSON.stringify(modelDetail.manifest_preview ?? {}, null, 2)}</pre>
-                      <pre className="workspace-code-block">{JSON.stringify(modelDetail.runtime_contract ?? {}, null, 2)}</pre>
-                      <pre className="workspace-code-block">{JSON.stringify(modelDetail.delivery_metadata ?? {}, null, 2)}</pre>
-                    </>
-                  )}
-                </article>
-              </div>
-            </div>
+                  <pre className="workspace-code-block">{JSON.stringify(modelDetail.manifest_preview ?? {}, null, 2)}</pre>
+                  <pre className="workspace-code-block">{JSON.stringify(modelDetail.runtime_contract ?? {}, null, 2)}</pre>
+                  <pre className="workspace-code-block">{JSON.stringify(modelDetail.delivery_metadata ?? {}, null, 2)}</pre>
+                </>
+              ) : null}
+            />
           )}
         </section>
       </main>

@@ -3,8 +3,13 @@ import './App.css'
 import '../../../frontend-common/src/r7Workspace.css'
 import { WorkspaceShell } from '../../../frontend-common/src/workspaceShell.tsx'
 import { buildR7Workspace } from '../../../frontend-common/src/r7Workspace.ts'
-import { fetchListResponse, requestJson } from '../../../frontend-common/src/http.ts'
+import { useRequest } from '../../../frontend-common/src/useRequest.ts'
 import { WorkspaceFeedback } from '../../../frontend-common/src/workspaceFeedback.tsx'
+import { statusTone } from '../../../frontend-common/src/statusTone.ts'
+import { RiskBanner } from '../../../frontend-common/src/riskBanner.tsx'
+import type { RiskItem } from '../../../frontend-common/src/riskBanner.tsx'
+import { ListDetailLayout } from '../../../frontend-common/src/listDetailLayout.tsx'
+import type { ListItem } from '../../../frontend-common/src/listDetailLayout.tsx'
 
 type RemoteCapabilityItem = {
   capability_name: string
@@ -238,20 +243,6 @@ const initialBaselineForm: BaselineForm = {
   description: '交付验收默认基线',
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return requestJson<T>(apiBaseUrl, path, init)
-}
-
-async function fetchList<T>(path: string): Promise<ApiListResponse<T>> {
-  return fetchListResponse<T>(apiBaseUrl, path)
-}
-
-function statusTone(status: string): 'good' | 'warn' | 'danger' | 'neutral' {
-  if (['passed', 'completed', 'ready', 'success', 'ok'].includes(status)) return 'good'
-  if (['failed', 'error', 'rejected'].includes(status)) return 'danger'
-  if (['running', 'pending', 'queued', 'created'].includes(status)) return 'warn'
-  return 'neutral'
-}
 
 function parseBatchCases(raw: string): Array<{ case_name: string; input_path: string; expected_output?: string }> {
   return raw
@@ -269,6 +260,7 @@ function parseBatchCases(raw: string): Array<{ case_name: string; input_path: st
 }
 
 function App() {
+  const { loading, error, actionMessage, request, fetchListResponse, setLoading, setError, setActionMessage } = useRequest(apiBaseUrl, { initialLoading: true })
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
   const [dashboard, setDashboard] = useState<DashboardState>(initialState)
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
@@ -282,21 +274,18 @@ function App() {
   const [batchForm, setBatchForm] = useState<BatchTestForm>(initialBatchForm)
   const [acceptanceForm, setAcceptanceForm] = useState<AcceptanceForm>(initialAcceptanceForm)
   const [baselineForm, setBaselineForm] = useState<BaselineForm>(initialBaselineForm)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   async function loadDashboard(): Promise<void> {
     setLoading(true)
     setError(null)
     try {
       const [models, capabilities, tasks, acceptanceTasks, baselines, reports] = await Promise.all([
-        fetchList<RemoteModelItem>('/api/v1/remote-models'),
-        fetchList<RemoteCapabilityItem>('/api/v1/remote-capabilities'),
-        fetchList<TestTaskItem>('/api/v1/test-tasks'),
-        fetchList<AcceptanceTaskItem>('/api/v1/acceptance-tasks'),
-        fetchList<PerformanceBaselineItem>('/api/v1/performance-baselines'),
-        fetchList<TestReportItem>('/api/v1/test-reports'),
+        fetchListResponse<RemoteModelItem>('/api/v1/remote-models') as Promise<ApiListResponse<RemoteModelItem>>,
+        fetchListResponse<RemoteCapabilityItem>('/api/v1/remote-capabilities') as Promise<ApiListResponse<RemoteCapabilityItem>>,
+        fetchListResponse<TestTaskItem>('/api/v1/test-tasks') as Promise<ApiListResponse<TestTaskItem>>,
+        fetchListResponse<AcceptanceTaskItem>('/api/v1/acceptance-tasks') as Promise<ApiListResponse<AcceptanceTaskItem>>,
+        fetchListResponse<PerformanceBaselineItem>('/api/v1/performance-baselines') as Promise<ApiListResponse<PerformanceBaselineItem>>,
+        fetchListResponse<TestReportItem>('/api/v1/test-reports') as Promise<ApiListResponse<TestReportItem>>,
       ])
       setDashboard({
         models: models.items,
@@ -575,64 +564,41 @@ function App() {
             ))}
           </div>
           <div className="workspace-summary-grid">
-            <article className="workspace-summary-card">
-              <h3>待优先测试模型</h3>
-              {recommendedModels.length === 0 ? (
-                <div className="workspace-empty">当前暂无可测试模型，请先在 ai-train 产出模型。</div>
-              ) : (
-                <div className="workspace-list">
-                  {recommendedModels.map((item) => (
-                    <button
-                      key={`${item.capability_name}-${item.model_version}`}
-                      className="workspace-list-item"
-                      onClick={() => {
-                        setSingleForm((current) => ({
-                          ...current,
-                          capability_name: item.capability_name,
-                          model_version: item.model_version,
-                        }))
-                        setActiveTab('single')
-                      }}
-                      type="button"
-                    >
-                      <strong>{item.capability_name}</strong>
-                      <div className="workspace-meta-row">
-                        <span>{item.model_version}</span>
-                        <span>{item.backend_type}</span>
-                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </article>
-            <article className="workspace-summary-card">
-              <h3>需优先定位的问题任务</h3>
-              {riskyTasks.length === 0 ? (
-                <div className="workspace-empty">当前无失败任务，测试队列状态良好。</div>
-              ) : (
-                <div className="workspace-list">
-                  {riskyTasks.map((item) => (
-                    <button
-                      key={item.task_id}
-                      className="workspace-list-item"
-                      onClick={() => {
-                        setSelectedTaskId(item.task_id)
-                        setActiveTab(item.task_type === 'batch' ? 'batch' : 'single')
-                      }}
-                      type="button"
-                    >
-                      <strong>任务 #{item.task_id} / {item.capability_name}</strong>
-                      <div className="workspace-meta-row">
-                        <span>{item.model_version}</span>
-                        <span>{item.failed_cases} 个失败用例</span>
-                        <span className={`status-pill ${statusTone(item.status)}`}>{item.status}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </article>
+            <RiskBanner
+              title="待优先测试模型"
+              items={recommendedModels.map((item): RiskItem => ({
+                id: `${item.capability_name}-${item.model_version}`,
+                label: item.capability_name,
+                meta: [item.model_version, item.backend_type],
+                status: item.status,
+              }))}
+              emptyMessage="当前暂无可测试模型，请先在 ai-train 产出模型。"
+              onSelect={(id) => {
+                const key = String(id)
+                const item = recommendedModels.find((m) => `${m.capability_name}-${m.model_version}` === key)
+                if (item) {
+                  setSingleForm((current) => ({ ...current, capability_name: item.capability_name, model_version: item.model_version }))
+                  setActiveTab('single')
+                }
+              }}
+            />
+            <RiskBanner
+              title="需优先定位的问题任务"
+              items={riskyTasks.map((item): RiskItem => ({
+                id: item.task_id,
+                label: `任务 #${item.task_id} / ${item.capability_name}`,
+                meta: [item.model_version, `${item.failed_cases} 个失败用例`],
+                status: item.status,
+              }))}
+              emptyMessage="当前无失败任务，测试队列状态良好。"
+              onSelect={(id) => {
+                const taskItem = riskyTasks.find((t) => t.task_id === Number(id))
+                if (taskItem) {
+                  setSelectedTaskId(taskItem.task_id)
+                  setActiveTab(taskItem.task_type === 'batch' ? 'batch' : 'single')
+                }
+              }}
+            />
             <article className="workspace-summary-card">
               <h3>跨模块下一步</h3>
               <ul>
@@ -1123,88 +1089,59 @@ function App() {
           )}
 
           {activeTab === 'reports' && (
-            <div className="workspace-panel-grid">
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>报告中心</h3>
-                    <span className="badge badge-muted">TT18-TT19</span>
-                  </div>
-                  <div className="button-row">
+            <ListDetailLayout
+              listTitle="报告中心"
+              listBadge="TT18-TT19"
+              items={dashboard.reports.map((item): ListItem => ({
+                id: item.report_id,
+                label: `报告 #${item.report_id} / ${item.capability_name}`,
+                meta: [item.model_version, item.execution_mode, `${item.passed_cases}/${item.passed_cases + item.failed_cases} 通过`],
+                status: item.failed_cases === 0 ? '可推进' : '需复核',
+              }))}
+              selectedId={selectedReportId}
+              onSelect={(id) => setSelectedReportId(id as number)}
+              detailTitle="报告摘要与证据链"
+              detailStatus={selectedReport ? (selectedReport.failed_cases === 0 ? '推送下游' : '问题回流') : undefined}
+              emptyMessage="请选择报告查看摘要。"
+              detail={selectedReport ? (
+                <>
+                  <div className="button-row" style={{ marginBottom: 12 }}>
                     <button type="button" onClick={() => setReportTemplateType('research')}>研发视角</button>
                     <button type="button" onClick={() => setReportTemplateType('delivery')}>交付视角</button>
                   </div>
-                  <div className="workspace-list" style={{ marginTop: 16 }}>
-                    {dashboard.reports.map((item) => (
-                      <button
-                        key={item.report_id}
-                        className={`workspace-list-item${selectedReportId === item.report_id ? ' active' : ''}`}
-                        onClick={() => setSelectedReportId(item.report_id)}
-                        type="button"
-                      >
-                        <strong>报告 #{item.report_id} / {item.capability_name}</strong>
-                        <div className="workspace-meta-row">
-                          <span>{item.model_version}</span>
-                          <span>{item.execution_mode}</span>
-                          <span>{item.passed_cases}/{item.passed_cases + item.failed_cases} 通过</span>
-                          <span className={`status-pill ${item.failed_cases === 0 ? 'good' : 'warn'}`}>
-                            {item.failed_cases === 0 ? '可推进' : '需复核'}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="workspace-kpi-grid">
+                    <article className="workspace-kpi-card">
+                      <span>通过用例</span>
+                      <strong>{selectedReport.passed_cases}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>失败用例</span>
+                      <strong>{selectedReport.failed_cases}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>当前视角</span>
+                      <strong>{reportTemplateType}</strong>
+                    </article>
+                    <article className="workspace-kpi-card">
+                      <span>执行模式</span>
+                      <strong>{selectedReport.execution_mode}</strong>
+                    </article>
                   </div>
-                </article>
-              </div>
-              <div className="workspace-stack">
-                <article className="workspace-note-block">
-                  <div className="section-header">
-                    <h3>报告摘要与证据链</h3>
-                    {selectedReport && (
-                      <span className={`status-pill ${selectedReport.failed_cases === 0 ? 'good' : 'warn'}`}>
-                        {selectedReport.failed_cases === 0 ? '推送下游' : '问题回流'}
-                      </span>
+                  {selectedReport.execution_risk && <div className="workspace-empty">风险提示：{selectedReport.execution_risk}</div>}
+                  <pre className="workspace-code-block">{JSON.stringify(selectedReport.summary, null, 2)}</pre>
+                  <div className="workspace-action-row">
+                    <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'json')}>导出 JSON</a>
+                    <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'html')}>导出 HTML</a>
+                    <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'pdf')}>导出 PDF</a>
+                    {workspace.nextModule && selectedReport.failed_cases === 0 && (
+                      <a className="workspace-action-chip" href={workspace.nextModule.url}>
+                        推送到 {workspace.nextModule.shortTitle}
+                      </a>
                     )}
                   </div>
-                  {!selectedReport ? (
-                    <div className="workspace-empty">请选择报告查看摘要。</div>
-                  ) : (
-                    <>
-                      <div className="workspace-kpi-grid">
-                        <article className="workspace-kpi-card">
-                          <span>通过用例</span>
-                          <strong>{selectedReport.passed_cases}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>失败用例</span>
-                          <strong>{selectedReport.failed_cases}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>当前视角</span>
-                          <strong>{reportTemplateType}</strong>
-                        </article>
-                        <article className="workspace-kpi-card">
-                          <span>执行模式</span>
-                          <strong>{selectedReport.execution_mode}</strong>
-                        </article>
-                      </div>
-                      {selectedReport.execution_risk && <div className="workspace-empty">风险提示：{selectedReport.execution_risk}</div>}
-                      <pre className="workspace-code-block">{JSON.stringify(selectedReport.summary, null, 2)}</pre>
-                      <div className="workspace-action-row">
-                        <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'json')}>导出 JSON</a>
-                        <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'html')}>导出 HTML</a>
-                        <a className="workspace-action-chip" href={reportExportUrl(selectedReport.report_id, 'pdf')}>导出 PDF</a>
-                        {workspace.nextModule && selectedReport.failed_cases === 0 && (
-                          <a className="workspace-action-chip" href={workspace.nextModule.url}>
-                            推送到 {workspace.nextModule.shortTitle}
-                          </a>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </article>
-              </div>
-            </div>
+                </>
+              ) : null}
+            />
           )}
         </section>
       </main>
