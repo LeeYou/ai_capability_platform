@@ -56,4 +56,4 @@
 
 ### 4.4 阶段小结
 
-ai-builder 已完成 B15-B18：现已把真实构建链路重构为构建向导、任务工作台与交付包视图，交付工程师可以在同一工作台中完成模型 / license 选择、平台目标配置、构建状态查看、产物下载、manifest / provenance 校验以及去 ai-prod 的下一步验收联动。经前端 `npm run build && npm run lint` 验证，当前 ai-builder Web 工作台重构已完成。
+ai-builder 已完成 B15-B18：现已把真实构建链路重构为构建向导、任务工作台与交付包视图，交付工程师可以在同一工作台中完成模型 / license 选择、平台目标配置、构建状态查看、产物下载、manifest / provenance 校验以及去 ai-prod 的下一步验收联动。经前端 `npm run build && npm run lint` 验证，当前 ai-builder Web 工作台重构已完成。同时本轮已开始推进 RC-03：已在 `frontend-common` 新增统一工作台壳层组件（`WorkspaceShell`），并在 ai-builder `App.tsx` 完成接入，作为后续抽象公共 hooks / 布局 / 状态组件与风险提示层的第一步。
