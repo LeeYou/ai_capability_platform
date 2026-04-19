@@ -18,7 +18,7 @@ from app.db.models import RuntimeOperationModel, RuntimeRevisionModel
 from app.services.audit_service import append_audit_log
 from app.services.license_service import LicenseValidationError, validate_license_bundle
 
-from platform_shared.backend import validate_manifest_build, validate_manifest_model
+from platform_shared.backend import validate_model_package_dir, validate_plugin_package_dir
 
 
 class RuntimeControlPlaneState:
@@ -187,79 +187,23 @@ def _failure_item(capability_name: str, manifest_type: str, manifest_path: Path,
     }
 
 
-def _resolve_manifest_path(base_path: Path, raw_path: str) -> Path:
-    candidate = Path(raw_path)
-    resolved = candidate if candidate.is_absolute() else (base_path / candidate)
-    resolved = resolved.resolve()
-    if not resolved.exists():
-        raise ValueError(f"manifest 依赖文件不存在：{resolved}")
-    if resolved != base_path.resolve() and base_path.resolve() not in resolved.parents:
-        raise ValueError("manifest 依赖文件必须位于模型目录内。")
-    return resolved
-
-
 def _validate_model_manifest(capability_dir: Path, selected_version_dir: Path, manifest: Any) -> dict[str, Any]:
-    if not isinstance(manifest, dict):
-        raise ValueError("manifest 顶层必须是对象。")
-    normalized_manifest = validate_manifest_model(manifest)
-    if normalized_manifest.get("capability_name") != capability_dir.name:
-        raise ValueError("模型包 manifest capability_name 与目录名不一致。")
-    if normalized_manifest.get("model_version") != selected_version_dir.name:
-        raise ValueError("模型包 manifest model_version 与目录版本不一致。")
-    if normalized_manifest.get("status") != "ready":
-        raise ValueError("模型包 manifest status 必须为 ready。")
-
-    runtime_contract = normalized_manifest.get("runtime_contract")
-    runtime_inputs = runtime_contract.get("runtime_inputs") if isinstance(runtime_contract, dict) else None
-    if not isinstance(runtime_inputs, dict):
-        raise ValueError("模型包 manifest runtime_contract.runtime_inputs 缺失。")
-
-    _resolve_manifest_path(selected_version_dir, str(normalized_manifest["artifact_path"]))
-    if _resolve_manifest_path(selected_version_dir, str(normalized_manifest["artifact_path"])) != selected_version_dir.resolve():
-        raise ValueError("模型包 manifest artifact_path 与实际模型目录不一致。")
-    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("preprocess_path", "")))
-    _resolve_manifest_path(selected_version_dir, str(runtime_inputs.get("labels_path", "")))
-    validation = normalized_manifest.get("validation")
-    artifacts = validation.get("artifacts") if isinstance(validation, dict) else None
-    if not isinstance(artifacts, list):
-        raise ValueError("模型包 manifest validation.artifacts 缺失。")
-    for item in artifacts:
-        if not isinstance(item, str):
-            raise ValueError("模型包 manifest validation.artifacts 必须全部为字符串。")
-        _resolve_manifest_path(selected_version_dir, item)
-    return {
-        "model_root": str(selected_version_dir.resolve()),
-        "model_version": str(normalized_manifest["model_version"]),
-        "backend_type": str(normalized_manifest["backend_type"]),
-        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", normalized_manifest.get("batch_size", 1)))),
-        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
-        "manifest": manifest,
-    }
+    result = validate_model_package_dir(
+        selected_version_dir,
+        expected_capability_name=capability_dir.name,
+        expected_model_version=selected_version_dir.name,
+    )
+    result["model_root"] = str(selected_version_dir.resolve())
+    result["manifest"] = manifest
+    return result
 
 
 def _validate_plugin_manifest(capability_dir: Path, target_name: str, manifest: Any, binary_path: Path | None) -> dict[str, Any]:
-    if not isinstance(manifest, dict):
-        raise ValueError("manifest 顶层必须是对象。")
-    normalized_manifest = validate_manifest_build(manifest)
-    if normalized_manifest.get("capability_name") != capability_dir.name:
-        raise ValueError("插件 manifest capability_name 与目录名不一致。")
-    if normalized_manifest.get("target_name") != target_name:
-        raise ValueError("插件 manifest target_name 与当前目标平台不一致。")
-    if binary_path is None or not binary_path.exists():
-        raise ValueError("插件二进制不存在。")
-    if normalized_manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
-        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
-    if normalized_manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
-        raise ValueError("插件 manifest artifact_format 与二进制扩展名不一致。")
-    return {
-        "plugin_root": str(capability_dir.resolve()),
-        "plugin_target": target_name,
-        "build_mode": str(normalized_manifest["build_mode"]),
-        "binary_path": str(binary_path.resolve()),
-        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", 1))),
-        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
-        "manifest": manifest,
-    }
+    return validate_plugin_package_dir(
+        capability_dir,
+        target_name,
+        expected_capability_name=capability_dir.name,
+    )
 
 
 def _scan_models(root: Path) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:

@@ -722,3 +722,132 @@ def validate_training_result_summary(
             normalized[object_field] = object_value
 
     return normalized
+
+
+def _resolve_manifest_path(base_path: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path)
+    resolved = candidate if candidate.is_absolute() else (base_path / candidate)
+    resolved = resolved.resolve()
+    if not resolved.exists():
+        raise ValueError(f"manifest 依赖文件不存在：{resolved}")
+    if resolved != base_path.resolve() and base_path.resolve() not in resolved.parents:
+        raise ValueError("manifest 依赖文件必须位于模型目录内。")
+    return resolved
+
+
+def validate_model_package_dir(
+    package_dir: Path,
+    *,
+    expected_capability_name: str | None = None,
+    expected_model_version: str | None = None,
+) -> dict[str, object]:
+    base_dir = Path(package_dir).resolve()
+    if not base_dir.exists() or not base_dir.is_dir():
+        raise ValueError("package_dir 必须为存在的目录。")
+
+    manifest_path = (base_dir / "manifest.json").resolve()
+    if not (manifest_path == base_dir or base_dir in manifest_path.parents):
+        raise ValueError("manifest.json 路径非法。")
+    if not manifest_path.is_file():
+        raise ValueError("manifest.json 不存在。")
+
+    import json
+
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError("manifest.json 不是合法 JSON。") from exc
+
+    normalized_manifest = validate_manifest_model(manifest_payload)
+
+    if expected_capability_name is not None and normalized_manifest.get("capability_name") != expected_capability_name:
+        raise ValueError("manifest capability_name 与期望值不一致。")
+    if expected_model_version is not None and normalized_manifest.get("model_version") != expected_model_version:
+        raise ValueError("manifest model_version 与期望值不一致。")
+    if normalized_manifest.get("status") != "ready":
+        raise ValueError("manifest status 必须为 ready。")
+
+    runtime_contract = normalized_manifest.get("runtime_contract")
+    runtime_inputs = runtime_contract.get("runtime_inputs") if isinstance(runtime_contract, dict) else None
+    if not isinstance(runtime_inputs, dict):
+        raise ValueError("manifest runtime_contract.runtime_inputs 缺失。")
+
+    _resolve_manifest_path(base_dir, str(normalized_manifest["artifact_path"]))
+    _resolve_manifest_path(base_dir, str(runtime_inputs.get("preprocess_path", "")))
+    _resolve_manifest_path(base_dir, str(runtime_inputs.get("labels_path", "")))
+
+    validation = normalized_manifest.get("validation")
+    artifacts = validation.get("artifacts") if isinstance(validation, dict) else None
+    if not isinstance(artifacts, list):
+        raise ValueError("manifest validation.artifacts 缺失。")
+    for item in artifacts:
+        if not isinstance(item, str):
+            raise ValueError("manifest validation.artifacts 必须全部为字符串。")
+        _resolve_manifest_path(base_dir, item)
+
+    return {
+        "package_root": str(base_dir),
+        "manifest": normalized_manifest,
+        "model_version": str(normalized_manifest["model_version"]),
+        "backend_type": str(normalized_manifest["backend_type"]),
+        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", normalized_manifest.get("batch_size", 1)))),
+        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
+    }
+
+
+def validate_plugin_package_dir(
+    plugin_dir: Path,
+    target_name: str,
+    *,
+    expected_capability_name: str | None = None,
+) -> dict[str, object]:
+    base_dir = Path(plugin_dir).resolve()
+    if not base_dir.exists() or not base_dir.is_dir():
+        raise ValueError("plugin_dir 必须为存在的目录。")
+
+    manifest_path = (base_dir / "manifest" / "manifest.json").resolve()
+    if not (manifest_path == base_dir or base_dir in manifest_path.parents):
+        raise ValueError("manifest.json 路径非法。")
+    if not manifest_path.is_file():
+        raise ValueError("manifest.json 不存在。")
+
+    import json
+
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError("manifest.json 不是合法 JSON。") from exc
+
+    normalized_manifest = validate_manifest_build(manifest_payload)
+
+    if expected_capability_name is not None and normalized_manifest.get("capability_name") != expected_capability_name:
+        raise ValueError("manifest capability_name 与期望值不一致。")
+    if normalized_manifest.get("target_name") != target_name:
+        raise ValueError("manifest target_name 与当前目标平台不一致。")
+
+    lib_dir = (base_dir / "lib").resolve()
+    if not (lib_dir == base_dir or base_dir in lib_dir.parents):
+        raise ValueError("lib 目录路径非法。")
+
+    binary_candidates = sorted(
+        [item for item in lib_dir.iterdir() if item.is_file()],
+        key=lambda item: item.name,
+    ) if lib_dir.exists() else []
+    binary_path = binary_candidates[0] if binary_candidates else None
+
+    if binary_path is None or not binary_path.exists():
+        raise ValueError("插件二进制不存在。")
+    if normalized_manifest["artifact_format"] == "so" and binary_path.suffix != ".so":
+        raise ValueError("manifest artifact_format 与二进制扩展名不一致。")
+    if normalized_manifest["artifact_format"] == "dll" and binary_path.suffix != ".dll":
+        raise ValueError("manifest artifact_format 与二进制扩展名不一致。")
+
+    return {
+        "plugin_root": str(base_dir),
+        "plugin_target": target_name,
+        "build_mode": str(normalized_manifest["build_mode"]),
+        "binary_path": str(binary_path.resolve()),
+        "max_batch_size": max(1, int(normalized_manifest.get("max_batch_size", 1))),
+        "instance_count": max(1, int(normalized_manifest["instance_count"])) if "instance_count" in normalized_manifest else 0,
+        "manifest": normalized_manifest,
+    }
